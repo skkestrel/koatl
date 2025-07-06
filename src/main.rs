@@ -1,3 +1,5 @@
+#![allow(unused_variables)]
+
 pub mod lexer;
 pub mod parser;
 
@@ -15,12 +17,13 @@ fn main() {
     let (ast, mut parse_errs) = parser()
         .parse(
             tokens
+                .0
                 .as_slice()
                 .map((src.len()..src.len()).into(), |(t, s)| (t, s)),
         )
         .into_output_errors();
 
-    println!("{tokens:?}");
+    println!("{tokens}");
     println!("{ast:?}");
 
     errs.into_iter()

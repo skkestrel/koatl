@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::lexer::*;
-use chumsky::{input::ValueInput, prelude::*};
+use chumsky::{extra::ParserExtra, input::ValueInput, prelude::*};
 
 #[derive(Debug, Copy, Clone)]
 pub enum BinaryOp {
@@ -28,15 +28,34 @@ pub enum UnaryOp {
 }
 
 #[derive(Debug)]
-pub struct Ident<'a>(&'a str);
+pub struct Ident<'a>(pub &'a str);
+
+#[derive(Debug)]
+pub struct SingleDecl<'a> {
+    ident: Ident<'a>,
+    typ: Option<Expr<'a>>,
+}
+
+#[derive(Debug)]
+pub enum Decl<'a> {
+    Single(SingleDecl<'a>),
+    Unpack(Box<Decl<'a>>),
+}
 
 #[derive(Debug)]
 pub enum Stmt<'a> {
     Global(Vec<Ident<'a>>),
     Nonlocal(Vec<Ident<'a>>),
-    Assign(Ident<'a>, Expr<'a>),
+    Assign(Decl<'a>, Expr<'a>),
     Return(Expr<'a>),
     Expr(Expr<'a>),
+    While(Expr<'a>, Block<'a>),
+    For(Decl<'a>, Expr<'a>, Block<'a>),
+    Import(Vec<Ident<'a>>),
+    Raise(Expr<'a>),
+    Break,
+    Continue,
+    Err,
 }
 
 #[derive(Debug)]
@@ -80,72 +99,123 @@ pub enum ArgItem<'a> {
 }
 
 #[derive(Debug)]
+pub enum Block<'a> {
+    Stmts(Vec<Stmt<'a>>),
+    Expr(Box<Expr<'a>>),
+}
+
+#[derive(Debug)]
 pub enum Expr<'a> {
     Literal(Literal<'a>),
-    Placeholder,
     Ident(Ident<'a>),
     Unary(UnaryOp, Box<Expr<'a>>),
     Binary(BinaryOp, Box<Expr<'a>>, Box<Expr<'a>>),
     List(Vec<ListItem<'a>>),
     Mapping(Vec<MappingItem<'a>>),
+
+    If(Box<Expr<'a>>, Block<'a>, Option<Block<'a>>),
+    Match(Box<Expr<'a>>, Vec<(Expr<'a>, Block<'a>)>),
+    Class(Ident<'a>, Vec<CallItem<'a>>, Block<'a>),
+
     Call(Box<Expr<'a>>, Vec<CallItem<'a>>),
     Attribute(Box<Expr<'a>>, Ident<'a>),
-    Index(Box<Expr<'a>>, Vec<Expr<'a>>),
     Pipe(Box<Expr<'a>>, Box<Expr<'a>>),
+    Index(Box<Expr<'a>>, Vec<Expr<'a>>),
 
     Fn(Vec<ArgItem<'a>>, Vec<Stmt<'a>>),
     FmtStr(Vec<Box<FmtExpr<'a>>>),
 }
 
+fn enumeration<'tokens, 'src: 'tokens, I, O, E, ItemParser>(
+    item_parser: ItemParser,
+) -> impl Parser<'tokens, I, Vec<O>, E> + Clone
+where
+    I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
+    E: ParserExtra<'tokens, I, Error = Rich<'tokens, Token<'src>, Span>>,
+    ItemParser: Parser<'tokens, I, O, E> + Clone,
+{
+    just(Token::Continuation)
+        .repeated()
+        .ignore_then(item_parser)
+        .separated_by(choice((
+            just(Token::Symbol(","))
+                .padded_by(just(Token::Continuation).repeated())
+                .ignored(),
+            just(Token::Continuation).repeated().at_least(1).ignored(),
+        )))
+        .allow_trailing()
+        .collect()
+        .labelled("enumeration")
+}
+
+pub trait ParserExt<'tokens, 'src: 'tokens, I, O, E>: Parser<'tokens, I, O, E>
+where
+    I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
+    E: ParserExtra<'tokens, I>,
+{
+    fn pad_cont(self) -> impl Parser<'tokens, I, O, E> + Clone + Sized
+    where
+        Self: Sized + Clone,
+    {
+        self.padded_by(just(Token::Continuation).repeated())
+    }
+}
+
+impl<'tokens, 'src: 'tokens, I, O, E, P> ParserExt<'tokens, 'src, I, O, E> for P
+where
+    P: Parser<'tokens, I, O, E> + Sized,
+    I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
+    E: ParserExtra<'tokens, I>,
+{
+}
+
 pub fn parser<'tokens, 'src: 'tokens, TInput>()
--> impl Parser<'tokens, TInput, Stmt<'src>, extra::Err<Rich<'tokens, Token<'src>, Span>>>
+-> impl Parser<'tokens, TInput, Vec<Stmt<'src>>, extra::Err<Rich<'tokens, Token<'src>, Span>>>
 where
     TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
 {
-    let expr = recursive(|expr| {
-        let literal = select! {
-            Token::Num(s) => Expr::Literal(Literal::Num(s)),
-            Token::Str(s) => Expr::Literal(Literal::Str(s)),
-        }
-        .labelled("literal");
+    let just_symbol = |s: &'static str| just(Token::Symbol(s));
 
-        let just_symbol = |s: &'static str| just(Token::Symbol(s));
-
-        let ident = select! {
-            Token::Ident(s) => Ident(s),
-        }
-        .labelled("identifier");
-
-        let placeholder = just_symbol("$")
-            .map(|_| Expr::Placeholder)
-            .labelled("placeholder");
-
-        let separator = choice((
-            just_symbol(",")
-                .padded_by(just(Token::Separator).repeated())
-                .to(()),
-            just(Token::Separator).repeated().at_least(1).to(()),
-        ))
-        .labelled("separator");
-
-        let list = just(Token::Separator)
+    let stmt = recursive(|stmt| {
+        let block = stmt
+            .clone()
             .repeated()
-            .ignore_then(choice((
+            .collect()
+            .delimited_by(just_symbol("{"), just_symbol("}"))
+            .map(Block::Stmts);
+
+        let multi_decl = select! {
+            Token::Ident(s) => Decl::Single(SingleDecl { ident: Ident(s), typ: None }),
+        };
+
+        let expr = recursive(|expr| {
+            let block_or_expr = choice((
+                block.clone(),
+                expr.clone().map(|x| Block::Expr(Box::new(x))),
+            ));
+
+            let literal = select! {
+                Token::Num(s) => Expr::Literal(Literal::Num(s)),
+                Token::Str(s) => Expr::Literal(Literal::Str(s)),
+            }
+            .labelled("literal");
+
+            let ident = select! {
+                Token::Ident(s) => Ident(s),
+            }
+            .labelled("identifier");
+
+            let list = enumeration(choice((
                 just_symbol("*")
                     .ignore_then(expr.clone())
                     .map(ListItem::Spread),
                 expr.clone().map(ListItem::Item),
             )))
-            .separated_by(separator.clone())
-            .allow_trailing()
-            .collect()
             .map(Expr::List)
             .delimited_by(just_symbol("["), just_symbol("]"))
             .labelled("list");
 
-        let mapping = just(Token::Separator)
-            .repeated()
-            .ignore_then(choice((
+            let mapping = enumeration(choice((
                 just_symbol("**")
                     .ignore_then(expr.clone())
                     .map(MappingItem::Spread),
@@ -154,80 +224,135 @@ where
                     .then(expr.clone())
                     .map(|(key, value)| MappingItem::Item(key, value)),
             )))
-            .separated_by(separator.clone())
-            .allow_trailing()
-            .collect()
             .map(Expr::Mapping)
             .delimited_by(just(Token::Symbol("[")), just(Token::Symbol("]")))
             .labelled("mapping");
 
-        let call_list = just(Token::Separator)
-            .repeated()
-            .ignore_then(choice((
+            let atom = choice((
+                literal,
+                ident.map(Expr::Ident),
+                list,
+                mapping,
+                expr.clone()
+                    .delimited_by(just(Token::Symbol("(")), just(Token::Symbol(")"))),
+            ))
+            .pad_cont();
+
+            let call = enumeration(choice((
                 just_symbol("*")
                     .ignore_then(expr.clone())
                     .map(CallItem::ArgSpread),
                 just_symbol("**")
                     .ignore_then(expr.clone())
                     .map(CallItem::KwargSpread),
-                expr.clone().map(CallItem::Arg),
                 ident
                     .clone()
                     .then_ignore(just_symbol("="))
                     .then(expr.clone())
                     .map(|(key, value)| CallItem::Kwarg(key, value)),
+                expr.clone().map(CallItem::Arg),
             )))
-            .separated_by(separator.clone())
-            .allow_trailing()
-            .collect()
             .delimited_by(just(Token::Symbol("(")), just(Token::Symbol(")")))
-            .labelled("arg-list");
+            .labelled("call");
 
-        let atom = choice((
-            literal,
-            placeholder,
-            ident.map(Expr::Ident),
-            list,
-            mapping,
-            expr.delimited_by(just(Token::Symbol("(")), just(Token::Symbol(")"))),
-        ));
+            let getitem = enumeration(choice((expr.clone(),)))
+                .delimited_by(just(Token::Symbol("[")), just(Token::Symbol("]")))
+                .labelled("getitem");
 
-        let call = atom.foldl(call_list.repeated(), |expr, args| {
-            Expr::Call(Box::new(expr), args)
-        });
+            let attribute = just_symbol(".").ignore_then(ident);
 
-        let item_list = just(Token::Separator)
+            let then = just_symbol(".").ignore_then(
+                expr.clone()
+                    .delimited_by(just_symbol("("), just_symbol(")")),
+            );
+
+            enum Postfix<'a> {
+                Call(Vec<CallItem<'a>>),
+                GetItem(Vec<Expr<'a>>),
+                Then(Expr<'a>),
+                Attribute(Ident<'a>),
+            }
+
+            let postfix = atom.foldl(
+                choice((
+                    call.map(Postfix::Call),
+                    getitem.map(Postfix::GetItem),
+                    attribute.map(Postfix::Attribute),
+                    then.map(Postfix::Then),
+                ))
+                .repeated(),
+                |expr, op: Postfix<'src>| match op {
+                    Postfix::Call(args) => Expr::Call(Box::new(expr), args),
+                    Postfix::GetItem(args) => Expr::Index(Box::new(expr), args),
+                    Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
+                    Postfix::Then(rhs) => Expr::Pipe(Box::new(expr), Box::new(rhs)),
+                },
+            );
+
+            let unary = select! {
+                Token::Symbol("+") => UnaryOp::Pos,
+                Token::Symbol("-") => UnaryOp::Neg,
+                Token::Symbol("~") => UnaryOp::Inv,
+            }
             .repeated()
-            .ignore_then(choice((expr.clone().map(CallItem::Arg),)))
-            .separated_by(separator.clone())
-            .allow_trailing()
-            .delimited_by(just(Token::Symbol("(")), just(Token::Symbol(")")))
-            .labelled("arg-list");
+            .foldr(postfix, |op, rhs| Expr::Unary(op, Box::new(rhs)));
 
-        let attribute = call.foldl(
-            just_symbol(".").ignore_then(ident).repeated(),
-            |expr, attr| Expr::Attribute(Box::new(expr), attr),
-        );
+            let if_ = just(Token::Kw("if"))
+                .ignore_then(group((
+                    expr.clone().then_ignore(just_symbol(";")),
+                    block_or_expr.clone(),
+                    group((
+                        one_of([Token::Continuation, Token::Eol]).or_not(),
+                        just(Token::Kw("else")),
+                        just_symbol(";"),
+                    ))
+                    .ignore_then(block_or_expr.clone())
+                    .or_not(),
+                )))
+                .map(|(cond, if_, else_)| Expr::If(Box::new(cond), if_, else_));
 
-        // let unary_op = select! {
-        //     Token::Symbol("+") => UnaryOp::Pos,
-        //     Token::Symbol("-") => UnaryOp::Neg,
-        //     Token::Symbol("~") => UnaryOp::Inv,
-        // };
+            // let pipe = unary
+            //     .then_ignore(just_symbol("|>").then(unary))
+            //     .map(|(lhs, rhs)| Expr::Pipe(Box::new(lhs), Box::new(rhs)));
 
-        // let unary = unary_op
-        //     .repeated()
-        //     .fold(atom, |op, rhs| Expr::Unary(op, Box::new(rhs)));
+            choice((unary, if_))
+        })
+        .labelled("expression");
 
-        // let pipe = unary
-        //     .then_ignore(just_symbol("|>").then(unary))
-        //     .map(|(lhs, rhs)| Expr::Pipe(Box::new(lhs), Box::new(rhs)));
+        let expr_stmt = expr
+            .clone()
+            .map(Stmt::Expr)
+            .then_ignore(just(Token::Eol))
+            .labelled("expression statement");
 
-        attribute
+        let assign_stmt = multi_decl
+            .then_ignore(just_symbol("="))
+            .then(expr.clone())
+            .map(|(decl, expr)| Stmt::Assign(decl, expr))
+            .then_ignore(just(Token::Eol))
+            .labelled("assignment statement");
+
+        let while_stmt = just(Token::Kw("while"))
+            .ignore_then(expr.clone())
+            .then_ignore(just_symbol(";"))
+            .then(block.clone())
+            .map(|(cond, body)| Stmt::While(cond, body))
+            .labelled("while statement");
+
+        let for_stmt = just(Token::Kw("for"))
+            .ignore_then(group((
+                multi_decl.clone().then_ignore(just_symbol("in")),
+                expr.clone().then_ignore(just_symbol(";")),
+                block.clone(),
+            )))
+            .map(|(decl, iter, body)| Stmt::For(decl, iter, body))
+            .labelled("for statement");
+
+        choice((expr_stmt, assign_stmt, while_stmt, for_stmt))
     })
-    .labelled("expression");
+    .labelled("statement");
 
-    just(Token::BeginBlock)
-        .ignore_then(expr.map(Stmt::Expr))
-        .then_ignore(just(Token::EndBlock))
+    stmt.repeated()
+        .collect::<Vec<_>>()
+        .delimited_by(just_symbol("{"), just_symbol("}").then(just(Token::Eol)))
 }
