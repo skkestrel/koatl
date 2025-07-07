@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use chumsky::{
     input::{Cursor, InputRef, StrInput},
     prelude::*,
@@ -259,14 +261,14 @@ where
         just(">="),
         just("//"),
         just("**"),
-        one_of("+-*/%|&$:;=,.()[]<>").to_slice(),
+        one_of("+-*/%|&$:;=,.()[]<>\\").to_slice(),
     ))
     .map(Token::Symbol);
 
     static KEYWORDS: &[&str] = &[
-        "fn", "if", "else", "match", "import", "class", "while", "for", "break", "continue",
-        "with", "yield", "global", "nonlocal", "return", "raise", "try", "except", "finally",
-        "and", "or", "not",
+        "if", "else", "match", "import", "class", "while", "for", "break", "continue", "with",
+        "yield", "global", "nonlocal", "return", "raise", "try", "except", "finally", "and", "or",
+        "not",
     ];
 
     let ident = text::ascii::ident().map(|ident: &str| {

@@ -1,9 +1,4 @@
-[1, 2]([a: b, **a],
-   *a, **b, c=2)
+c = \x, y, z; 1
 
-b = if a;
-   b
-else;
-   c
-
-a = if a; b else; 2
+a = 2
+b = 3

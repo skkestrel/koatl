@@ -2,19 +2,22 @@
 
 pub mod lexer;
 pub mod parser;
+pub mod py;
 
 use ariadne::{Color, Label, Report, ReportKind, sources};
 use chumsky::prelude::*;
+use pyo3::types::{PyAnyMethods, PyTracebackMethods};
 
 use crate::lexer::tokenize;
 use crate::parser::parser;
+use crate::py::{TlErr, transpile};
 
 fn main() {
     let filename = std::env::args().nth(1).unwrap();
     let src = std::fs::read_to_string(&filename).unwrap();
 
-    let (tokens, mut errs) = tokenize(&src);
-    let (ast, mut parse_errs) = parser()
+    let (tokens, errs) = tokenize(&src);
+    let (ast, parse_errs) = parser()
         .parse(
             tokens
                 .0
@@ -23,8 +26,8 @@ fn main() {
         )
         .into_output_errors();
 
-    println!("{tokens}");
-    println!("{ast:?}");
+    // println!("{tokens}");
+    // println!("{ast:?}");
 
     errs.into_iter()
         .map(|e| e.map_token(|c| c.to_string()))
@@ -51,4 +54,27 @@ fn main() {
                 .eprint(sources([(filename.clone(), src.clone())]))
                 .unwrap()
         });
+
+    if let Some(ast) = ast {
+        match transpile(ast) {
+            Ok(code) => {
+                println!("{}", code);
+            }
+            Err(e) => match e {
+                TlErr::PyErr(e) => {
+                    println!("{}", e);
+                    pyo3::Python::with_gil(|py| {
+                        if let Some(tb) = e.traceback(py) {
+                            if let Ok(formatted) = tb.format() {
+                                println!("{}", formatted);
+                            }
+                        }
+                    });
+                }
+                TlErr::Other(msg) => {
+                    println!("Error: {}", msg);
+                }
+            },
+        }
+    }
 }
