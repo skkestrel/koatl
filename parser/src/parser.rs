@@ -384,7 +384,7 @@ where
         .spanned()
         .labelled("function definition");
 
-    sexpr.define(choice((atom, fn_, if_, match_)).labelled("expression"));
+    sexpr.define(choice((unary, fn_, if_, match_)).labelled("expression"));
 
     let expr_stmt = sexpr
         .clone()
@@ -418,7 +418,37 @@ where
         .map(|(decl, iter, body)| Stmt::For(decl, iter, body))
         .labelled("for statement");
 
-    stmt.define(choice((expr_stmt, assign_stmt, while_stmt, for_stmt)).labelled("statement"));
+    let return_stmt = just(Token::Kw("return"))
+        .pad_cont()
+        .ignore_then(sexpr.clone())
+        .then_ignore(just(Token::Eol))
+        .map(Stmt::Return)
+        .labelled("return statement");
+
+    let break_stmt = just(Token::Kw("break"))
+        .pad_cont()
+        .ignore_then(just(Token::Eol))
+        .map(|_| Stmt::Break)
+        .labelled("break statement");
+
+    let continue_stmt = just(Token::Kw("continue"))
+        .pad_cont()
+        .ignore_then(just(Token::Eol))
+        .map(|_| Stmt::Continue)
+        .labelled("continue statement");
+
+    stmt.define(
+        choice((
+            expr_stmt,
+            assign_stmt,
+            while_stmt,
+            for_stmt,
+            return_stmt,
+            break_stmt,
+            continue_stmt,
+        ))
+        .labelled("statement"),
+    );
 
     stmt.spanned()
         .repeated()

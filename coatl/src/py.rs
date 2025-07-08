@@ -150,10 +150,10 @@ struct PyExprWithAux {
 
 fn transpile_fn<'py>(
     ast: &PyAst<'py>,
-    func: Expr,
+    func: SExpr,
     name: Option<Cow<str>>,
 ) -> TlResult<PyExprWithAux> {
-    let Expr::Fn(arglist, body) = func else {
+    let (Expr::Fn(arglist, body), span) = func else {
         return Err(TlErr::Other("expected a function expression".to_owned()));
     };
 
@@ -213,7 +213,7 @@ fn transpile_fn<'py>(
         }
     };
 
-    let name = name.unwrap_or(Cow::from(format!("__tl{}", 0)));
+    let name = name.unwrap_or(Cow::from(format!("__tl{}", span.start)));
     let decorators = empty();
 
     aux_stmts.push(ast.method1_unbound("FunctionDef", (&name, args, body_ast, decorators))?);
@@ -233,7 +233,7 @@ fn transpile_expr<'py>(ast: &PyAst<'py>, expr: SExpr) -> TlResult<PyExprWithAux>
     let (expr, span) = expr;
 
     match expr {
-        Expr::Fn(arglist, body) => transpile_fn(ast, Expr::Fn(arglist, body), None),
+        Expr::Fn(arglist, body) => transpile_fn(ast, (Expr::Fn(arglist, body), span), None),
         Expr::Literal((lit, span)) => {
             let value = match lit {
                 Literal::Num(num) => ast.constant(
@@ -284,6 +284,7 @@ pub fn transpile(block: SBlock) -> TlResult<String> {
             .extract()?;
 
         println!("{}", dump);
+        println!();
 
         return Ok(source);
     })
