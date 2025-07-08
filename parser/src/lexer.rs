@@ -14,7 +14,7 @@ pub enum Token<'src> {
     Ident(&'src str),
     Bool(bool),
     Num(&'src str),
-    Str(&'src str),
+    VerbatimStr(&'src str),
     Kw(&'src str),
     Symbol(&'src str),
 
@@ -27,7 +27,7 @@ impl fmt::Display for Token<'_> {
         match self {
             Token::Bool(x) => write!(f, "{x}"),
             Token::Num(n) => write!(f, "{n}"),
-            Token::Str(s) => write!(f, "{s}"),
+            Token::VerbatimStr(s) => write!(f, "{s}"),
             Token::Symbol(s) => write!(f, "{s}"),
             Token::Ident(s) => write!(f, "{s}"),
             Token::Kw(s) => write!(f, "<{s}>"),
@@ -52,13 +52,19 @@ struct LineCursors<'src, 'parse> {
     line_end: Cursor<'src, 'parse, &'src str>,
 }
 
+enum LineParseErr {
+    UnterminatedString,
+    UnterminatedVerbatimString,
+    Eof,
+}
+
 fn parse_line<'src, 'parse, 'input>(
     input: &'input mut InputRef<'src, 'parse, &'src str, extra::Err<Rich<'src, char, Span>>>,
-) -> Option<LineCursors<'src, 'parse>> {
+) -> Result<LineCursors<'src, 'parse>, LineParseErr> {
     let line_start = input.cursor();
 
     if input.peek().is_none() {
-        return None;
+        return Err(LineParseErr::Eof);
     }
 
     while let Some(chr) = input.peek() {
@@ -70,28 +76,76 @@ fn parse_line<'src, 'parse, 'input>(
 
     let text_start = input.cursor();
     let mut text_end = text_start.clone();
+    let mut quotes_in_a_row = 0;
+    let mut in_regular_string = false;
+    let mut in_verbatim_string = false;
+    let mut in_comment = false;
+    let mut prev_char = '\0';
 
     while let Some(char) = input.peek() {
-        if char == '\n' {
-            input.next();
-            break;
-        } else if char == '\r' {
-            input.next();
-            if input.peek() == Some('\n') {
+        if !in_verbatim_string {
+            if char == '\n' {
                 input.next();
+
+                if in_regular_string {
+                    return Err(LineParseErr::UnterminatedString);
+                }
+
+                break;
             }
-            break;
-        } else if char == ' ' || char == '\t' {
+
+            if char == '\r' {
+                input.next();
+                if input.peek() == Some('\n') {
+                    input.next();
+
+                    if in_regular_string {
+                        return Err(LineParseErr::UnterminatedString);
+                    }
+                }
+                break;
+            }
+        }
+
+        if char == ' ' || char == '\t' {
             input.next();
         } else {
+            if !in_comment {
+                if prev_char != '"' {
+                    quotes_in_a_row = 0;
+                }
+                if char == '"' {
+                    quotes_in_a_row += 1;
+
+                    if quotes_in_a_row == 3 {
+                        in_verbatim_string = !in_verbatim_string;
+                        in_regular_string = false;
+                        quotes_in_a_row = 0;
+                    } else {
+                        in_regular_string = !in_regular_string;
+                    }
+                } else {
+                    quotes_in_a_row = 0;
+                }
+            }
+
+            if char == '#' && !in_verbatim_string && !in_regular_string {
+                in_comment = true;
+            }
+
             input.next();
-            text_end = input.cursor();
+
+            if !in_comment {
+                text_end = input.cursor();
+            }
         }
+
+        prev_char = char;
     }
 
     let line_end = input.cursor();
 
-    Some(LineCursors {
+    Ok(LineCursors {
         line_start: line_start,
         text_start: text_start,
         text_end: text_end,
@@ -112,96 +166,115 @@ fn semantic_whitespace<'src>()
         let mut indents = Vec::<IndentationLevel>::new();
         let mut expecting_block = true;
 
-        while let Some(LineCursors {
-            line_start,
-            text_start,
-            text_end,
-            line_end,
-        }) = parse_line(input)
-        {
-            let text: &str = input.slice(&text_start..&text_end);
-            let indent: &str = input.slice(&line_start..&text_start);
+        loop {
+            let parsed = parse_line(input);
+            match parsed {
+                Ok(LineCursors {
+                    line_start,
+                    text_start,
+                    text_end,
+                    line_end,
+                }) => {
+                    let text: &str = input.slice(&text_start..&text_end);
+                    let indent: &str = input.slice(&line_start..&text_start);
 
-            if text.is_empty() {
-                continue;
-            }
+                    if text.is_empty() {
+                        continue;
+                    }
 
-            let mut found = false;
-            for (i, block) in indents.iter().enumerate() {
-                if indent == block.indentation {
-                    for _ in i + 1..indents.len() {
-                        let popped = indents.pop();
+                    let mut found = false;
+                    for (i, block) in indents.iter().enumerate() {
+                        if indent == block.indentation {
+                            for _ in i + 1..indents.len() {
+                                let popped = indents.pop();
 
-                        if !popped.unwrap().is_continuation {
-                            lines.push(LexerLine::EndBlock(
+                                if !popped.unwrap().is_continuation {
+                                    lines.push(LexerLine::EndBlock(
+                                        Span::new((), *line_start.inner()..*text_start.inner()),
+                                        Token::Eol,
+                                    ));
+                                }
+                            }
+
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if !found {
+                        if indents.is_empty()
+                            || indent.starts_with(indents.last().unwrap().indentation)
+                        {
+                            if expecting_block {
+                                lines.push(LexerLine::BeginBlock(Span::new(
+                                    (),
+                                    *line_start.inner()..*text_start.inner(),
+                                )));
+                            }
+
+                            indents.push(IndentationLevel {
+                                indentation: indent,
+                                start_cursor: *line_start.inner(),
+                                is_continuation: !expecting_block,
+                            });
+                        } else {
+                            lines.push(LexerLine::IndentError(
+                                "unaligned indentation",
                                 Span::new((), *line_start.inner()..*text_start.inner()),
-                                Token::Eol,
+                            ));
+
+                            continue;
+                        }
+                    } else {
+                        if expecting_block {
+                            lines.push(LexerLine::IndentError(
+                                "expected indented block",
+                                Span::new((), *line_start.inner()..*text_start.inner()),
                             ));
                         }
                     }
 
-                    found = true;
-                    break;
-                }
-            }
-
-            if !found {
-                if indents.is_empty() || indent.starts_with(indents.last().unwrap().indentation) {
-                    if expecting_block {
-                        lines.push(LexerLine::BeginBlock(Span::new(
-                            (),
-                            *line_start.inner()..*text_start.inner(),
-                        )));
+                    if indents.last().unwrap().is_continuation {
+                        match lines.pop().unwrap() {
+                            LexerLine::Line(a, b, _) => {
+                                lines.push(LexerLine::Line(a, b, Some(Token::Continuation)));
+                            }
+                            LexerLine::EndBlock(a, _) => {
+                                lines.push(LexerLine::EndBlock(a, Token::Continuation));
+                            }
+                            LexerLine::BeginBlock(_) => {
+                                panic!();
+                            }
+                            LexerLine::IndentError(_, _) => (),
+                        }
                     }
 
-                    indents.push(IndentationLevel {
-                        indentation: indent,
-                        start_cursor: *line_start.inner(),
-                        is_continuation: !expecting_block,
-                    });
-                } else {
-                    lines.push(LexerLine::IndentError(
-                        "unaligned indentation",
-                        Span::new((), *line_start.inner()..*text_start.inner()),
-                    ));
+                    expecting_block = text.ends_with(';');
 
-                    continue;
-                }
-            } else {
-                if expecting_block {
-                    lines.push(LexerLine::IndentError(
-                        "expected indented block",
-                        Span::new((), *line_start.inner()..*text_start.inner()),
+                    lines.push(LexerLine::Line(
+                        text,
+                        Span::new((), *text_start.inner()..*text_end.inner()),
+                        if expecting_block {
+                            None
+                        } else {
+                            Some(Token::Eol)
+                        },
                     ));
                 }
-            }
-
-            if indents.last().unwrap().is_continuation {
-                match lines.pop().unwrap() {
-                    LexerLine::Line(a, b, _) => {
-                        lines.push(LexerLine::Line(a, b, Some(Token::Continuation)));
-                    }
-                    LexerLine::EndBlock(a, _) => {
-                        lines.push(LexerLine::EndBlock(a, Token::Continuation));
-                    }
-                    LexerLine::BeginBlock(_) => {
-                        panic!();
-                    }
-                    LexerLine::IndentError(_, _) => (),
+                Err(LineParseErr::Eof) => break,
+                Err(LineParseErr::UnterminatedString) => {
+                    return Err(Rich::custom(
+                        Span::new((), *input.cursor().inner()..*input.cursor().inner()),
+                        "unterminated string",
+                    ));
+                }
+                Err(LineParseErr::UnterminatedVerbatimString) => {
+                    return Err(Rich::custom(
+                        Span::new((), *input.cursor().inner()..*input.cursor().inner()),
+                        "unterminated verbatim string",
+                    ));
                 }
             }
-
-            expecting_block = text.ends_with(';');
-
-            lines.push(LexerLine::Line(
-                text,
-                Span::new((), *text_start.inner()..*text_end.inner()),
-                if expecting_block {
-                    None
-                } else {
-                    Some(Token::Eol)
-                },
-            ));
         }
 
         while !indents.is_empty() {
@@ -252,7 +325,7 @@ where
     let str_ = just('"')
         .ignore_then(none_of('"').repeated().to_slice())
         .then_ignore(just('"'))
-        .map(Token::Str);
+        .map(Token::VerbatimStr);
 
     let symbol = choice((
         just("=="),

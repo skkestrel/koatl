@@ -1,30 +1,19 @@
 #![allow(unused_variables)]
 
-pub mod lexer;
-pub mod parser;
 pub mod py;
 
 use ariadne::{Color, Label, Report, ReportKind, sources};
-use chumsky::prelude::*;
 use pyo3::types::PyTracebackMethods;
 
-use crate::lexer::tokenize;
-use crate::parser::parser;
 use crate::py::{TlErr, transpile};
+use parser::{parse_tokens, tokenize};
 
 fn main() {
     let filename = std::env::args().nth(1).unwrap();
     let src = std::fs::read_to_string(&filename).unwrap();
 
     let (tokens, errs) = tokenize(&src);
-    let (ast, parse_errs) = parser()
-        .parse(
-            tokens
-                .0
-                .as_slice()
-                .map((src.len()..src.len()).into(), |(t, s)| (t, s)),
-        )
-        .into_output_errors();
+    let (ast, parse_errs) = parse_tokens(&src, &tokens);
 
     // println!("{tokens}");
     // println!("{ast:?}");

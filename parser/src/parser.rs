@@ -203,7 +203,7 @@ where
 
     let literal = select! {
         Token::Num(s) => Literal::Num(s),
-        Token::Str(s) => Literal::Str(s),
+        Token::VerbatimStr(s) => Literal::Str(s),
     }
     .spanned()
     .map(Expr::Literal)
@@ -247,8 +247,7 @@ where
         sexpr
             .clone()
             .delimited_by(just(Token::Symbol("(")), just(Token::Symbol(")"))),
-    ))
-    .pad_cont();
+    ));
 
     enum Postfix<'a> {
         Call(Vec<SCallItem<'a>>),
@@ -276,33 +275,29 @@ where
     )
     .delimited_by(just(Token::Symbol("(")), just(Token::Symbol(")")))
     .map(Postfix::Call)
-    .pad_cont()
     .labelled("call");
 
     let getitem = enumeration(choice((sexpr.clone(),)))
         .delimited_by(just(Token::Symbol("[")), just(Token::Symbol("]")))
         .map(Postfix::GetItem)
-        .pad_cont()
         .labelled("getitem");
 
     let attribute = just_symbol(".")
         .pad_cont()
         .ignore_then(ident.clone())
         .map(Postfix::Attribute)
-        .pad_cont()
         .labelled("attr");
 
     let then = just_symbol(".").pad_cont().ignore_then(
         sexpr
             .clone()
             .delimited_by(just_symbol("("), just_symbol(")"))
-            .pad_cont()
             .map(Postfix::Then)
             .labelled("then"),
     );
 
-    let postfix = atom.foldl_with(
-        choice((getitem, attribute, then)).repeated(),
+    let postfix = atom.clone().foldl_with(
+        choice((call, getitem, attribute, then)).repeated(),
         |expr, op, e| -> SExpr {
             (
                 match op {
@@ -316,17 +311,15 @@ where
         },
     );
 
-    let unary = postfix;
-
-    // let unary = select! {
-    //     Token::Symbol("+") => UnaryOp::Pos,
-    //     Token::Symbol("-") => UnaryOp::Neg,
-    //     Token::Symbol("~") => UnaryOp::Inv,
-    // }
-    // .repeated()
-    // .foldr_with(postfix, |op: UnaryOp, rhs: SExpr, e| {
-    //     (Expr::Unary(op, Box::new(rhs)), e.span())
-    // });
+    let unary = select! {
+        Token::Symbol("+") => UnaryOp::Pos,
+        Token::Symbol("-") => UnaryOp::Neg,
+        Token::Symbol("~") => UnaryOp::Inv,
+    }
+    .repeated()
+    .foldr_with(postfix, |op: UnaryOp, rhs: SExpr, e| {
+        (Expr::Unary(op, Box::new(rhs)), e.span())
+    });
 
     let if_ = just(Token::Kw("if"))
         .pad_cont()
@@ -341,7 +334,9 @@ where
             .ignore_then(sblock_or_expr.clone())
             .or_not(),
         )))
-        .map(|(cond, if_, else_)| Expr::If(Box::new(cond), Box::new(if_), else_.map(Box::new)));
+        .map(|(cond, if_, else_)| Expr::If(Box::new(cond), Box::new(if_), else_.map(Box::new)))
+        .spanned()
+        .labelled("if");
 
     let case_ = sexpr
         .clone()
@@ -360,7 +355,9 @@ where
                 .collect()
                 .delimited_by(just_symbol("{"), just_symbol("}")),
         )
-        .map(|(scrutinee, cases)| Expr::Match(Box::new(scrutinee), cases));
+        .map(|(scrutinee, cases)| Expr::Match(Box::new(scrutinee), cases))
+        .spanned()
+        .labelled("match");
 
     let arg_list = enumeration(choice((
         just_symbol("*")
@@ -384,9 +381,10 @@ where
         .then_ignore(just_symbol(";"))
         .then(sblock_or_expr.clone())
         .map(|(args, body)| Expr::Fn(args, Box::new(body)))
+        .spanned()
         .labelled("function definition");
 
-    sexpr.define(choice((match_, if_, fn_)).spanned().labelled("expression"));
+    sexpr.define(choice((atom, fn_, if_, match_)).labelled("expression"));
 
     let expr_stmt = sexpr
         .clone()
@@ -428,4 +426,18 @@ where
         .map(Block::Stmts)
         .spanned()
         .delimited_by(just_symbol("{"), just_symbol("}").then(just(Token::Eol)))
+}
+
+pub fn parse_tokens<'tokens, 'src: 'tokens>(
+    src: &'src str,
+    tokens: &'src TokenList<'src>,
+) -> (Option<SBlock<'src>>, Vec<Rich<'tokens, Token<'src>, Span>>) {
+    parser()
+        .parse(
+            tokens
+                .0
+                .as_slice()
+                .map((src.len()..src.len()).into(), |(t, s)| (t, s)),
+        )
+        .into_output_errors()
 }

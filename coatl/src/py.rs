@@ -1,8 +1,7 @@
 use std::borrow::Cow;
 
+use parser::*;
 use pyo3::{call::PyCallArgs, prelude::*, types::PyDict};
-
-use crate::parser::*;
 
 pub enum TlErr {
     PyErr(PyErr),
