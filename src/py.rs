@@ -73,7 +73,9 @@ impl<'py> PyAst<'py> {
     }
 }
 
-fn transpile_block<'py>(ast: &PyAst<'py>, block: Block) -> TlResult<PyStmts> {
+fn transpile_block<'py>(ast: &PyAst<'py>, block: SBlock) -> TlResult<PyStmts> {
+    let (block, span) = block;
+
     match block {
         Block::Stmts(stmts) => {
             let mut result = Vec::new();
@@ -83,13 +85,19 @@ fn transpile_block<'py>(ast: &PyAst<'py>, block: Block) -> TlResult<PyStmts> {
             }
             Ok(result)
         }
-        Block::Expr(expr) => {
-            panic!();
+        Block::Expr(sexpr) => {
+            let t = transpile_expr(ast, sexpr)?;
+            let mut stmts = t.aux_stmts;
+            stmts.push(ast.method1_unbound("Expr", (t.expr,))?);
+
+            Ok(stmts)
         }
     }
 }
 
-fn transpile_stmt<'py>(ast: &PyAst<'py>, stmt: Stmt) -> TlResult<PyStmts> {
+fn transpile_stmt<'py>(ast: &PyAst<'py>, stmt: SStmt) -> TlResult<PyStmts> {
+    let (stmt, span) = stmt;
+
     match stmt {
         Stmt::Expr(expr) => {
             let expr = transpile_expr(ast, expr)?;
@@ -106,7 +114,7 @@ fn transpile_stmt<'py>(ast: &PyAst<'py>, stmt: Stmt) -> TlResult<PyStmts> {
 
             Ok(stmts)
         }
-        Stmt::Assign(target, value) => {
+        Stmt::Assign((target, target_span), value) => {
             let value = transpile_expr(ast, value)?;
             let mut stmts = value.aux_stmts;
 
@@ -196,10 +204,10 @@ fn transpile_fn<'py>(
         (posonly, args, vararg, kwonly, kw_defaults, kwarg, defaults),
     )?;
 
-    let body = match body {
-        Block::Stmts(stmts) => transpile_block(ast, Block::Stmts(stmts))?,
-        Block::Expr(expr) => {
-            let mut expr = transpile_expr(ast, *expr)?;
+    let body_ast = match *body {
+        (Block::Stmts(stmts), span) => transpile_block(ast, (Block::Stmts(stmts), span))?,
+        (Block::Expr(expr), span) => {
+            let mut expr = transpile_expr(ast, expr)?;
             aux_stmts.append(&mut expr.aux_stmts);
 
             vec![ast.method1_unbound("Return", (expr.expr,))?]
@@ -209,7 +217,7 @@ fn transpile_fn<'py>(
     let name = name.unwrap_or(Cow::from(format!("__tl{}", 0)));
     let decorators = empty();
 
-    aux_stmts.push(ast.method1_unbound("FunctionDef", (&name, args, body, decorators))?);
+    aux_stmts.push(ast.method1_unbound("FunctionDef", (&name, args, body_ast, decorators))?);
 
     Ok(PyExprWithAux {
         expr: ast.name(&name, NameCtx::Load)?,
@@ -217,15 +225,17 @@ fn transpile_fn<'py>(
     })
 }
 
-fn transpile_expr<'py>(ast: &PyAst<'py>, expr: Expr) -> TlResult<PyExprWithAux> {
+fn transpile_expr<'py>(ast: &PyAst<'py>, expr: SExpr) -> TlResult<PyExprWithAux> {
     let no_aux = |expr| PyExprWithAux {
         expr,
         aux_stmts: vec![],
     };
 
+    let (expr, span) = expr;
+
     match expr {
         Expr::Fn(arglist, body) => transpile_fn(ast, Expr::Fn(arglist, body), None),
-        Expr::Literal(lit) => {
+        Expr::Literal((lit, span)) => {
             let value = match lit {
                 Literal::Num(num) => ast.constant(
                     num.parse::<i128>()
@@ -236,8 +246,8 @@ fn transpile_expr<'py>(ast: &PyAst<'py>, expr: Expr) -> TlResult<PyExprWithAux> 
 
             Ok(no_aux(value))
         }
-        Expr::Ident(ident) => {
-            let name = ast.name(ident.0, NameCtx::Load)?;
+        Expr::Ident((ident, span)) => {
+            let name = ast.name(ident, NameCtx::Load)?;
             Ok(no_aux(name))
         }
         Expr::Attribute(obj, attr) => {
@@ -252,7 +262,7 @@ fn transpile_expr<'py>(ast: &PyAst<'py>, expr: Expr) -> TlResult<PyExprWithAux> 
     }
 }
 
-pub fn transpile(block: Block) -> TlResult<String> {
+pub fn transpile(block: SBlock) -> TlResult<String> {
     Python::with_gil(move |py| {
         let ast = PyAst::new(py)?;
 
