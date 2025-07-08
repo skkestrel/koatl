@@ -31,26 +31,14 @@ pub enum UnaryOp {
 pub struct Ident<'a>(pub &'a str);
 
 #[derive(Debug)]
-pub struct SingleDecl<'a> {
-    pub ident: Ident<'a>,
-    pub typ: Option<Expr<'a>>,
-}
-
-#[derive(Debug)]
-pub enum Decl<'a> {
-    Single(SingleDecl<'a>),
-    Unpack(Box<Decl<'a>>),
-}
-
-#[derive(Debug)]
 pub enum Stmt<'a> {
     Global(Vec<Ident<'a>>),
     Nonlocal(Vec<Ident<'a>>),
-    Assign(Decl<'a>, Expr<'a>),
+    Assign(Expr<'a>, Expr<'a>),
     Return(Expr<'a>),
     Expr(Expr<'a>),
     While(Expr<'a>, Block<'a>),
-    For(Decl<'a>, Expr<'a>, Block<'a>),
+    For(Expr<'a>, Expr<'a>, Block<'a>),
     Import(Vec<Ident<'a>>),
     Raise(Expr<'a>),
     Break,
@@ -92,10 +80,10 @@ pub enum CallItem<'a> {
 
 #[derive(Debug)]
 pub enum ArgItem<'a> {
-    Arg(SingleDecl<'a>),
-    DefaultArg(SingleDecl<'a>, Expr<'a>),
-    ArgSpread(SingleDecl<'a>),
-    KwargSpread(SingleDecl<'a>),
+    Arg(Ident<'a>),
+    DefaultArg(Ident<'a>, Expr<'a>),
+    ArgSpread(Ident<'a>),
+    KwargSpread(Ident<'a>),
 }
 
 #[derive(Debug)]
@@ -191,12 +179,6 @@ where
         expr.clone().map(|x| Block::Expr(Box::new(x))),
     ));
 
-    let single_decl = select! {
-        Token::Ident(s) => SingleDecl { ident: Ident(s), typ: None },
-    };
-
-    let multi_decl = single_decl.clone().map(Decl::Single);
-
     let literal = select! {
         Token::Num(s) => Expr::Literal(Literal::Num(s)),
         Token::Str(s) => Expr::Literal(Literal::Str(s)),
@@ -260,17 +242,17 @@ where
 
     let arg_list = enumeration(choice((
         just_symbol("*")
-            .ignore_then(single_decl.clone())
+            .ignore_then(ident.clone())
             .map(|x| ArgItem::ArgSpread(x)),
         just_symbol("**")
-            .ignore_then(single_decl.clone())
+            .ignore_then(ident.clone())
             .map(ArgItem::KwargSpread),
-        single_decl
+        ident
             .clone()
             .then_ignore(just_symbol("="))
             .then(expr.clone())
             .map(|(key, value)| ArgItem::DefaultArg(key, value)),
-        single_decl.clone().map(ArgItem::Arg),
+        ident.clone().map(ArgItem::Arg),
     )))
     .labelled("arg-list");
 
@@ -319,12 +301,12 @@ where
     let if_ = just(Token::Kw("if"))
         .pad_cont()
         .ignore_then(group((
-            expr.clone().then_ignore(just_symbol(";").or_not()),
+            expr.clone().then_ignore(just_symbol(";")),
             block_or_expr.clone(),
             group((
                 one_of([Token::Continuation, Token::Eol]).or_not(),
                 just(Token::Kw("else")),
-                just_symbol(";").or_not(),
+                just_symbol(";"),
             ))
             .ignore_then(block_or_expr.clone())
             .or_not(),
@@ -366,18 +348,18 @@ where
         .then_ignore(just(Token::Eol))
         .labelled("expression statement");
 
-    let assign_stmt = multi_decl
-        .pad_cont()
+    let assign_stmt = expr
+        .clone()
         .then_ignore(just_symbol("=").pad_cont())
         .then(expr.clone())
-        .map(|(decl, expr)| Stmt::Assign(decl, expr))
+        .map(|(lhs, rhs)| Stmt::Assign(lhs, rhs))
         .then_ignore(just(Token::Eol))
         .labelled("assignment statement");
 
     let while_stmt = just(Token::Kw("while"))
         .pad_cont()
         .ignore_then(expr.clone())
-        .then_ignore(just_symbol(";").or_not())
+        .then_ignore(just_symbol(";"))
         .then(block.clone())
         .map(|(cond, body)| Stmt::While(cond, body))
         .labelled("while statement");
@@ -385,11 +367,8 @@ where
     let for_stmt = just(Token::Kw("for"))
         .pad_cont()
         .ignore_then(group((
-            multi_decl
-                .clone()
-                .pad_cont()
-                .then_ignore(just_symbol("in").pad_cont()),
-            expr.clone().then_ignore(just_symbol(";").or_not()),
+            expr.clone().then_ignore(just_symbol("in").pad_cont()),
+            expr.clone().then_ignore(just_symbol(";")),
             block.clone(),
         )))
         .map(|(decl, iter, body)| Stmt::For(decl, iter, body))

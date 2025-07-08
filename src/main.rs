@@ -6,7 +6,7 @@ pub mod py;
 
 use ariadne::{Color, Label, Report, ReportKind, sources};
 use chumsky::prelude::*;
-use pyo3::types::{PyAnyMethods, PyTracebackMethods};
+use pyo3::types::PyTracebackMethods;
 
 use crate::lexer::tokenize;
 use crate::parser::parser;

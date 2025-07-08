@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use pyo3::{call::PyCallArgs, prelude::*, types::PyDict};
 
 use crate::parser::*;
@@ -15,16 +17,17 @@ impl From<PyErr> for TlErr {
 
 pub type TlResult<T> = Result<T, TlErr>;
 
-struct PyAst<'py> {
-    py: Python<'py>,
-    ast_module: Bound<'py, PyModule>,
-    constant_node: Bound<'py, PyAny>,
-}
-
+#[allow(dead_code)]
 enum NameCtx {
     Load,
     Store,
     Del,
+}
+
+struct PyAst<'py> {
+    py: Python<'py>,
+    ast_module: Bound<'py, PyModule>,
+    constant_node: Bound<'py, PyAny>,
 }
 
 impl<'py> PyAst<'py> {
@@ -49,14 +52,16 @@ impl<'py> PyAst<'py> {
             .map(|obj| obj.unbind())
     }
 
-    fn name(&self, name: &str, ctx: NameCtx) -> TlResult<PyObject> {
-        let ctx = match ctx {
+    fn name_ctx(&self, ctx: NameCtx) -> TlResult<Bound<'py, PyAny>> {
+        Ok(self.ast_module.getattr(match ctx {
             NameCtx::Load => "Load",
             NameCtx::Store => "Store",
             NameCtx::Del => "Del",
-        };
+        })?)
+    }
 
-        self.method1_unbound("Name", (name, self.ast_module.getattr(ctx)?))
+    fn name(&self, name: &str, ctx: NameCtx) -> TlResult<PyObject> {
+        self.method1_unbound("Name", (name, self.name_ctx(ctx)?))
     }
 
     fn module(&self, value: Vec<PyObject>) -> TlResult<PyObject> {
@@ -105,16 +110,22 @@ fn transpile_stmt<'py>(ast: &PyAst<'py>, stmt: Stmt) -> TlResult<PyStmts> {
             let value = transpile_expr(ast, value)?;
             let mut stmts = value.aux_stmts;
 
-            match target {
-                Decl::Single(name) => {
-                    let targets = vec![ast.name(name.ident.0, NameCtx::Store)?];
+            let target = match target {
+                Expr::Ident(ident) => ast.name(ident.0, NameCtx::Store),
+                Expr::Attribute(obj, attr) => {
+                    let mut obj = transpile_expr(ast, *obj)?;
+                    stmts.append(&mut obj.aux_stmts);
+                    ast.method1_unbound(
+                        "Attribute",
+                        (obj.expr, attr.0, ast.name_ctx(NameCtx::Store)?),
+                    )
+                }
+                _ => {
+                    return Err(TlErr::Other("assignment lhs is not acceptable".to_owned()));
+                }
+            }?;
 
-                    stmts.push(ast.method1_unbound("Assign", (targets, value.expr))?);
-                }
-                Decl::Unpack(names) => {
-                    panic!();
-                }
-            }
+            stmts.push(ast.method1_unbound("Assign", ([target], value.expr))?);
 
             Ok(stmts)
         }
@@ -130,79 +141,114 @@ struct PyExprWithAux {
     aux_stmts: PyStmts,
 }
 
-fn transpile_expr<'py>(ast: &PyAst<'py>, expr: Expr) -> TlResult<PyExprWithAux> {
-    match expr {
-        Expr::Fn(arglist, body) => {
-            let empty = || Vec::<PyObject>::new();
-            let posonly = empty();
-            let mut args = empty();
-            let mut vararg = empty();
-            let kwonly = empty();
-            let mut kwarg = empty();
-            let kw_defaults = empty();
-            let mut defaults = empty();
+fn transpile_fn<'py>(
+    ast: &PyAst<'py>,
+    func: Expr,
+    name: Option<Cow<str>>,
+) -> TlResult<PyExprWithAux> {
+    let Expr::Fn(arglist, body) = func else {
+        return Err(TlErr::Other("expected a function expression".to_owned()));
+    };
 
-            let arg_node = |name: &str| ast.method1_unbound("arg", (name, ast.py.None()));
+    let empty = || Vec::<PyObject>::new();
+    let posonly = empty();
+    let mut args = empty();
+    let mut vararg = empty();
+    let kwonly = empty();
+    let mut kwarg = empty();
+    let kw_defaults = empty();
+    let mut defaults = empty();
 
-            let mut aux_stmts = empty();
+    let arg_node = |name: &str| ast.method1_unbound("arg", (name, ast.py.None()));
 
-            for arg in arglist {
-                match arg {
-                    ArgItem::Arg(name) => {
-                        args.push(arg_node(name.ident.0)?);
-                        defaults.push(ast.py.None());
-                    }
-                    ArgItem::DefaultArg(name, default) => {
-                        let mut expr = transpile_expr(ast, default)?;
-                        aux_stmts.append(&mut expr.aux_stmts);
+    let mut aux_stmts = empty();
 
-                        args.push(arg_node(name.ident.0)?);
-                        defaults.push(expr.expr);
-                    }
-                    ArgItem::ArgSpread(name) => {
-                        vararg.push(arg_node(name.ident.0)?);
-                        if vararg.len() > 1 {
-                            return Err(TlErr::Other("only one vararg is allowed".to_owned()));
-                        }
-                    }
-                    ArgItem::KwargSpread(name) => {
-                        kwarg.push(arg_node(name.ident.0)?);
-                        if kwarg.len() > 1 {
-                            return Err(TlErr::Other("only one kwarg is allowed".to_owned()));
-                        }
-                    }
+    for arg in arglist {
+        match arg {
+            ArgItem::Arg(name) => {
+                args.push(arg_node(name.0)?);
+                defaults.push(ast.py.None());
+            }
+            ArgItem::DefaultArg(name, default) => {
+                let mut expr = transpile_expr(ast, default)?;
+                aux_stmts.append(&mut expr.aux_stmts);
+
+                args.push(arg_node(name.0)?);
+                defaults.push(expr.expr);
+            }
+            ArgItem::ArgSpread(name) => {
+                vararg.push(arg_node(name.0)?);
+                if vararg.len() > 1 {
+                    return Err(TlErr::Other("only one vararg is allowed".to_owned()));
                 }
             }
-
-            let args = ast.method1_unbound(
-                "arguments",
-                (posonly, args, vararg, kwonly, kw_defaults, kwarg, defaults),
-            )?;
-
-            let body = match body {
-                Block::Stmts(stmts) => transpile_block(ast, Block::Stmts(stmts))?,
-                Block::Expr(expr) => {
-                    let mut expr = transpile_expr(ast, *expr)?;
-                    aux_stmts.append(&mut expr.aux_stmts);
-
-                    vec![ast.method1_unbound("Return", (expr.expr,))?]
+            ArgItem::KwargSpread(name) => {
+                kwarg.push(arg_node(name.0)?);
+                if kwarg.len() > 1 {
+                    return Err(TlErr::Other("only one kwarg is allowed".to_owned()));
                 }
-            };
+            }
+        }
+    }
 
-            let name = format!("__tl{}", 0);
-            let decorators = empty();
+    let args = ast.method1_unbound(
+        "arguments",
+        (posonly, args, vararg, kwonly, kw_defaults, kwarg, defaults),
+    )?;
 
-            aux_stmts.push(ast.method1_unbound("FunctionDef", (&name, args, body, decorators))?);
+    let body = match body {
+        Block::Stmts(stmts) => transpile_block(ast, Block::Stmts(stmts))?,
+        Block::Expr(expr) => {
+            let mut expr = transpile_expr(ast, *expr)?;
+            aux_stmts.append(&mut expr.aux_stmts);
+
+            vec![ast.method1_unbound("Return", (expr.expr,))?]
+        }
+    };
+
+    let name = name.unwrap_or(Cow::from(format!("__tl{}", 0)));
+    let decorators = empty();
+
+    aux_stmts.push(ast.method1_unbound("FunctionDef", (&name, args, body, decorators))?);
+
+    Ok(PyExprWithAux {
+        expr: ast.name(&name, NameCtx::Load)?,
+        aux_stmts,
+    })
+}
+
+fn transpile_expr<'py>(ast: &PyAst<'py>, expr: Expr) -> TlResult<PyExprWithAux> {
+    let no_aux = |expr| PyExprWithAux {
+        expr,
+        aux_stmts: vec![],
+    };
+
+    match expr {
+        Expr::Fn(arglist, body) => transpile_fn(ast, Expr::Fn(arglist, body), None),
+        Expr::Literal(lit) => {
+            let value = match lit {
+                Literal::Num(num) => ast.constant(
+                    num.parse::<i128>()
+                        .map_err(|_| TlErr::Other("int parse fail".to_owned()))?,
+                ),
+                Literal::Str(s) => ast.constant(s.to_string()),
+            }?;
+
+            Ok(no_aux(value))
+        }
+        Expr::Ident(ident) => {
+            let name = ast.name(ident.0, NameCtx::Load)?;
+            Ok(no_aux(name))
+        }
+        Expr::Attribute(obj, attr) => {
+            let obj = transpile_expr(ast, *obj)?;
 
             Ok(PyExprWithAux {
-                expr: ast.name(&name, NameCtx::Load)?,
-                aux_stmts,
+                expr: ast.method1_unbound("Attribute", (obj.expr, attr.0))?,
+                aux_stmts: obj.aux_stmts,
             })
         }
-        _ => Ok(PyExprWithAux {
-            expr: ast.constant("[expression]")?,
-            aux_stmts: vec![],
-        }),
+        _ => Ok(no_aux(ast.constant("[expression]")?)),
     }
 }
 
