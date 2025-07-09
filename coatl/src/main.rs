@@ -45,7 +45,7 @@ fn main() {
         });
 
     if let Some(ast) = ast {
-        match transpile(ast) {
+        match transpile(&ast) {
             Ok(code) => {
                 println!("{}", code);
             }
