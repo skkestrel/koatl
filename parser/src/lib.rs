@@ -3,5 +3,5 @@
 mod lexer;
 mod parser;
 
-pub use lexer::tokenize;
+pub use lexer::{Span, tokenize};
 pub use parser::*;

@@ -1,7 +1,10 @@
-c = \x, y, z;
-    \x; 1
-    "asf"
-    return \ret; "ret"
-a = 2
-b.c.d = 3
-b.c[2].e = 4
+(x, y, z) => test
+x => test
+
+x = x =>
+    test == 2 * (2 + -1 ** 2)
+
+x = if 1:
+    2
+else:
+    3

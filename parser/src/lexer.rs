@@ -249,7 +249,7 @@ fn semantic_whitespace<'src>()
                         }
                     }
 
-                    expecting_block = text.ends_with(';');
+                    expecting_block = text.ends_with(':') || text.ends_with("=>");
 
                     lines.push(LexerLine::Line(
                         text,
@@ -328,13 +328,15 @@ where
         .map(Token::VerbatimStr);
 
     let symbol = choice((
+        just("=>"),
+        just(".."),
         just("=="),
         just("!="),
         just("<="),
         just(">="),
         just("//"),
         just("**"),
-        one_of("+-*/%|&$:;=,.()[]<>\\").to_slice(),
+        one_of("+-*/%|&$:=,.()[]<>\\").to_slice(),
     ))
     .map(Token::Symbol);
 

@@ -60,8 +60,8 @@ fn main() {
                         }
                     });
                 }
-                TlErr::Other(msg) => {
-                    println!("Error: {}", msg);
+                TlErr::TranspileErr(msg) => {
+                    println!("Error: {}", msg.message);
                 }
             },
         }

@@ -110,6 +110,7 @@ pub enum Expr<'a> {
     Ident(SIdent<'a>),
     Unary(UnaryOp, Box<SExpr<'a>>),
     Binary(BinaryOp, Box<SExpr<'a>>, Box<SExpr<'a>>),
+
     List(Vec<ListItem<'a>>),
     Mapping(Vec<MappingItem<'a>>),
 
@@ -118,9 +119,12 @@ pub enum Expr<'a> {
     Class(SIdent<'a>, Vec<SCallItem<'a>>, Box<SBlock<'a>>),
 
     Call(Box<SExpr<'a>>, Vec<SCallItem<'a>>),
+    Subscript(Box<SExpr<'a>>, Vec<SExpr<'a>>),
     Attribute(Box<SExpr<'a>>, SIdent<'a>),
     Pipe(Box<SExpr<'a>>, Box<SExpr<'a>>),
-    Index(Box<SExpr<'a>>, Vec<SExpr<'a>>),
+
+    Yield(Box<SExpr<'a>>),
+    YieldFrom(Box<SExpr<'a>>),
 
     Fn(Vec<ArgItem<'a>>, Box<SBlock<'a>>),
     FmtStr(Vec<Box<SFmtExpr<'a>>>),
@@ -177,6 +181,8 @@ where
     E: ParserExtra<'tokens, I>,
 {
 }
+
+const START_BLOCK: Token = Token::Symbol(":");
 
 pub fn parser<'tokens, 'src: 'tokens, TInput>()
 -> impl Parser<'tokens, TInput, SBlock<'src>, extra::Err<Rich<'tokens, Token<'src>, Span>>>
@@ -247,7 +253,8 @@ where
         sexpr
             .clone()
             .delimited_by(just(Token::Symbol("(")), just(Token::Symbol(")"))),
-    ));
+    ))
+    .boxed();
 
     enum Postfix<'a> {
         Call(Vec<SCallItem<'a>>),
@@ -296,20 +303,23 @@ where
             .labelled("then"),
     );
 
-    let postfix = atom.clone().foldl_with(
-        choice((call, getitem, attribute, then)).repeated(),
-        |expr, op, e| -> SExpr {
-            (
-                match op {
-                    Postfix::Call(args) => Expr::Call(Box::new(expr), args),
-                    Postfix::GetItem(args) => Expr::Index(Box::new(expr), args),
-                    Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
-                    Postfix::Then(rhs) => Expr::Pipe(Box::new(expr), Box::new(rhs)),
-                },
-                e.span(),
-            )
-        },
-    );
+    let postfix = atom
+        .clone()
+        .foldl_with(
+            choice((call, getitem, attribute, then)).repeated(),
+            |expr, op, e| -> SExpr {
+                (
+                    match op {
+                        Postfix::Call(args) => Expr::Call(Box::new(expr), args),
+                        Postfix::GetItem(args) => Expr::Subscript(Box::new(expr), args),
+                        Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
+                        Postfix::Then(rhs) => Expr::Pipe(Box::new(expr), Box::new(rhs)),
+                    },
+                    e.span(),
+                )
+            },
+        )
+        .boxed();
 
     let unary = select! {
         Token::Symbol("+") => UnaryOp::Pos,
@@ -319,17 +329,72 @@ where
     .repeated()
     .foldr_with(postfix, |op: UnaryOp, rhs: SExpr, e| {
         (Expr::Unary(op, Box::new(rhs)), e.span())
-    });
+    })
+    .boxed();
+
+    fn make_binary_op<'tokens, 'src: 'tokens, I, POp, PArg>(
+        arg: PArg,
+        op: POp,
+    ) -> impl Parser<'tokens, I, SExpr<'src>, extra::Err<Rich<'tokens, Token<'src>, Span>>> + Clone
+    where
+        PArg: Parser<'tokens, I, SExpr<'src>, extra::Err<Rich<'tokens, Token<'src>, Span>>> + Clone,
+        POp: Parser<'tokens, I, BinaryOp, extra::Err<Rich<'tokens, Token<'src>, Span>>> + Clone,
+        I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
+    {
+        arg.clone()
+            .foldl_with(op.then(arg).repeated(), |lhs, (op, rhs), e| {
+                (Expr::Binary(op, Box::new(lhs), Box::new(rhs)), e.span())
+            })
+    }
+
+    let binary0 = make_binary_op(
+        unary,
+        select! {
+            Token::Symbol("**") => BinaryOp::Exp,
+        },
+    );
+
+    let binary1 = make_binary_op(
+        binary0,
+        select! {
+            Token::Symbol("*") => BinaryOp::Mul,
+            Token::Symbol("/") => BinaryOp::Div,
+            Token::Symbol("%") => BinaryOp::Mod,
+            Token::Symbol("@") => BinaryOp::MatMul,
+        },
+    );
+
+    let binary2 = make_binary_op(
+        binary1,
+        select! {
+            Token::Symbol("+") => BinaryOp::Add,
+            Token::Symbol("-") => BinaryOp::Sub,
+        },
+    );
+
+    let binary3 = make_binary_op(
+        binary2,
+        select! {
+            Token::Symbol("<") => BinaryOp::Lt,
+            Token::Symbol("<=") => BinaryOp::Leq,
+            Token::Symbol(">") => BinaryOp::Gt,
+            Token::Symbol(">=") => BinaryOp::Geq,
+            Token::Symbol("==") => BinaryOp::Eq,
+            Token::Symbol("!=") => BinaryOp::Neq,
+        },
+    );
+
+    let binary = binary3.boxed();
 
     let if_ = just(Token::Kw("if"))
         .pad_cont()
         .ignore_then(group((
-            sexpr.clone().then_ignore(just_symbol(";")),
+            sexpr.clone().then_ignore(just(START_BLOCK)),
             sblock_or_expr.clone(),
             group((
                 one_of([Token::Continuation, Token::Eol]).or_not(),
                 just(Token::Kw("else")),
-                just_symbol(";"),
+                just(START_BLOCK),
             ))
             .ignore_then(sblock_or_expr.clone())
             .or_not(),
@@ -340,7 +405,7 @@ where
 
     let case_ = sexpr
         .clone()
-        .then_ignore(just_symbol(";"))
+        .then_ignore(just(START_BLOCK))
         .then(sblock_or_expr.clone())
         .then_ignore(just(Token::Eol))
         .map(|(pattern, body)| (pattern, Box::new(body)));
@@ -348,7 +413,7 @@ where
     let match_ = just(Token::Kw("match"))
         .pad_cont()
         .ignore_then(sexpr.clone())
-        .then_ignore(just_symbol(";"))
+        .then_ignore(just(START_BLOCK))
         .then(
             case_
                 .repeated()
@@ -375,16 +440,32 @@ where
     )))
     .labelled("arg-list");
 
-    let fn_ = just(Token::Symbol("\\"))
-        .pad_cont()
-        .ignore_then(arg_list)
-        .then_ignore(just_symbol(";"))
-        .then(sblock_or_expr.clone())
-        .map(|(args, body)| Expr::Fn(args, Box::new(body)))
-        .spanned()
-        .labelled("function definition");
+    let fn_ = choice((
+        arg_list.delimited_by(just_symbol("("), just_symbol(")")),
+        ident.map(|x| vec![ArgItem::Arg(x)]),
+    ))
+    .pad_cont()
+    .then_ignore(just_symbol("=>"))
+    .then(sblock_or_expr.clone())
+    .map(|(args, body)| Expr::Fn(args, Box::new(body)))
+    .spanned()
+    .labelled("function definition");
 
-    sexpr.define(choice((unary, fn_, if_, match_)).labelled("expression"));
+    let yield_ = just(Token::Kw("yield"))
+        .ignore_then(just_symbol("*").or_not())
+        .pad_cont()
+        .then(sexpr.clone())
+        .map(|(star, expr)| {
+            if star.is_some() {
+                Expr::YieldFrom(Box::new(expr))
+            } else {
+                Expr::Yield(Box::new(expr))
+            }
+        })
+        .spanned()
+        .labelled("yield");
+
+    sexpr.define(choice((fn_, binary, if_, match_, yield_)).labelled("expression"));
 
     let expr_stmt = sexpr
         .clone()
@@ -403,7 +484,7 @@ where
     let while_stmt = just(Token::Kw("while"))
         .pad_cont()
         .ignore_then(sexpr.clone())
-        .then_ignore(just_symbol(";"))
+        .then_ignore(just(START_BLOCK))
         .then(block.clone())
         .map(|(cond, body)| Stmt::While(cond, body))
         .labelled("while statement");
@@ -412,7 +493,7 @@ where
         .pad_cont()
         .ignore_then(group((
             sexpr.clone().then_ignore(just_symbol("in").pad_cont()),
-            sexpr.clone().then_ignore(just_symbol(";")),
+            sexpr.clone().then_ignore(just(START_BLOCK)),
             block.clone(),
         )))
         .map(|(decl, iter, body)| Stmt::For(decl, iter, body))
