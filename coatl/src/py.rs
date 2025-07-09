@@ -826,6 +826,44 @@ fn transpile_expr<'py>(ast: &PyAst<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
                 aux_stmts,
             });
         }
+        Expr::Slice(start, end, step) => {
+            let start = start
+                .as_ref()
+                .map(|e| transpile_expr(ast, e.as_ref()))
+                .transpose()?;
+            let end = end
+                .as_ref()
+                .map(|e| transpile_expr(ast, e.as_ref()))
+                .transpose()?;
+            let step = step
+                .as_ref()
+                .map(|e| transpile_expr(ast, e.as_ref()))
+                .transpose()?;
+
+            let mut aux_stmts = vec![];
+
+            let mut get = |x: Option<PyExprWithAux>| {
+                if let Some(x) = x {
+                    aux_stmts.extend(x.aux_stmts);
+                    Ok(x.expr)
+                } else {
+                    ast.constant(ast.py.None())
+                }
+            };
+
+            return Ok(PyExprWithAux {
+                expr: ast.method1_unbound(
+                    "Call",
+                    (
+                        ast.name("slice", NameCtx::Load, Some(span))?,
+                        [get(start)?, get(end)?, get(step)?],
+                        Vec::<PyObject>::new(),
+                    ),
+                    Some(span),
+                )?,
+                aux_stmts,
+            });
+        }
         Expr::FmtStr(parts) => {
             unimplemented!();
         }

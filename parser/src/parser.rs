@@ -113,6 +113,11 @@ pub enum Expr<'a> {
 
     List(Vec<ListItem<'a>>),
     Mapping(Vec<MappingItem<'a>>),
+    Slice(
+        Option<Box<SExpr<'a>>>,
+        Option<Box<SExpr<'a>>>,
+        Option<Box<SExpr<'a>>>,
+    ),
 
     If(Box<SExpr<'a>>, Box<SBlock<'a>>, Option<Box<SBlock<'a>>>),
     Match(Box<SExpr<'a>>, Vec<(SExpr<'a>, Box<SBlock<'a>>)>),
@@ -388,6 +393,22 @@ where
 
     let binary = binary3.boxed();
 
+    let slice0 = just_symbol("..")
+        .ignore_then(binary.clone().or_not())
+        .then(just_symbol("..").ignore_then(sexpr.clone()).or_not())
+        .map(|(e1, e2)| Expr::Slice(None, e1.map(Box::new), e2.map(Box::new)))
+        .spanned()
+        .labelled("slice");
+
+    let slice1 = binary
+        .clone()
+        .then_ignore(just_symbol(".."))
+        .then(binary.clone().or_not())
+        .then(just_symbol("..").ignore_then(binary.clone()).or_not())
+        .map(|((e0, e1), e2)| Expr::Slice(Some(Box::new(e0)), e1.map(Box::new), e2.map(Box::new)))
+        .spanned()
+        .labelled("slice");
+
     let if_ = just(Token::Kw("if"))
         .pad_cont()
         .ignore_then(group((
@@ -467,7 +488,11 @@ where
         .spanned()
         .labelled("yield");
 
-    sexpr.define(choice((fn_, binary, if_, match_, yield_)).labelled("expression"));
+    sexpr.define(
+        choice((slice0, slice1, fn_, if_, match_, yield_, binary))
+            .boxed()
+            .labelled("expression"),
+    );
 
     let expr_stmt = sexpr
         .clone()
@@ -531,6 +556,7 @@ where
             break_stmt,
             continue_stmt,
         ))
+        .boxed()
         .labelled("statement"),
     );
 
