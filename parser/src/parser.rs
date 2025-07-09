@@ -124,7 +124,7 @@ pub enum Expr<'a> {
     Class(SIdent<'a>, Vec<SCallItem<'a>>, Box<SBlock<'a>>),
 
     Call(Box<SExpr<'a>>, Vec<SCallItem<'a>>),
-    Subscript(Box<SExpr<'a>>, Vec<SExpr<'a>>),
+    Subscript(Box<SExpr<'a>>, Vec<ListItem<'a>>),
     Attribute(Box<SExpr<'a>>, SIdent<'a>),
     Pipe(Box<SExpr<'a>>, Box<SExpr<'a>>),
 
@@ -236,8 +236,6 @@ where
     .map(Expr::List)
     .labelled("list");
 
-    // TODO implement slices
-
     let mapping = enumeration(choice((
         just_symbol("**")
             .ignore_then(sexpr.clone())
@@ -265,7 +263,7 @@ where
 
     enum Postfix<'a> {
         Call(Vec<SCallItem<'a>>),
-        GetItem(Vec<SExpr<'a>>),
+        Subscript(Vec<ListItem<'a>>),
         Then(SExpr<'a>),
         Attribute(SIdent<'a>),
     }
@@ -291,10 +289,15 @@ where
     .map(Postfix::Call)
     .labelled("call");
 
-    let getitem = enumeration(choice((sexpr.clone(),)))
-        .delimited_by(just(Token::Symbol("[")), just(Token::Symbol("]")))
-        .map(Postfix::GetItem)
-        .labelled("getitem");
+    let subscript = enumeration(choice((
+        just_symbol("*")
+            .ignore_then(sexpr.clone())
+            .map(ListItem::Spread),
+        sexpr.clone().map(ListItem::Item),
+    )))
+    .delimited_by(just(Token::Symbol("[")), just(Token::Symbol("]")))
+    .map(Postfix::Subscript)
+    .labelled("subscript");
 
     let attribute = just_symbol(".")
         .pad_cont()
@@ -313,12 +316,12 @@ where
     let postfix = atom
         .clone()
         .foldl_with(
-            choice((call, getitem, attribute, then)).repeated(),
+            choice((call, subscript, attribute, then)).repeated(),
             |expr, op, e| -> SExpr {
                 (
                     match op {
                         Postfix::Call(args) => Expr::Call(Box::new(expr), args),
-                        Postfix::GetItem(args) => Expr::Subscript(Box::new(expr), args),
+                        Postfix::Subscript(args) => Expr::Subscript(Box::new(expr), args),
                         Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
                         Postfix::Then(rhs) => Expr::Pipe(Box::new(expr), Box::new(rhs)),
                     },
@@ -395,7 +398,7 @@ where
 
     let slice0 = just_symbol("..")
         .ignore_then(binary.clone().or_not())
-        .then(just_symbol("..").ignore_then(sexpr.clone()).or_not())
+        .then(just_symbol("..").ignore_then(binary.clone()).or_not())
         .map(|(e1, e2)| Expr::Slice(None, e1.map(Box::new), e2.map(Box::new)))
         .spanned()
         .labelled("slice");

@@ -7,8 +7,10 @@ use pyo3::{
 
 pub struct TranspileErr {
     pub message: String,
+    pub py_err: Option<PyErr>,
     pub span: Option<Span>,
 }
+
 // TODO: translate span to line and col number in errors and temporary var names
 
 pub enum TlErr {
@@ -25,24 +27,24 @@ impl From<PyErr> for TlErr {
 pub type TlResult<T> = Result<T, TlErr>;
 
 #[allow(dead_code)]
-enum NameCtx {
+enum PyAccessCtx {
     Load,
     Store,
     Del,
 }
 
-struct PyAst<'py> {
+struct TlCtx<'py> {
     py: Python<'py>,
     ast_module: Bound<'py, PyModule>,
     constant_node: Bound<'py, PyAny>,
 }
 
-impl<'py> PyAst<'py> {
+impl<'py> TlCtx<'py> {
     fn new(py: Python<'py>) -> TlResult<Self> {
         let ast_module = py.import("ast")?;
         let constant_node = ast_module.getattr("Constant")?;
 
-        Ok(PyAst {
+        Ok(TlCtx {
             py,
             ast_module,
             constant_node,
@@ -60,19 +62,25 @@ impl<'py> PyAst<'py> {
     {
         self.ast_module
             .call_method1(method, args)
-            .map_err(TlErr::from)
+            .map_err(|e| {
+                TlErr::TranspileErr(TranspileErr {
+                    message: format!("Failed to call method {}: {}", method, e),
+                    py_err: Some(e),
+                    span: err_span.cloned(),
+                })
+            })
             .map(|obj| obj.unbind())
     }
 
-    fn name_ctx(&self, ctx: NameCtx) -> TlResult<Bound<'py, PyAny>> {
+    fn name_ctx(&self, ctx: PyAccessCtx) -> TlResult<Bound<'py, PyAny>> {
         Ok(self.ast_module.getattr(match ctx {
-            NameCtx::Load => "Load",
-            NameCtx::Store => "Store",
-            NameCtx::Del => "Del",
+            PyAccessCtx::Load => "Load",
+            PyAccessCtx::Store => "Store",
+            PyAccessCtx::Del => "Del",
         })?)
     }
 
-    fn name(&self, name: &str, ctx: NameCtx, err_span: Option<&Span>) -> TlResult<PyObject> {
+    fn name(&self, name: &str, ctx: PyAccessCtx, err_span: Option<&Span>) -> TlResult<PyObject> {
         self.method1_unbound("Name", (name, self.name_ctx(ctx)?), err_span)
     }
 
@@ -86,7 +94,7 @@ struct PyBlock {
     final_expr: Option<PyExpr>,
 }
 
-fn transpile_block_with_final_stmt<'py>(ast: &PyAst<'py>, block: &SBlock) -> TlResult<PyStmts> {
+fn transpile_block_with_final_stmt<'py>(ast: &TlCtx<'py>, block: &SBlock) -> TlResult<PyStmts> {
     let (block, span) = block;
 
     match block {
@@ -111,7 +119,7 @@ fn transpile_block_with_final_stmt<'py>(ast: &PyAst<'py>, block: &SBlock) -> TlR
     }
 }
 
-fn transpile_block_with_final_expr<'py>(ast: &PyAst<'py>, block: &SBlock) -> TlResult<PyBlock> {
+fn transpile_block_with_final_expr<'py>(ast: &TlCtx<'py>, block: &SBlock) -> TlResult<PyBlock> {
     let (block, span) = block;
 
     match block {
@@ -160,7 +168,7 @@ fn transpile_block_with_final_expr<'py>(ast: &PyAst<'py>, block: &SBlock) -> TlR
     }
 }
 
-fn transpile_stmt<'py>(ast: &PyAst<'py>, stmt: &SStmt) -> TlResult<PyStmts> {
+fn transpile_stmt<'py>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts> {
     let (stmt, span) = stmt;
 
     match stmt {
@@ -202,13 +210,15 @@ fn transpile_stmt<'py>(ast: &PyAst<'py>, stmt: &SStmt) -> TlResult<PyStmts> {
 
             let lhs = target_node.expr;
 
-            lhs.setattr(ast.py, "ctx", ast.name_ctx(NameCtx::Load)?)
-                .map_err(|e| {
-                    TlErr::TranspileErr(TranspileErr {
-                        message: format!("Failed to set context for assignment: {}", e),
-                        span: Some(target.1),
-                    })
-                })?;
+            lhs.getattr(ast.py, "ctx").map_err(|e| {
+                TlErr::TranspileErr(TranspileErr {
+                    message: format!("Assignment target is not an lvalue: {}", e),
+                    py_err: Some(e),
+                    span: Some(target.1),
+                })
+            })?;
+
+            lhs.setattr(ast.py, "ctx", ast.name_ctx(PyAccessCtx::Load)?)?;
 
             stmts.push(ast.method1_unbound("Assign", ([lhs], value_node.expr), Some(&target.1))?);
 
@@ -217,7 +227,7 @@ fn transpile_stmt<'py>(ast: &PyAst<'py>, stmt: &SStmt) -> TlResult<PyStmts> {
         Stmt::Global(names) => {
             let names: Vec<_> = names
                 .iter()
-                .map(|name| ast.name(name.0, NameCtx::Store, Some(span)))
+                .map(|name| ast.name(name.0, PyAccessCtx::Store, Some(span)))
                 .collect::<TlResult<_>>()?;
 
             Ok(vec![ast.method1_unbound("Global", (names,), Some(span))?])
@@ -225,7 +235,7 @@ fn transpile_stmt<'py>(ast: &PyAst<'py>, stmt: &SStmt) -> TlResult<PyStmts> {
         Stmt::Nonlocal(names) => {
             let names: Vec<_> = names
                 .iter()
-                .map(|name| ast.name(name.0, NameCtx::Store, Some(span)))
+                .map(|name| ast.name(name.0, PyAccessCtx::Store, Some(span)))
                 .collect::<TlResult<_>>()?;
 
             Ok(vec![ast.method1_unbound(
@@ -252,7 +262,7 @@ fn transpile_stmt<'py>(ast: &PyAst<'py>, stmt: &SStmt) -> TlResult<PyStmts> {
                 Ok(vec![ast.method1_unbound(
                     "For",
                     (
-                        ast.name(ident, NameCtx::Store, Some(span))?,
+                        ast.name(ident, PyAccessCtx::Store, Some(span))?,
                         iter_node.expr,
                         body_block,
                         PyList::empty(ast.py),
@@ -262,6 +272,7 @@ fn transpile_stmt<'py>(ast: &PyAst<'py>, stmt: &SStmt) -> TlResult<PyStmts> {
             } else {
                 Err(TlErr::TranspileErr(TranspileErr {
                     message: "for loop target must be an identifier".to_owned(),
+                    py_err: None,
                     span: Some(*span),
                 }))
             }
@@ -276,6 +287,7 @@ fn transpile_stmt<'py>(ast: &PyAst<'py>, stmt: &SStmt) -> TlResult<PyStmts> {
         }
         Stmt::Err => Err(TlErr::TranspileErr(TranspileErr {
             message: "unexpected error in statement".to_owned(),
+            py_err: None,
             span: Some(*span),
         })),
     }
@@ -290,7 +302,7 @@ struct PyExprWithAux {
 }
 
 fn transpile_if_stmt<'py>(
-    ast: &PyAst<'py>,
+    ast: &TlCtx<'py>,
     cond: &SExpr,
     then_block: &SBlock,
     else_block: &Option<Box<SBlock>>,
@@ -319,7 +331,7 @@ fn transpile_if_stmt<'py>(
 }
 
 fn transpile_if_expr<'py>(
-    ast: &PyAst<'py>,
+    ast: &TlCtx<'py>,
     cond: &SExpr,
     then_block: &SBlock,
     else_block: &Option<Box<SBlock>>,
@@ -329,7 +341,7 @@ fn transpile_if_expr<'py>(
     let mut aux_stmts = cond.aux_stmts;
 
     let ret_varname = &format!("__tl{}", span.start);
-    let ret_var = ast.name(ret_varname, NameCtx::Store, Some(span))?;
+    let ret_var = ast.name(ret_varname, PyAccessCtx::Store, Some(span))?;
 
     let PyBlock { stmts, final_expr } = transpile_block_with_final_expr(ast, then_block)?;
     let mut then_block_ast = stmts;
@@ -339,6 +351,7 @@ fn transpile_if_expr<'py>(
     } else {
         return Err(TlErr::TranspileErr(TranspileErr {
             message: "then block must have a final expression".to_owned(),
+            py_err: None,
             span: Some(*span),
         }));
     }
@@ -346,6 +359,7 @@ fn transpile_if_expr<'py>(
     let else_block = else_block.as_ref().ok_or_else(|| {
         TlErr::TranspileErr(TranspileErr {
             message: "else block is required in an if-expr".to_owned(),
+            py_err: None,
             span: Some(*span),
         })
     })?;
@@ -357,6 +371,7 @@ fn transpile_if_expr<'py>(
     } else {
         return Err(TlErr::TranspileErr(TranspileErr {
             message: "else block must have a final expression".to_owned(),
+            py_err: None,
             span: Some(*span),
         }));
     }
@@ -368,13 +383,13 @@ fn transpile_if_expr<'py>(
     )?);
 
     Ok(PyExprWithAux {
-        expr: ast.name(ret_varname, NameCtx::Load, Some(span))?,
+        expr: ast.name(ret_varname, PyAccessCtx::Load, Some(span))?,
         aux_stmts,
     })
 }
 
 fn transpile_match_stmt<'py>(
-    ast: &PyAst<'py>,
+    ast: &TlCtx<'py>,
     subject: &SExpr,
     cases: &[(SExpr, Box<SBlock>)],
     span: &Span,
@@ -404,7 +419,7 @@ fn transpile_match_stmt<'py>(
 }
 
 fn transpile_match_expr<'py>(
-    ast: &PyAst<'py>,
+    ast: &TlCtx<'py>,
     subject: &SExpr,
     cases: &[(SExpr, Box<SBlock>)],
     span: &Span,
@@ -413,7 +428,7 @@ fn transpile_match_expr<'py>(
     let mut aux_stmts = subject.aux_stmts;
 
     let ret_varname = &format!("__tl{}", span.start);
-    let ret_var = ast.name(ret_varname, NameCtx::Store, Some(span))?;
+    let ret_var = ast.name(ret_varname, PyAccessCtx::Store, Some(span))?;
 
     let mut py_cases = vec![];
     for (pattern, block) in cases {
@@ -439,13 +454,13 @@ fn transpile_match_expr<'py>(
     aux_stmts.push(ast.method1_unbound("Match", (subject.expr, py_cases), Some(span))?);
 
     Ok(PyExprWithAux {
-        expr: ast.name(ret_varname, NameCtx::Load, Some(span))?,
+        expr: ast.name(ret_varname, PyAccessCtx::Load, Some(span))?,
         aux_stmts,
     })
 }
 
 fn make_fn_node<'py>(
-    ast: &PyAst<'py>,
+    ast: &TlCtx<'py>,
     arglist: &[ArgItem],
     body: &SBlock,
     span: &Span,
@@ -481,6 +496,7 @@ fn make_fn_node<'py>(
                 if vararg.len() > 1 {
                     return Err(TlErr::TranspileErr(TranspileErr {
                         message: "only one vararg is allowed".to_owned(),
+                        py_err: None,
                         span: None,
                     }));
                 }
@@ -490,6 +506,7 @@ fn make_fn_node<'py>(
                 if kwarg.len() > 1 {
                     return Err(TlErr::TranspileErr(TranspileErr {
                         message: "only one kwarg is allowed".to_owned(),
+                        py_err: None,
                         span: None,
                     }));
                 }
@@ -516,7 +533,7 @@ fn make_fn_node<'py>(
 }
 
 fn transpile_fn_expr<'py>(
-    ast: &PyAst<'py>,
+    ast: &TlCtx<'py>,
     arglist: &[ArgItem],
     body: &SBlock,
     span: &Span,
@@ -533,13 +550,13 @@ fn transpile_fn_expr<'py>(
     )?);
 
     Ok(PyExprWithAux {
-        expr: ast.name(&name, NameCtx::Load, Some(span))?,
+        expr: ast.name(&name, PyAccessCtx::Load, Some(span))?,
         aux_stmts,
     })
 }
 
 fn transpile_fn_def<'py>(
-    ast: &PyAst<'py>,
+    ast: &TlCtx<'py>,
     arglist: &[ArgItem],
     body: &SBlock,
     name: &str,
@@ -556,7 +573,7 @@ fn transpile_fn_def<'py>(
     Ok(stmts)
 }
 
-fn transpile_expr<'py>(ast: &PyAst<'py>, expr: &SExpr) -> TlResult<PyExprWithAux> {
+fn transpile_expr<'py>(ast: &TlCtx<'py>, expr: &SExpr) -> TlResult<PyExprWithAux> {
     let no_aux = |expr| PyExprWithAux {
         expr,
         aux_stmts: vec![],
@@ -571,6 +588,7 @@ fn transpile_expr<'py>(ast: &PyAst<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
                 Literal::Num(num) => ast.constant(num.parse::<i128>().map_err(|_| {
                     TlErr::TranspileErr(TranspileErr {
                         message: "int parse fail".to_owned(),
+                        py_err: None,
                         span: Some(*span),
                     })
                 })?),
@@ -580,7 +598,7 @@ fn transpile_expr<'py>(ast: &PyAst<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
             Ok(no_aux(value))
         }
         Expr::Ident((ident, span)) => {
-            let name = ast.name(ident, NameCtx::Load, Some(span))?;
+            let name = ast.name(ident, PyAccessCtx::Load, Some(span))?;
             Ok(no_aux(name))
         }
         Expr::Attribute(obj, attr) => {
@@ -662,17 +680,66 @@ fn transpile_expr<'py>(ast: &PyAst<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
 
             let indices: Vec<_> = indices
                 .into_iter()
-                .map(|index| {
-                    let e = transpile_expr(ast, index)?;
-                    aux_stmts.extend(e.aux_stmts);
-                    Ok(e.expr)
+                .map(|index| match index {
+                    ListItem::Spread(expr) => {
+                        let e = transpile_expr(ast, expr)?;
+                        aux_stmts.extend(e.aux_stmts);
+                        Ok(ast.method1_unbound("Starred", (e.expr,), Some(span))?)
+                    }
+                    ListItem::Item(expr) => match &expr.0 {
+                        Expr::Slice(start, stop, step) => {
+                            let mut get = |e: &Option<Box<SExpr>>| -> TlResult<PyObject> {
+                                if let Some(e) = e {
+                                    let e = transpile_expr(ast, e)?;
+                                    aux_stmts.extend(e.aux_stmts);
+                                    Ok(e.expr)
+                                } else {
+                                    Ok(ast.py.None())
+                                }
+                            };
+
+                            Ok(ast.method1_unbound(
+                                "Slice",
+                                (get(start)?, get(stop)?, get(step)?),
+                                Some(&expr.1),
+                            )?)
+                        }
+                        _ => {
+                            let e = transpile_expr(ast, expr)?;
+                            aux_stmts.extend(e.aux_stmts);
+                            Ok(e.expr)
+                        }
+                    },
                 })
                 .collect::<TlResult<Vec<_>>>()?;
 
-            Ok(PyExprWithAux {
-                expr: ast.method1_unbound("Subscript", (obj.expr, indices), Some(span))?,
-                aux_stmts,
-            })
+            if indices.len() == 1 {
+                return Ok(PyExprWithAux {
+                    expr: ast.method1_unbound(
+                        "Subscript",
+                        (obj.expr, &indices[0], ast.name_ctx(PyAccessCtx::Load)?),
+                        Some(span),
+                    )?,
+                    aux_stmts,
+                });
+            } else {
+                Ok(PyExprWithAux {
+                    expr: ast.method1_unbound(
+                        "Subscript",
+                        (
+                            obj.expr,
+                            ast.method1_unbound(
+                                "Tuple",
+                                (indices, ast.name_ctx(PyAccessCtx::Load)?),
+                                Some(span),
+                            )?,
+                            ast.name_ctx(PyAccessCtx::Load)?,
+                        ),
+                        Some(span),
+                    )?,
+                    aux_stmts,
+                })
+            }
         }
         Expr::If(cond, then_block, else_block) => {
             transpile_if_expr(ast, cond, then_block, else_block, span)
@@ -747,6 +814,7 @@ fn transpile_expr<'py>(ast: &PyAst<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
             } else {
                 return Err(TlErr::TranspileErr(TranspileErr {
                     message: format!("Unsupported binary operator: {:?}", op),
+                    py_err: None,
                     span: Some(*span),
                 }));
             }
@@ -855,7 +923,7 @@ fn transpile_expr<'py>(ast: &PyAst<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
                 expr: ast.method1_unbound(
                     "Call",
                     (
-                        ast.name("slice", NameCtx::Load, Some(span))?,
+                        ast.name("slice", PyAccessCtx::Load, Some(span))?,
                         [get(start)?, get(end)?, get(step)?],
                         Vec::<PyObject>::new(),
                     ),
@@ -875,7 +943,7 @@ fn transpile_expr<'py>(ast: &PyAst<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
 
 pub fn transpile(block: &SBlock) -> TlResult<String> {
     Python::with_gil(move |py| {
-        let ast = PyAst::new(py)?;
+        let ast = TlCtx::new(py)?;
         let span = &block.1;
 
         let stmts = transpile_block_with_final_stmt(&ast, block)?;

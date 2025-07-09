@@ -60,8 +60,22 @@ fn main() {
                         }
                     });
                 }
-                TlErr::TranspileErr(msg) => {
-                    println!("Error: {}", msg.message);
+                TlErr::TranspileErr(e) => {
+                    if let Some(span) = e.span {
+                        Report::build(ReportKind::Error, (filename.clone(), span.into_range()))
+                            .with_config(
+                                ariadne::Config::new().with_index_type(ariadne::IndexType::Byte),
+                            )
+                            .with_message(&e.message)
+                            .with_label(
+                                Label::new((filename.clone(), span.into_range()))
+                                    .with_message(&e.message)
+                                    .with_color(Color::Red),
+                            )
+                            .finish()
+                            .eprint(sources([(filename.clone(), src.clone())]))
+                            .unwrap();
+                    }
                 }
             },
         }
