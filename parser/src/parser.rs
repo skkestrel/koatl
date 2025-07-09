@@ -37,8 +37,8 @@ pub enum Stmt<'a> {
     Assign(SExpr<'a>, SExpr<'a>),
     Return(SExpr<'a>),
     Expr(SExpr<'a>),
-    While(SExpr<'a>, Block<'a>),
-    For(SExpr<'a>, SExpr<'a>, Block<'a>),
+    While(SExpr<'a>, SBlock<'a>),
+    For(SExpr<'a>, SExpr<'a>, SBlock<'a>),
     Import(Vec<SIdent<'a>>),
     Raise(SExpr<'a>),
     Break,
@@ -230,6 +230,8 @@ where
     .delimited_by(just_symbol("["), just_symbol("]"))
     .map(Expr::List)
     .labelled("list");
+
+    // TODO implement slices
 
     let mapping = enumeration(choice((
         just_symbol("**")
@@ -485,17 +487,18 @@ where
         .pad_cont()
         .ignore_then(sexpr.clone())
         .then_ignore(just(START_BLOCK))
-        .then(block.clone())
+        .then(sblock.clone())
         .map(|(cond, body)| Stmt::While(cond, body))
         .labelled("while statement");
 
     let for_stmt = just(Token::Kw("for"))
         .pad_cont()
         .ignore_then(group((
-            sexpr.clone().then_ignore(just_symbol("in").pad_cont()),
+            sexpr.clone().then_ignore(just(Token::Kw("in")).pad_cont()),
             sexpr.clone().then_ignore(just(START_BLOCK)),
-            block.clone(),
+            sblock.clone(),
         )))
+        .then_ignore(just(Token::Eol))
         .map(|(decl, iter, body)| Stmt::For(decl, iter, body))
         .labelled("for statement");
 

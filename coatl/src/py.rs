@@ -86,7 +86,32 @@ struct PyBlock {
     final_expr: Option<PyExpr>,
 }
 
-fn transpile_block<'py>(ast: &PyAst<'py>, block: &SBlock) -> TlResult<PyBlock> {
+fn transpile_block_with_final_stmt<'py>(ast: &PyAst<'py>, block: &SBlock) -> TlResult<PyStmts> {
+    let (block, span) = block;
+
+    match block {
+        Block::Stmts(stmts) => {
+            let mut result = Vec::new();
+
+            for stmt in stmts {
+                let stmts_vec = transpile_stmt(ast, stmt)?;
+                result.extend(stmts_vec);
+            }
+
+            Ok(result)
+        }
+        Block::Expr(sexpr) => {
+            let t = transpile_expr(ast, &sexpr)?;
+
+            let mut stmts = t.aux_stmts;
+            stmts.push(ast.method1_unbound("Expr", (t.expr,), Some(span))?);
+
+            Ok(stmts)
+        }
+    }
+}
+
+fn transpile_block_with_final_expr<'py>(ast: &PyAst<'py>, block: &SBlock) -> TlResult<PyBlock> {
     let (block, span) = block;
 
     match block {
@@ -167,6 +192,8 @@ fn transpile_stmt<'py>(ast: &PyAst<'py>, stmt: &SStmt) -> TlResult<PyStmts> {
                 return transpile_fn_def(ast, &arglist, &body, ident, span);
             }
 
+            // TODO allow destructuring in assign and for loop and fn def
+
             let mut target_node = transpile_expr(ast, target)?;
             let value_node = transpile_expr(ast, value)?;
 
@@ -187,8 +214,70 @@ fn transpile_stmt<'py>(ast: &PyAst<'py>, stmt: &SStmt) -> TlResult<PyStmts> {
 
             Ok(stmts)
         }
+        Stmt::Global(names) => {
+            let names: Vec<_> = names
+                .iter()
+                .map(|name| ast.name(name.0, NameCtx::Store, Some(span)))
+                .collect::<TlResult<_>>()?;
 
-        _ => Ok(vec![ast.constant("[statement]")?]),
+            Ok(vec![ast.method1_unbound("Global", (names,), Some(span))?])
+        }
+        Stmt::Nonlocal(names) => {
+            let names: Vec<_> = names
+                .iter()
+                .map(|name| ast.name(name.0, NameCtx::Store, Some(span)))
+                .collect::<TlResult<_>>()?;
+
+            Ok(vec![ast.method1_unbound(
+                "Nonlocal",
+                (names,),
+                Some(span),
+            )?])
+        }
+        Stmt::Raise(expr) => {
+            let expr_node = transpile_expr(ast, expr)?;
+            let mut stmts = expr_node.aux_stmts;
+
+            stmts.push(ast.method1_unbound("Raise", (expr_node.expr,), Some(span))?);
+
+            Ok(stmts)
+        }
+        Stmt::For(target, iter, body) => {
+            if let Expr::Ident((ident, _)) = &target.0 {
+                let iter_node = transpile_expr(ast, iter)?;
+                let aux_stmts = iter_node.aux_stmts;
+
+                let body_block = transpile_block_with_final_stmt(ast, body)?;
+
+                Ok(vec![ast.method1_unbound(
+                    "For",
+                    (
+                        ast.name(ident, NameCtx::Store, Some(span))?,
+                        iter_node.expr,
+                        body_block,
+                        PyList::empty(ast.py),
+                    ),
+                    Some(span),
+                )?])
+            } else {
+                Err(TlErr::TranspileErr(TranspileErr {
+                    message: "for loop target must be an identifier".to_owned(),
+                    span: Some(*span),
+                }))
+            }
+        }
+        Stmt::While(cond, body) => {
+            unimplemented!();
+        }
+        Stmt::Break => Ok(vec![ast.method1_unbound("Break", (), Some(span))?]),
+        Stmt::Continue => Ok(vec![ast.method1_unbound("Continue", (), Some(span))?]),
+        Stmt::Import(module) => {
+            unimplemented!();
+        }
+        Stmt::Err => Err(TlErr::TranspileErr(TranspileErr {
+            message: "unexpected error in statement".to_owned(),
+            span: Some(*span),
+        })),
     }
 }
 
@@ -212,22 +301,14 @@ fn transpile_if_stmt<'py>(
     let cond = transpile_expr(ast, cond)?;
     stmts.extend(cond.aux_stmts.into_iter());
 
-    let then_block = transpile_block(ast, then_block)?;
-    let mut then_block_ast = then_block.stmts;
-    if let Some(final_expr) = then_block.final_expr {
-        then_block_ast.push(ast.method1_unbound("Expr", (final_expr,), Some(span))?);
-    }
+    let then_block = transpile_block_with_final_stmt(ast, then_block)?;
+    let then_block_ast = then_block;
 
     let mut else_block_ast = None;
     if let Some(else_block) = else_block {
-        let else_block = transpile_block(ast, else_block)?;
-        let mut block = else_block.stmts;
+        let else_block = transpile_block_with_final_stmt(ast, else_block)?;
 
-        if let Some(final_expr) = else_block.final_expr {
-            block.push(ast.method1_unbound("Expr", (final_expr,), Some(span))?);
-        }
-
-        else_block_ast = Some(block);
+        else_block_ast = Some(else_block);
     }
 
     Ok(vec![ast.method1_unbound(
@@ -250,7 +331,7 @@ fn transpile_if_expr<'py>(
     let ret_varname = &format!("__tl{}", span.start);
     let ret_var = ast.name(ret_varname, NameCtx::Store, Some(span))?;
 
-    let PyBlock { stmts, final_expr } = transpile_block(ast, then_block)?;
+    let PyBlock { stmts, final_expr } = transpile_block_with_final_expr(ast, then_block)?;
     let mut then_block_ast = stmts;
 
     if let Some(final_expr) = final_expr {
@@ -269,7 +350,7 @@ fn transpile_if_expr<'py>(
         })
     })?;
 
-    let PyBlock { stmts, final_expr } = transpile_block(ast, else_block)?;
+    let PyBlock { stmts, final_expr } = transpile_block_with_final_expr(ast, else_block)?;
     let mut else_block_ast = stmts;
     if let Some(final_expr) = final_expr {
         else_block_ast.push(ast.method1_unbound("Assign", ([&ret_var], final_expr), Some(span))?);
@@ -306,12 +387,11 @@ fn transpile_match_stmt<'py>(
         let pattern = transpile_expr(ast, pattern)?;
         aux_stmts.extend(pattern.aux_stmts);
 
-        let py_block = transpile_block(ast, block)?;
-        let block_stmts = py_block.stmts;
+        let py_block = transpile_block_with_final_stmt(ast, block)?;
 
         py_cases.push(ast.method1_unbound(
             "match_case",
-            (pattern.expr, ast.py.None(), block_stmts),
+            (pattern.expr, ast.py.None(), py_block),
             Some(&block.1),
         )?);
     }
@@ -340,7 +420,7 @@ fn transpile_match_expr<'py>(
         let pattern = transpile_expr(ast, pattern)?;
         aux_stmts.extend(pattern.aux_stmts);
 
-        let py_block = transpile_block(ast, &*block)?;
+        let py_block = transpile_block_with_final_expr(ast, &*block)?;
         let mut block_stmts = py_block.stmts;
 
         block_stmts.push(ast.method1_unbound(
@@ -423,7 +503,7 @@ fn make_fn_node<'py>(
         Some(span),
     )?;
 
-    let block = transpile_block(ast, body)?;
+    let block = transpile_block_with_final_expr(ast, body)?;
     let mut body_stmts = block.stmts;
 
     if let Some(final_expr) = block.final_expr {
@@ -723,7 +803,7 @@ fn transpile_expr<'py>(ast: &PyAst<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
                 match item {
                     MappingItem::Item(key, value) => {
                         let key = transpile_expr(ast, key)?;
-                        let value = transpile_block(ast, value)?;
+                        let value = transpile_block_with_final_expr(ast, value)?;
 
                         aux_stmts.extend(key.aux_stmts);
                         aux_stmts.extend(value.stmts);
@@ -746,7 +826,12 @@ fn transpile_expr<'py>(ast: &PyAst<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
                 aux_stmts,
             });
         }
-        _ => Ok(no_aux(ast.constant("[expression]")?)),
+        Expr::FmtStr(parts) => {
+            unimplemented!();
+        }
+        Expr::Class(name, bases, body) => {
+            unimplemented!();
+        }
     }
 }
 
@@ -755,9 +840,7 @@ pub fn transpile(block: &SBlock) -> TlResult<String> {
         let ast = PyAst::new(py)?;
         let span = &block.1;
 
-        let block = transpile_block(&ast, block)?;
-        let mut stmts = block.stmts;
-        stmts.push(ast.method1_unbound("Expr", (block.final_expr,), Some(span))?);
+        let stmts = transpile_block_with_final_stmt(&ast, block)?;
 
         let root_node = ast.method1_unbound("Module", (stmts, PyList::empty(py)), Some(span))?;
 
@@ -772,14 +855,12 @@ pub fn transpile(block: &SBlock) -> TlResult<String> {
             .call_method("dump", (&root_node,), Some(&dump_args))?
             .extract::<String>()?;
 
-        println!("{}", dump);
+        // println!("{}", dump);
 
         let source = ast
             .ast_module
             .call_method1("unparse", (root_node,))?
             .extract()?;
-
-        println!();
 
         return Ok(source);
     })

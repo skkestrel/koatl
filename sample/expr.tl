@@ -1,5 +1,8 @@
-match x:
-    1: 123
-    abc(test, test, test):
-        test
-1234
+fib = x =>
+    if x < 2:
+        1
+    else:
+        fib(x-1) + fib(x-2)
+
+for i in range(20):
+    print(i.(fib))

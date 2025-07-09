@@ -341,9 +341,9 @@ where
     .map(Token::Symbol);
 
     static KEYWORDS: &[&str] = &[
-        "if", "else", "match", "import", "class", "while", "for", "break", "continue", "with",
-        "yield", "global", "nonlocal", "return", "raise", "try", "except", "finally", "and", "or",
-        "not",
+        "if", "then", "else", "match", "import", "class", "while", "for", "in", "break",
+        "continue", "with", "yield", "global", "nonlocal", "return", "raise", "try", "except",
+        "finally", "and", "or", "not",
     ];
 
     let ident = text::ascii::ident().map(|ident: &str| {
