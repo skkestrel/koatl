@@ -72,7 +72,7 @@ pub enum ListItem<'a> {
 
 #[derive(Debug)]
 pub enum MappingItem<'a> {
-    Item(SExpr<'a>, SExpr<'a>),
+    Item(SExpr<'a>, SBlock<'a>),
     Spread(SExpr<'a>),
 }
 
@@ -237,8 +237,8 @@ where
             .map(MappingItem::Spread),
         sexpr
             .clone()
-            .then_ignore(just_symbol(":"))
-            .then(sexpr.clone())
+            .then_ignore(just(START_BLOCK))
+            .then(sblock_or_expr.clone())
             .map(|(key, value)| MappingItem::Item(key, value)),
     )))
     .delimited_by(just(Token::Symbol("[")), just(Token::Symbol("]")))
