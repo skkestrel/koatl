@@ -393,8 +393,42 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
         }
         Stmt::Break => Ok(vec![ast.method1_unbound("Break", (), Some(span))?]),
         Stmt::Continue => Ok(vec![ast.method1_unbound("Continue", (), Some(span))?]),
-        Stmt::Import(module) => {
-            unimplemented!();
+        Stmt::Import(import_stmt) => {
+            let mut aliases = vec![];
+            let mut base_module = None;
+
+            if !import_stmt.trunk.is_empty() {
+                base_module = Some(
+                    import_stmt
+                        .trunk
+                        .iter()
+                        .map(|ident| ident.0)
+                        .collect::<Vec<_>>()
+                        .join("."),
+                );
+            }
+
+            for (ident, alias) in &import_stmt.leaves {
+                aliases.push(ast.method1_unbound(
+                    "alias",
+                    (ident.0, alias.map(|a| a.0)),
+                    Some(span),
+                )?);
+            }
+
+            if let Some(base_module) = base_module {
+                Ok(vec![ast.method1_unbound(
+                    "ImportFrom",
+                    (base_module, aliases, 0),
+                    Some(span),
+                )?])
+            } else {
+                Ok(vec![ast.method1_unbound(
+                    "Import",
+                    (aliases,),
+                    Some(span),
+                )?])
+            }
         }
         Stmt::Err => Err(TlErrBuilder::default()
             .message("unexpected statement error (should have been caught in lexer)".to_owned())

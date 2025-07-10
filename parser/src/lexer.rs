@@ -341,7 +341,7 @@ where
     .map(Token::Symbol);
 
     static KEYWORDS: &[&str] = &[
-        "if", "then", "else", "match", "import", "class", "while", "for", "in", "break",
+        "if", "then", "else", "match", "import", "as", "class", "while", "for", "in", "break",
         "continue", "with", "yield", "global", "nonlocal", "return", "raise", "try", "except",
         "finally", "and", "or", "not",
     ];
