@@ -11,8 +11,6 @@ pub struct TlErr {
     pub span: Option<Span>,
 }
 
-// TODO: translate span to line and col number in errors and temporary var names
-
 pub struct TlErrs(pub Vec<TlErr>);
 
 impl TlErrs {
@@ -312,7 +310,8 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
                 return transpile_fn_def(ast, &arglist, &body, ident, span);
             }
 
-            // TODO allow destructuring in assign and for loop and fn def
+            // TODO allow destructuring in assign and for loop and fn def and match
+            // TODO fstrings
 
             let mut target_node = transpile_expr(ast, target)?;
             let value_node = transpile_expr(ast, value)?;
@@ -728,12 +727,16 @@ fn transpile_expr<'py>(ast: &TlCtx<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
         Expr::Fn(arglist, body) => transpile_fn_expr(ast, arglist, body, span),
         Expr::Literal((lit, span)) => {
             let value = match lit {
-                Literal::Num(num) => ast.constant(num.parse::<i128>().map_err(|_| {
-                    TlErrBuilder::default()
-                        .message("int parse fail")
-                        .span(*span)
-                        .build_errs()
-                })?),
+                Literal::Num(num) => match num.parse::<i128>() {
+                    Ok(i) => Ok(ast.constant(i)?),
+                    Err(_) => match num.parse::<f64>() {
+                        Ok(f) => Ok(ast.constant(f)?),
+                        Err(_) => Err(TlErrBuilder::default()
+                            .message("failed to parse number as int or float")
+                            .span(*span)
+                            .build_errs()),
+                    },
+                },
                 Literal::Str(s) => ast.constant(s.to_string()),
             }?;
 

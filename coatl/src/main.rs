@@ -7,9 +7,13 @@ use pyo3::types::PyTracebackMethods;
 
 use crate::py::{TlErrs, transpile};
 use parser::{parse_tokens, tokenize};
+use std::io::Write;
+use std::process::{Command, Stdio};
 
-fn main() {
-    let filename = std::env::args().nth(1).unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cmd = std::env::args().nth(1).ok_or("Missing command argument")?;
+    let filename = std::env::args().nth(2).ok_or("Missing filename argument")?;
+
     let src = std::fs::read_to_string(&filename).unwrap();
 
     let (tokens, errs) = tokenize(&src);
@@ -47,7 +51,22 @@ fn main() {
     if let Some(ast) = ast {
         match transpile(&src, &ast) {
             Ok(code) => {
-                println!("{}", code);
+                if cmd == "trans" {
+                    println!("{}", code);
+                } else if cmd == "run" {
+                    let mut child = Command::new("python3").stdin(Stdio::piped()).spawn()?;
+
+                    if let Some(stdin) = child.stdin.as_mut() {
+                        stdin.write_all(code.as_bytes())?;
+                    }
+
+                    let output = child.wait_with_output()?;
+                    if !output.status.success() {
+                        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+                    }
+                } else {
+                    return Err("Unknown command. Use 'trans' or 'run'.".into());
+                }
             }
             Err(TlErrs(e)) => {
                 for e in e {
@@ -89,4 +108,6 @@ fn main() {
             }
         }
     }
+
+    Ok(())
 }
