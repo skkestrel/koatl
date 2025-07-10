@@ -38,6 +38,13 @@ pub struct ImportStmt<'a> {
 }
 
 #[derive(Debug)]
+pub struct ExceptHandler<'a> {
+    pub typ: Option<SExpr<'a>>,
+    pub name: Option<SIdent<'a>>,
+    pub body: SBlock<'a>,
+}
+
+#[derive(Debug)]
 pub enum Stmt<'a> {
     Global(Vec<SIdent<'a>>),
     Nonlocal(Vec<SIdent<'a>>),
@@ -47,6 +54,7 @@ pub enum Stmt<'a> {
     While(SExpr<'a>, SBlock<'a>),
     For(SExpr<'a>, SExpr<'a>, SBlock<'a>),
     Import(ImportStmt<'a>),
+    Try(SBlock<'a>, Vec<ExceptHandler<'a>>, Option<SBlock<'a>>),
     Raise(SExpr<'a>),
     Break,
     Continue,
@@ -589,6 +597,53 @@ where
         .labelled("while statement")
         .boxed();
 
+    let except_block = one_of([Token::Continuation, Token::Eol])
+        .then(just(Token::Kw("except")))
+        .pad_cont()
+        .ignore_then(
+            group((
+                choice((sexpr.clone().map(Some), just_symbol("*").map(|_| None))),
+                just(Token::Kw("as"))
+                    .pad_cont()
+                    .ignore_then(ident.clone())
+                    .or_not(),
+            ))
+            .or_not(),
+        )
+        .then(just(START_BLOCK).ignore_then(sblock.clone()))
+        .map(|(opt, body)| {
+            if let Some((typ, name)) = opt {
+                ExceptHandler { typ, name, body }
+            } else {
+                ExceptHandler {
+                    typ: None,
+                    name: None,
+                    body,
+                }
+            }
+        })
+        .labelled("except block")
+        .boxed();
+
+    let finally_block = one_of([Token::Continuation, Token::Eol])
+        .then(just(Token::Kw("finally")))
+        .then(just(START_BLOCK))
+        .ignore_then(sblock.clone())
+        .labelled("finally block")
+        .boxed();
+
+    let try_stmt = just(Token::Kw("try"))
+        .then(just(START_BLOCK))
+        .ignore_then(group((
+            sblock_or_expr.clone(),
+            except_block.repeated().collect(),
+            finally_block.or_not(),
+        )))
+        .map(|(body, excepts, finally)| Stmt::Try(body, excepts, finally))
+        .then_ignore(just(Token::Eol))
+        .labelled("try statement")
+        .boxed();
+
     let for_stmt = just(Token::Kw("for"))
         .pad_cont()
         .ignore_then(group((
@@ -727,6 +782,7 @@ where
             break_stmt,
             continue_stmt,
             import_stmt,
+            try_stmt,
         ))
         .labelled("statement")
         .boxed(),

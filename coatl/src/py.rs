@@ -2,7 +2,7 @@ use parser::*;
 use pyo3::{
     call::PyCallArgs,
     prelude::*,
-    types::{PyDict, PyList},
+    types::{PyDict, PyList, PyString},
 };
 
 pub struct TlErr {
@@ -319,7 +319,6 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
             // TODO allow destructuring in assign and for loop and fn def and match
             // TODO fstrings
             // TODO prelude - iterable slices
-            // TODO try, except, class
 
             let mut target_node = transpile_expr(ast, target)?;
             let value_node = transpile_expr(ast, value)?;
@@ -428,6 +427,55 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
             stmts.push(ast.method1_unbound(
                 "While",
                 (cond, body_block, PyList::empty(ast.py)),
+                Some(span),
+            )?);
+
+            Ok(stmts)
+        }
+        Stmt::Try(body, excepts, finally) => {
+            let body_block = transpile_block_with_final_stmt(ast, body)?;
+            let finally_block = finally
+                .as_ref()
+                .map(|f| transpile_block_with_final_stmt(ast, f))
+                .transpose()?;
+
+            let mut stmts = vec![];
+            let mut excepts_ast = vec![];
+
+            for except in excepts {
+                let type_node = if let Some(typ) = &except.typ {
+                    let expr = transpile_expr(ast, typ)?;
+                    stmts.extend(expr.aux_stmts);
+                    expr.expr
+                } else {
+                    ast.name("BaseException", PyAccessCtx::Load, Some(span))?
+                };
+
+                let ident_node = if let Some(ident) = &except.name {
+                    PyString::new(ast.py, ident.0).into_any()
+                } else {
+                    ast.py.None().bind(ast.py).clone()
+                };
+
+                let body_block = transpile_block_with_final_stmt(ast, body)?;
+
+                let except_ast = ast.method1_unbound(
+                    "ExceptHandler",
+                    (type_node, ident_node, body_block),
+                    Some(span),
+                )?;
+
+                excepts_ast.push(except_ast);
+            }
+
+            stmts.push(ast.method1_unbound(
+                "Try",
+                (
+                    body_block,
+                    excepts_ast,
+                    PyList::empty(ast.py),
+                    finally_block,
+                ),
                 Some(span),
             )?);
 
