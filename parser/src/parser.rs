@@ -390,7 +390,8 @@ where
         I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
     {
         arg.clone()
-            .foldl_with(op.then(arg).repeated(), |lhs, (op, rhs), e| {
+            .pad_cont()
+            .foldl_with(op.pad_cont().then(arg).repeated(), |lhs, (op, rhs), e| {
                 (Expr::Binary(op, Box::new(lhs), Box::new(rhs)), e.span())
             })
     }
@@ -793,7 +794,10 @@ where
         .collect::<Vec<_>>()
         .map(Block::Stmts)
         .spanned()
-        .delimited_by(just_symbol("BEGIN_BLOCK"), just_symbol("END_BLOCK").then(just(Token::Eol)))
+        .delimited_by(
+            just_symbol("BEGIN_BLOCK"),
+            just_symbol("END_BLOCK").then(just(Token::Eol)),
+        )
         .boxed()
 }
 

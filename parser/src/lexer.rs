@@ -29,9 +29,9 @@ pub enum Token<'src> {
 impl fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Token::Bool(x) => write!(f, "{x}"),
-            Token::Num(n) => write!(f, "{n}"),
-            Token::Str(s) => write!(f, "{s}"),
+            Token::Bool(x) => write!(f, "<literal {x}>"),
+            Token::Num(n) => write!(f, "<literal {n}>"),
+            Token::Str(s) => write!(f, "<literal {s}>"),
             Token::Symbol(s) => write!(f, "{s}"),
             Token::Ident(s) => write!(f, "{s}"),
             Token::Kw(s) => write!(f, "<{s}>"),
@@ -42,6 +42,14 @@ impl fmt::Display for Token<'_> {
             Token::FstringEnd(s) => write!(f, "{s}\""),
         }
     }
+}
+
+struct TokenizeLineInfo<'src> {
+    text: &'src str,
+    span: Span,
+    end_token: Option<Token<'src>>,
+    starts_as_fstring: bool,
+    starts_as_verbatim_fstring: bool,
 }
 
 #[derive(Debug)]
@@ -381,10 +389,10 @@ fn semantic_whitespace<'src>()
                     lines.push(LexerLine::Line(
                         text,
                         Span::new((), *text_start.inner()..*text_end.inner()),
-                        if next_line_expectation != NextLineExpectation::None {
-                            None
-                        } else {
+                        if next_next_line == NextLineExpectation::None {
                             Some(Token::Eol)
+                        } else {
+                            None
                         },
                     ));
 
@@ -478,10 +486,64 @@ where
         .to_slice()
         .map(Token::Num);
 
-    let str_ = just('"')
-        .ignore_then(none_of('"').repeated().to_slice())
-        .then_ignore(just('"'))
-        .map(Token::Str);
+    // let fstr_begin = custom
+
+    let str_ = custom(|input| {
+        let mut start = input.cursor();
+        let mut quotes = 0;
+
+        while input.peek() == Some('"') && quotes < 3 {
+            quotes += 1;
+            input.next();
+        }
+
+        if quotes == 0 {
+            return Err(Rich::custom(
+                Span::new((), *start.inner()..*start.inner()),
+                "expected string to start with \"",
+            ));
+        }
+        if quotes == 2 {
+            return Ok(Token::Str(input.slice(&start..&start)));
+        }
+
+        start = input.cursor();
+
+        let is_verbatim = quotes == 3;
+        quotes = 0;
+
+        let mut end = input.cursor();
+        let mut prev_char = '\0';
+        while let Some(chr) = input.peek() {
+            if prev_char != '"' {
+                quotes = 0;
+                end = input.cursor();
+            }
+
+            if chr == '"' {
+                quotes += 1;
+            }
+
+            if (quotes == 3 && is_verbatim) || (quotes == 1 && !is_verbatim) {
+                break;
+            }
+
+            input.next();
+
+            prev_char = chr;
+        }
+
+        if input.peek().is_none() {
+            return Err(Rich::custom(
+                Span::new((), *start.inner()..*end.inner()),
+                "unterminated string",
+            ));
+        }
+
+        input.next();
+
+        Ok(Token::Str(input.slice(&start..&end)))
+    });
 
     let symbol = choice((
         just("=>"),
@@ -510,7 +572,7 @@ where
         }
     });
 
-    let token = choice((num, str_, symbol, ident));
+    let token = choice((num, str_, symbol, ident)).boxed();
 
     token
         .then_ignore(text::whitespace())
@@ -568,7 +630,7 @@ pub fn tokenize<'src>(s: &'src str) -> (TokenList<'src>, Vec<LexerError<'src>>) 
                 tokens.0.push((Token::Symbol("BEGIN_BLOCK"), span));
             }
             LexerLine::EndBlock(span, end_token) => {
-                tokens.0.push((Token::Symbol("END_BLOCk"), span));
+                tokens.0.push((Token::Symbol("END_BLOCK"), span));
                 tokens.0.push((end_token, span));
             }
         }
