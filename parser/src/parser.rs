@@ -34,6 +34,7 @@ pub type SIdent<'a> = Spanned<&'a str>;
 pub struct ImportStmt<'a> {
     pub trunk: Vec<SIdent<'a>>,
     pub leaves: Vec<(SIdent<'a>, Option<SIdent<'a>>)>,
+    pub star: bool,
 }
 
 #[derive(Debug)]
@@ -183,6 +184,17 @@ where
     {
         self.map_with(|x, e| (x, e.span()))
     }
+
+    fn delimited_by_with_eol(
+        self,
+        start: impl Parser<'tokens, I, Token<'src>, E> + Clone,
+        end: impl Parser<'tokens, I, Token<'src>, E> + Clone,
+    ) -> impl Parser<'tokens, I, O, E> + Clone
+    where
+        Self: Sized + Clone,
+    {
+        self.delimited_by(start, just(Token::Eol).or_not().then(end))
+    }
 }
 
 impl<'tokens, 'src: 'tokens, I, O, E, P> ParserExt<'tokens, 'src, I, O, E> for P
@@ -239,7 +251,7 @@ where
             .map(ListItem::Spread),
         sexpr.clone().map(ListItem::Item),
     )))
-    .delimited_by(just_symbol("["), just_symbol("]"))
+    .delimited_by_with_eol(just_symbol("["), just_symbol("]"))
     .map(Expr::List)
     .labelled("list")
     .boxed();
@@ -254,7 +266,7 @@ where
             .then(sblock_or_expr.clone())
             .map(|(key, value)| MappingItem::Item(key, value)),
     )))
-    .delimited_by(just(Token::Symbol("[")), just(Token::Symbol("]")))
+    .delimited_by_with_eol(just(Token::Symbol("[")), just(Token::Symbol("]")))
     .map(Expr::Mapping)
     .labelled("mapping")
     .boxed();
@@ -266,7 +278,7 @@ where
         mapping.spanned(),
         sexpr
             .clone()
-            .delimited_by(just(Token::Symbol("(")), just(Token::Symbol(")"))),
+            .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
     ))
     .boxed();
 
@@ -295,7 +307,7 @@ where
         .spanned()
         .boxed(),
     )
-    .delimited_by(just(Token::Symbol("(")), just(Token::Symbol(")")))
+    .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")))
     .map(Postfix::Call)
     .labelled("call")
     .boxed();
@@ -309,7 +321,7 @@ where
         ))
         .boxed(),
     )
-    .delimited_by(just(Token::Symbol("[")), just(Token::Symbol("]")))
+    .delimited_by_with_eol(just(Token::Symbol("[")), just(Token::Symbol("]")))
     .map(Postfix::Subscript)
     .labelled("subscript")
     .boxed();
@@ -325,7 +337,7 @@ where
         .ignore_then(
             sexpr
                 .clone()
-                .delimited_by(just_symbol("("), just_symbol(")"))
+                .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
                 .map(Postfix::Then),
         )
         .labelled("then")
@@ -467,7 +479,7 @@ where
             case_
                 .repeated()
                 .collect()
-                .delimited_by(just_symbol("{"), just_symbol("}")),
+                .delimited_by_with_eol(just_symbol("{"), just_symbol("}")),
         )
         .map(|(scrutinee, cases)| Expr::Match(Box::new(scrutinee), cases))
         .spanned()
@@ -492,7 +504,7 @@ where
     .boxed();
 
     let fn_ = choice((
-        arg_list.delimited_by(just_symbol("("), just_symbol(")")),
+        arg_list.delimited_by_with_eol(just_symbol("("), just_symbol(")")),
         ident.clone().map(|x| vec![ArgItem::Arg(x)]),
     ))
     .pad_cont()
@@ -585,7 +597,8 @@ where
 
     enum ImportLeaves<'a> {
         Multiple(Vec<(SIdent<'a>, Option<SIdent<'a>>)>),
-        Single(SIdent<'a>),
+        SingleAlias(SIdent<'a>),
+        Star,
     }
 
     let import_stmt = just(Token::Kw("import"))
@@ -610,13 +623,16 @@ where
                                         .or_not(),
                                 ),
                             )
-                            .delimited_by(just_symbol("("), just_symbol(")"))
+                            .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
                             .map(ImportLeaves::Multiple),
                         ),
+                        just(Token::Symbol("."))
+                            .then(just(Token::Symbol("*")))
+                            .map(|_| ImportLeaves::Star),
                         just(Token::Kw("as"))
                             .pad_cont()
                             .ignore_then(ident.clone())
-                            .map(|x| ImportLeaves::Single(x)),
+                            .map(|x| ImportLeaves::SingleAlias(x)),
                     ))
                     .boxed()
                     .or_not(),
@@ -625,24 +641,33 @@ where
         .map(
             |(mut trunk, leaves): (Vec<SIdent>, Option<ImportLeaves>)| -> Stmt {
                 match leaves {
-                    Some(ImportLeaves::Multiple(leaves)) => {
-                        Stmt::Import(ImportStmt { trunk, leaves })
-                    }
-                    Some(ImportLeaves::Single(alias)) => {
+                    Some(ImportLeaves::Multiple(leaves)) => Stmt::Import(ImportStmt {
+                        trunk,
+                        leaves,
+                        star: false,
+                    }),
+                    Some(ImportLeaves::SingleAlias(alias)) => {
                         if let Some(leaf) = trunk.pop() {
                             Stmt::Import(ImportStmt {
                                 trunk,
                                 leaves: vec![(leaf, Some(alias))],
+                                star: false,
                             })
                         } else {
                             panic!("trunk should not be empty here")
                         }
                     }
+                    Some(ImportLeaves::Star) => Stmt::Import(ImportStmt {
+                        trunk,
+                        leaves: vec![],
+                        star: true,
+                    }),
                     None => {
                         if let Some(leaf) = trunk.pop() {
                             Stmt::Import(ImportStmt {
                                 trunk,
                                 leaves: vec![(leaf, None)],
+                                star: false,
                             })
                         } else {
                             panic!("trunk should not be empty here")

@@ -408,12 +408,16 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
                 );
             }
 
-            for (ident, alias) in &import_stmt.leaves {
-                aliases.push(ast.method1_unbound(
-                    "alias",
-                    (ident.0, alias.map(|a| a.0)),
-                    Some(span),
-                )?);
+            if import_stmt.star {
+                aliases.push(ast.method1_unbound("alias", ("*", ast.py.None()), Some(span))?);
+            } else {
+                for (ident, alias) in &import_stmt.leaves {
+                    aliases.push(ast.method1_unbound(
+                        "alias",
+                        (ident.0, alias.map(|a| a.0)),
+                        Some(span),
+                    )?);
+                }
             }
 
             if let Some(base_module) = base_module {

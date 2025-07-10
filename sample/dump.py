@@ -1,5 +1,6 @@
 import ast
 
 print(ast.dump(ast.parse("""
-fn(*a, **b, c=4, **e)
+from a import *
+from a.b import *
 """), indent=4))
