@@ -486,6 +486,38 @@ where
         .labelled("match")
         .boxed();
 
+    let class_ = just(Token::Kw("class"))
+        .pad_cont()
+        .ignore_then(group((
+            ident.clone(),
+            enumeration(
+                choice((
+                    ident
+                        .clone()
+                        .then_ignore(just_symbol("="))
+                        .then(sexpr.clone())
+                        .map(|(key, value)| CallItem::Kwarg(key, value)),
+                    sexpr.clone().map(CallItem::Arg),
+                ))
+                .spanned()
+                .boxed(),
+            )
+            .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")))
+            .or_not()
+            .then_ignore(just(START_BLOCK)),
+            sblock.clone(),
+        )))
+        .map(|(ident, arglist, block)| {
+            Expr::Class(
+                ident,
+                arglist.unwrap_or_else(|| Vec::new()),
+                Box::new(block),
+            )
+        })
+        .spanned()
+        .labelled("class")
+        .boxed();
+
     let arg_list = enumeration(choice((
         just_symbol("*")
             .ignore_then(ident.clone())
@@ -504,7 +536,9 @@ where
     .boxed();
 
     let fn_ = choice((
-        arg_list.delimited_by_with_eol(just_symbol("("), just_symbol(")")),
+        arg_list
+            .clone()
+            .delimited_by_with_eol(just_symbol("("), just_symbol(")")),
         ident.clone().map(|x| vec![ArgItem::Arg(x)]),
     ))
     .pad_cont()
@@ -531,7 +565,7 @@ where
         .boxed();
 
     sexpr.define(
-        choice((slice0, slice1, fn_, if_, match_, yield_, binary))
+        choice((slice0, slice1, fn_, class_, if_, match_, yield_, binary))
             .labelled("expression")
             .boxed(),
     );
@@ -579,6 +613,14 @@ where
         .then_ignore(just(Token::Eol))
         .map(Stmt::Return)
         .labelled("return statement")
+        .boxed();
+
+    let raise_stmt = just(Token::Kw("raise"))
+        .pad_cont()
+        .ignore_then(sexpr.clone())
+        .then_ignore(just(Token::Eol))
+        .map(Stmt::Raise)
+        .labelled("raise statement")
         .boxed();
 
     let break_stmt = just(Token::Kw("break"))
@@ -687,6 +729,7 @@ where
             while_stmt,
             for_stmt,
             return_stmt,
+            raise_stmt,
             break_stmt,
             continue_stmt,
             import_stmt,

@@ -3,18 +3,27 @@ import datetime.(date, datetime)
 import time
 import sys
 
-range = sl =>
-    import builtins.range
+class slice:
+    __init__ = (self, start, stop, step) =>
+        self.start = start
+        self.stop = stop
+        self.step = step
 
-    if sl.stop == None:
-        range(sl.start, 1000000, 1)
-    else:
-        range(sl.start, sl.stop, sl.step)
+    __iter__ = self =>
+        step = if self.step == None: 1 else: self.step
+        start = if self.start == None: 0 else: self.start
+
+        if self.stop == None:
+            for i in range(start, 100000, step):
+                yield i
+        else:
+            yield* range(start, self.stop, step)
+
+        None
 
 countdown = target_dt =>
     print("Countdown to sunset at {}".format(target_dt.strftime("%-I:%M:%s %p")))
-    print(range(0..))
-    for i in range(0..):
+    for i in ..:
         remaining = target_dt - datetime.now(target_dt.tzinfo)
         if remaining.total_seconds() <= 0:
             print("The sun has set!")

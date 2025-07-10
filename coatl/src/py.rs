@@ -286,6 +286,7 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
             Expr::If(cond, then_block, else_block) => {
                 transpile_if_stmt(ast, cond, then_block, else_block, span)
             }
+            Expr::Class(name, bases, body) => transpile_class_stmt(ast, name, bases, body, span),
             Expr::Match(subject, cases) => transpile_match_stmt(ast, subject, cases, span),
             _ => {
                 let expr = transpile_expr(ast, &expr)?;
@@ -312,6 +313,8 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
 
             // TODO allow destructuring in assign and for loop and fn def and match
             // TODO fstrings
+            // TODO prelude - iterable slices
+            // TODO try, except, class
 
             let mut target_node = transpile_expr(ast, target)?;
             let value_node = transpile_expr(ast, value)?;
@@ -448,7 +451,68 @@ struct PyExprWithAux {
     aux_stmts: PyStmts,
 }
 
-fn transpile_if_stmt<'py, 'src>(
+fn transpile_class_expr<'py>(
+    ast: &TlCtx<'py>,
+    name: &SIdent,
+    bases: &Vec<SCallItem>,
+    body: &Box<SBlock>,
+    span: &Span,
+) -> TlResult<PyExprWithAux> {
+    unimplemented!();
+}
+
+fn transpile_class_stmt<'py>(
+    ast: &TlCtx<'py>,
+    name: &SIdent,
+    bases: &Vec<SCallItem>,
+    body: &Box<SBlock>,
+    span: &Span,
+) -> TlResult<PyStmts> {
+    let mut stmts = vec![];
+    let mut bases_nodes = vec![];
+    let mut keywords_nodes = vec![];
+
+    let block = transpile_block_with_final_stmt(ast, body)?;
+
+    for base in bases {
+        match &base.0 {
+            CallItem::Arg(expr) => {
+                let base_node = transpile_expr(ast, &expr)?;
+                stmts.extend(base_node.aux_stmts);
+                bases_nodes.push(base_node.expr);
+            }
+            CallItem::Kwarg(name, expr) => {
+                let expr_node = transpile_expr(ast, &expr)?;
+                stmts.extend(expr_node.aux_stmts);
+                keywords_nodes.push((name.0, expr_node.expr));
+            }
+            _ => {
+                Err(TlErrBuilder::default()
+                    .message("only expressions and keyword arguments are allowed in class bases")
+                    .span(*span)
+                    .build_errs())?;
+            }
+        }
+    }
+
+    let class_node = ast.method1_unbound(
+        "ClassDef",
+        (
+            name.0,
+            bases_nodes,
+            keywords_nodes,
+            block,
+            PyList::empty(ast.py), // decorator_list
+            PyList::empty(ast.py), // type_params
+        ),
+        Some(span),
+    )?;
+
+    stmts.push(class_node);
+    Ok(stmts)
+}
+
+fn transpile_if_stmt<'py>(
     ast: &TlCtx<'py>,
     cond: &SExpr,
     then_block: &SBlock,
@@ -498,7 +562,7 @@ fn transpile_if_expr<'py>(
     } else {
         return Err(TlErrBuilder::default()
             .message("then block must have a final expression")
-            .span(*span)
+            .span(then_block.1)
             .build_errs());
     }
 
@@ -516,7 +580,7 @@ fn transpile_if_expr<'py>(
     } else {
         return Err(TlErrBuilder::default()
             .message("else block must have a final expression")
-            .span(*span)
+            .span(else_block.1)
             .build_errs());
     }
 
@@ -750,7 +814,11 @@ fn transpile_expr<'py>(ast: &TlCtx<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
             let obj = transpile_expr(ast, obj)?;
 
             Ok(PyExprWithAux {
-                expr: ast.method1_unbound("Attribute", (obj.expr, attr.0), Some(span))?,
+                expr: ast.method1_unbound(
+                    "Attribute",
+                    (obj.expr, attr.0, ast.name_ctx(PyAccessCtx::Load)?),
+                    Some(span),
+                )?,
                 aux_stmts: obj.aux_stmts,
             })
         }
@@ -889,6 +957,7 @@ fn transpile_expr<'py>(ast: &TlCtx<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
         Expr::If(cond, then_block, else_block) => {
             transpile_if_expr(ast, cond, then_block, else_block, span)
         }
+        Expr::Class(name, bases, body) => transpile_class_expr(ast, name, bases, body, span),
         Expr::Match(subject, cases) => transpile_match_expr(ast, subject, cases, span),
         Expr::Yield(expr) => {
             let value = transpile_expr(ast, expr)?;
@@ -1077,9 +1146,6 @@ fn transpile_expr<'py>(ast: &TlCtx<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
             });
         }
         Expr::FmtStr(parts) => {
-            unimplemented!();
-        }
-        Expr::Class(name, bases, body) => {
             unimplemented!();
         }
     }
