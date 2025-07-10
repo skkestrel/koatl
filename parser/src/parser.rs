@@ -230,7 +230,7 @@ where
         .clone()
         .repeated()
         .collect()
-        .delimited_by(just_symbol("{"), just_symbol("}"))
+        .delimited_by(just_symbol("BEGIN_BLOCK"), just_symbol("END_BLOCK"))
         .map(Block::Stmts)
         .boxed();
 
@@ -241,7 +241,7 @@ where
 
     let literal = select! {
         Token::Num(s) => Literal::Num(s),
-        Token::VerbatimStr(s) => Literal::Str(s),
+        Token::Str(s) => Literal::Str(s),
     }
     .spanned()
     .map(Expr::Literal)
@@ -487,7 +487,7 @@ where
             case_
                 .repeated()
                 .collect()
-                .delimited_by_with_eol(just_symbol("{"), just_symbol("}")),
+                .delimited_by_with_eol(just_symbol("BEGIN_BLOCK"), just_symbol("END_BLOCK")),
         )
         .map(|(scrutinee, cases)| Expr::Match(Box::new(scrutinee), cases))
         .spanned()
@@ -793,7 +793,7 @@ where
         .collect::<Vec<_>>()
         .map(Block::Stmts)
         .spanned()
-        .delimited_by(just_symbol("{"), just_symbol("}").then(just(Token::Eol)))
+        .delimited_by(just_symbol("BEGIN_BLOCK"), just_symbol("END_BLOCK").then(just(Token::Eol)))
         .boxed()
 }
 

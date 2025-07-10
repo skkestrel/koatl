@@ -14,9 +14,13 @@ pub enum Token<'src> {
     Ident(&'src str),
     Bool(bool),
     Num(&'src str),
-    VerbatimStr(&'src str),
+    Str(&'src str),
     Kw(&'src str),
     Symbol(&'src str),
+
+    FstringBegin(&'src str),
+    FstringMiddle(&'src str),
+    FstringEnd(&'src str),
 
     Eol,
     Continuation,
@@ -27,12 +31,15 @@ impl fmt::Display for Token<'_> {
         match self {
             Token::Bool(x) => write!(f, "{x}"),
             Token::Num(n) => write!(f, "{n}"),
-            Token::VerbatimStr(s) => write!(f, "{s}"),
+            Token::Str(s) => write!(f, "{s}"),
             Token::Symbol(s) => write!(f, "{s}"),
             Token::Ident(s) => write!(f, "{s}"),
             Token::Kw(s) => write!(f, "<{s}>"),
             Token::Eol => write!(f, "<eol>"),
             Token::Continuation => write!(f, "<cont>"),
+            Token::FstringBegin(s) => write!(f, "f\"{s}"),
+            Token::FstringMiddle(s) => write!(f, "{s}"),
+            Token::FstringEnd(s) => write!(f, "{s}\""),
         }
     }
 }
@@ -45,22 +52,36 @@ pub enum LexerLine<'src> {
     EndBlock(Span, Token<'src>),
 }
 
-struct LineCursors<'src, 'parse> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NextLineExpectation {
+    None,
+    ExpectNewBlock,
+    ExpectFstringBlock,
+    ExpectVerbatimFstringBlock,
+}
+
+struct LineInfo<'src, 'parse> {
     line_start: Cursor<'src, 'parse, &'src str>,
     text_start: Cursor<'src, 'parse, &'src str>,
     text_end: Cursor<'src, 'parse, &'src str>,
     line_end: Cursor<'src, 'parse, &'src str>,
+
+    next_line: NextLineExpectation,
 }
 
 enum LineParseErr {
     UnterminatedString,
     UnterminatedVerbatimString,
+    UnterminatedFstringExpr,
+    UnmatchedFstringBrace,
     Eof,
 }
 
 fn parse_line<'src, 'parse, 'input>(
     input: &'input mut InputRef<'src, 'parse, &'src str, extra::Err<Rich<'src, char, Span>>>,
-) -> Result<LineCursors<'src, 'parse>, LineParseErr> {
+    initial_in_fstring: bool,
+    initial_in_verbatim_fstring: bool,
+) -> Result<LineInfo<'src, 'parse>, LineParseErr> {
     let line_start = input.cursor();
 
     if input.peek().is_none() {
@@ -77,20 +98,79 @@ fn parse_line<'src, 'parse, 'input>(
     let text_start = input.cursor();
     let mut text_end = text_start.clone();
     let mut quotes_in_a_row = 0;
-    let mut in_regular_string = false;
-    let mut in_verbatim_string = false;
-    let mut in_comment = false;
-    let mut prev_char = '\0';
 
-    while let Some(char) = input.peek() {
-        if !in_verbatim_string {
-            if char == '\n' {
+    let mut in_regular_string = initial_in_fstring;
+    let mut in_verbatim_string = initial_in_verbatim_fstring;
+
+    let mut is_fstring = initial_in_fstring || initial_in_verbatim_fstring;
+    let mut in_fstring_expr = false;
+
+    // when resuming parsing an fstring, make sure that it begins with a }
+    if is_fstring {
+        if let Some(chr) = input.peek() {
+            if chr != '}' {
+                return Err(LineParseErr::UnmatchedFstringBrace);
+            } else {
                 input.next();
 
-                if in_regular_string {
+                if let Some(chr) = input.peek() {
+                    if chr == '}' {
+                        return Err(LineParseErr::UnmatchedFstringBrace);
+                    }
+                }
+            }
+        } else {
+            return Err(LineParseErr::UnmatchedFstringBrace);
+        }
+    }
+
+    let mut in_comment = false;
+    let mut prev_char = '\0';
+    let mut prev_prev_char = '\0';
+    let mut next_line_expectation = NextLineExpectation::None;
+
+    while let Some(char) = input.peek() {
+        if is_fstring {
+            if char == '{' && prev_char != '{' {
+                if in_fstring_expr {
+                    return Err(LineParseErr::UnmatchedFstringBrace);
+                }
+
+                in_fstring_expr = true;
+            }
+            if char == '}' && prev_char != '}' {
+                if !in_fstring_expr {
+                    return Err(LineParseErr::UnmatchedFstringBrace);
+                }
+
+                in_fstring_expr = false;
+            }
+        }
+
+        if !in_verbatim_string || in_fstring_expr {
+            let mut handle_endl = || {
+                if in_regular_string && !in_fstring_expr {
                     return Err(LineParseErr::UnterminatedString);
                 }
 
+                if in_fstring_expr {
+                    if !(prev_char == '{' && prev_prev_char != '{') {
+                        return Err(LineParseErr::UnterminatedFstringExpr);
+                    }
+
+                    if in_verbatim_string {
+                        next_line_expectation = NextLineExpectation::ExpectVerbatimFstringBlock;
+                    } else {
+                        next_line_expectation = NextLineExpectation::ExpectFstringBlock;
+                    }
+                }
+
+                Ok(())
+            };
+
+            if char == '\n' {
+                input.next();
+                handle_endl()?;
                 break;
             }
 
@@ -98,10 +178,7 @@ fn parse_line<'src, 'parse, 'input>(
                 input.next();
                 if input.peek() == Some('\n') {
                     input.next();
-
-                    if in_regular_string {
-                        return Err(LineParseErr::UnterminatedString);
-                    }
+                    handle_endl()?;
                 }
                 break;
             }
@@ -111,10 +188,19 @@ fn parse_line<'src, 'parse, 'input>(
             input.next();
         } else {
             if !in_comment {
+                if char == ':' || (char == '=' && prev_char == '>') {
+                    next_line_expectation = NextLineExpectation::ExpectNewBlock;
+                }
+
                 if prev_char != '"' {
                     quotes_in_a_row = 0;
                 }
+
                 if char == '"' {
+                    if quotes_in_a_row == 0 {
+                        is_fstring = prev_char == 'f' || prev_char == 't';
+                    }
+
                     quotes_in_a_row += 1;
 
                     if quotes_in_a_row == 3 {
@@ -140,40 +226,62 @@ fn parse_line<'src, 'parse, 'input>(
             }
         }
 
+        prev_prev_char = prev_char;
         prev_char = char;
     }
 
     let line_end = input.cursor();
 
-    Ok(LineCursors {
+    Ok(LineInfo {
         line_start: line_start,
         text_start: text_start,
         text_end: text_end,
         line_end: line_end,
+        next_line: next_line_expectation,
     })
 }
 
 fn semantic_whitespace<'src>()
 -> impl Parser<'src, &'src str, Vec<LexerLine<'src>>, extra::Err<Rich<'src, char, Span>>> {
     custom(|input| {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum IndentationLevelType {
+            Block,
+            Continuation,
+            FstringExpr,
+            VerbatimFstringExpr,
+        }
+
         struct IndentationLevel<'src> {
             indentation: &'src str,
             start_cursor: usize,
-            is_continuation: bool,
+            typ: IndentationLevelType,
         }
 
         let mut lines = Vec::<LexerLine>::new();
         let mut indents = Vec::<IndentationLevel>::new();
-        let mut expecting_block = true;
+        let mut next_line_expectation = NextLineExpectation::ExpectNewBlock;
+
+        let mut next_parse_line_in_fstring = false;
+        let mut next_parse_line_in_verbatim_fstring = false;
 
         loop {
-            let parsed = parse_line(input);
+            let parsed = parse_line(
+                input,
+                next_parse_line_in_fstring,
+                next_parse_line_in_verbatim_fstring,
+            );
+
+            next_parse_line_in_fstring = false;
+            next_parse_line_in_verbatim_fstring = false;
+
             match parsed {
-                Ok(LineCursors {
+                Ok(LineInfo {
                     line_start,
                     text_start,
                     text_end,
                     line_end,
+                    next_line: next_next_line,
                 }) => {
                     let text: &str = input.slice(&text_start..&text_end);
                     let indent: &str = input.slice(&line_start..&text_start);
@@ -186,13 +294,22 @@ fn semantic_whitespace<'src>()
                     for (i, block) in indents.iter().enumerate() {
                         if indent == block.indentation {
                             for _ in i + 1..indents.len() {
-                                let popped = indents.pop();
+                                let popped_type = indents.pop().unwrap().typ;
 
-                                if !popped.unwrap().is_continuation {
-                                    lines.push(LexerLine::EndBlock(
-                                        Span::new((), *line_start.inner()..*text_start.inner()),
-                                        Token::Eol,
-                                    ));
+                                match popped_type {
+                                    IndentationLevelType::FstringExpr => {
+                                        next_parse_line_in_fstring = true;
+                                    }
+                                    IndentationLevelType::VerbatimFstringExpr => {
+                                        next_parse_line_in_verbatim_fstring = true;
+                                    }
+                                    IndentationLevelType::Block => {
+                                        lines.push(LexerLine::EndBlock(
+                                            Span::new((), *line_start.inner()..*text_start.inner()),
+                                            Token::Eol,
+                                        ));
+                                    }
+                                    IndentationLevelType::Continuation => (),
                                 }
                             }
 
@@ -205,7 +322,7 @@ fn semantic_whitespace<'src>()
                         if indents.is_empty()
                             || indent.starts_with(indents.last().unwrap().indentation)
                         {
-                            if expecting_block {
+                            if next_line_expectation != NextLineExpectation::None {
                                 lines.push(LexerLine::BeginBlock(Span::new(
                                     (),
                                     *line_start.inner()..*text_start.inner(),
@@ -215,7 +332,18 @@ fn semantic_whitespace<'src>()
                             indents.push(IndentationLevel {
                                 indentation: indent,
                                 start_cursor: *line_start.inner(),
-                                is_continuation: !expecting_block,
+                                typ: match next_line_expectation {
+                                    NextLineExpectation::ExpectNewBlock => {
+                                        IndentationLevelType::Block
+                                    }
+                                    NextLineExpectation::ExpectFstringBlock => {
+                                        IndentationLevelType::FstringExpr
+                                    }
+                                    NextLineExpectation::ExpectVerbatimFstringBlock => {
+                                        IndentationLevelType::VerbatimFstringExpr
+                                    }
+                                    NextLineExpectation::None => IndentationLevelType::Continuation,
+                                },
                             });
                         } else {
                             lines.push(LexerLine::IndentError(
@@ -226,7 +354,7 @@ fn semantic_whitespace<'src>()
                             continue;
                         }
                     } else {
-                        if expecting_block {
+                        if next_line_expectation != NextLineExpectation::None {
                             lines.push(LexerLine::IndentError(
                                 "expected indented block",
                                 Span::new((), *line_start.inner()..*text_start.inner()),
@@ -234,7 +362,8 @@ fn semantic_whitespace<'src>()
                         }
                     }
 
-                    if indents.last().unwrap().is_continuation {
+                    // rewrite the line-end token if its a continuation
+                    if indents.last().unwrap().typ == IndentationLevelType::Continuation {
                         match lines.pop().unwrap() {
                             LexerLine::Line(a, b, _) => {
                                 lines.push(LexerLine::Line(a, b, Some(Token::Continuation)));
@@ -249,40 +378,67 @@ fn semantic_whitespace<'src>()
                         }
                     }
 
-                    expecting_block = text.ends_with(':') || text.ends_with("=>");
-
                     lines.push(LexerLine::Line(
                         text,
                         Span::new((), *text_start.inner()..*text_end.inner()),
-                        if expecting_block {
+                        if next_line_expectation != NextLineExpectation::None {
                             None
                         } else {
                             Some(Token::Eol)
                         },
                     ));
+
+                    next_line_expectation = next_next_line;
                 }
                 Err(LineParseErr::Eof) => break,
                 Err(LineParseErr::UnterminatedString) => {
                     return Err(Rich::custom(
-                        Span::new((), *input.cursor().inner()..*input.cursor().inner()),
+                        Span::new((), *input.cursor().inner() - 1..*input.cursor().inner()),
                         "unterminated string",
                     ));
                 }
                 Err(LineParseErr::UnterminatedVerbatimString) => {
                     return Err(Rich::custom(
-                        Span::new((), *input.cursor().inner()..*input.cursor().inner()),
+                        Span::new((), *input.cursor().inner() - 1..*input.cursor().inner()),
                         "unterminated verbatim string",
+                    ));
+                }
+                Err(LineParseErr::UnterminatedFstringExpr) => {
+                    return Err(Rich::custom(
+                        Span::new((), *input.cursor().inner() - 1..*input.cursor().inner()),
+                        "unterminated fstring expr",
+                    ));
+                }
+                Err(LineParseErr::UnmatchedFstringBrace) => {
+                    return Err(Rich::custom(
+                        Span::new((), *input.cursor().inner() - 1..*input.cursor().inner()),
+                        "unmatched fstring brace",
                     ));
                 }
             }
         }
 
         while !indents.is_empty() {
-            if !indents.pop().unwrap().is_continuation {
-                lines.push(LexerLine::EndBlock(
-                    Span::new((), *input.cursor().inner()..*input.cursor().inner()),
-                    Token::Eol,
-                ));
+            match indents.pop().unwrap().typ {
+                IndentationLevelType::Continuation => (),
+                IndentationLevelType::Block => {
+                    lines.push(LexerLine::EndBlock(
+                        Span::new((), *input.cursor().inner()..*input.cursor().inner()),
+                        Token::Eol,
+                    ));
+                }
+                IndentationLevelType::FstringExpr => {
+                    return Err(Rich::custom(
+                        Span::new((), *input.cursor().inner()..*input.cursor().inner()),
+                        "unmatched fstring brace",
+                    ));
+                }
+                IndentationLevelType::VerbatimFstringExpr => {
+                    return Err(Rich::custom(
+                        Span::new((), *input.cursor().inner()..*input.cursor().inner()),
+                        "unmatched fstring brace",
+                    ));
+                }
             }
         }
 
@@ -325,7 +481,7 @@ where
     let str_ = just('"')
         .ignore_then(none_of('"').repeated().to_slice())
         .then_ignore(just('"'))
-        .map(Token::VerbatimStr);
+        .map(Token::Str);
 
     let symbol = choice((
         just("=>"),
@@ -336,7 +492,7 @@ where
         just(">="),
         just("//"),
         just("**"),
-        one_of("+-*/%|&$:=,.()[]<>\\").to_slice(),
+        one_of("+-*/%|&$:=,.()[]<>").to_slice(),
     ))
     .map(Token::Symbol);
 
@@ -374,7 +530,14 @@ where
 }
 
 pub fn tokenize<'src>(s: &'src str) -> (TokenList<'src>, Vec<LexerError<'src>>) {
-    let lines = semantic_whitespace().parse(s).unwrap();
+    let lines = match semantic_whitespace().parse(s).into_result() {
+        Ok(lines) => lines,
+        Err(err) => {
+            return (TokenList(Vec::new()), err);
+        }
+    };
+
+    println!("{lines:?}");
 
     let mut tokens = TokenList(Vec::new());
     let mut errs = Vec::new();
@@ -402,10 +565,10 @@ pub fn tokenize<'src>(s: &'src str) -> (TokenList<'src>, Vec<LexerError<'src>>) 
                 errs.push(Rich::custom(span, reason));
             }
             LexerLine::BeginBlock(span) => {
-                tokens.0.push((Token::Symbol("{"), span));
+                tokens.0.push((Token::Symbol("BEGIN_BLOCK"), span));
             }
             LexerLine::EndBlock(span, end_token) => {
-                tokens.0.push((Token::Symbol("}"), span));
+                tokens.0.push((Token::Symbol("END_BLOCk"), span));
                 tokens.0.push((end_token, span));
             }
         }
