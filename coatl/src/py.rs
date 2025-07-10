@@ -286,7 +286,6 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
             Expr::If(cond, then_block, else_block) => {
                 transpile_if_stmt(ast, cond, then_block, else_block, span)
             }
-            Expr::Class(name, bases, body) => transpile_class_stmt(ast, name, bases, body, span),
             Expr::Match(subject, cases) => transpile_match_stmt(ast, subject, cases, span),
             _ => {
                 let expr = transpile_expr(ast, &expr)?;
@@ -308,7 +307,13 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
             if let (Expr::Ident((ident, ident_span)), Expr::Fn(arglist, body)) =
                 (&target.0, &value.0)
             {
-                return transpile_fn_def(ast, &arglist, &body, ident, span);
+                return make_fndef_stmts(ast, ident, &arglist, FnDefBody::Block(&body), span);
+            }
+
+            if let (Expr::Ident((ident, ident_span)), Expr::Class(bases, body)) =
+                (&target.0, &value.0)
+            {
+                return make_classdef_stmts(ast, ident, &bases, &body, span);
             }
 
             // TODO allow destructuring in assign and for loop and fn def and match
@@ -391,7 +396,42 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
             }
         }
         Stmt::While(cond, body) => {
-            unimplemented!();
+            let cond_node = transpile_expr(ast, cond)?;
+            let body_block = transpile_block_with_final_stmt(ast, body)?;
+
+            let mut stmts = vec![];
+
+            let cond = if cond_node.aux_stmts.is_empty() {
+                cond_node.expr
+            } else {
+                let cond_name = ast.temp_var_name("whilecond", span.start);
+                let aux_fn = make_fndef_stmts(
+                    ast,
+                    &cond_name,
+                    &vec![],
+                    FnDefBody::Stmts(cond_node.aux_stmts),
+                    span,
+                )?;
+                stmts.extend(aux_fn);
+
+                ast.method1_unbound(
+                    "Call",
+                    (
+                        ast.name(&cond_name, PyAccessCtx::Load, Some(span))?,
+                        PyList::empty(ast.py),
+                        PyList::empty(ast.py),
+                    ),
+                    Some(span),
+                )?
+            };
+
+            stmts.push(ast.method1_unbound(
+                "While",
+                (cond, body_block, PyList::empty(ast.py)),
+                Some(span),
+            )?);
+
+            Ok(stmts)
         }
         Stmt::Break => Ok(vec![ast.method1_unbound("Break", (), Some(span))?]),
         Stmt::Continue => Ok(vec![ast.method1_unbound("Continue", (), Some(span))?]),
@@ -449,67 +489,6 @@ type PyExpr = PyObject;
 struct PyExprWithAux {
     expr: PyObject,
     aux_stmts: PyStmts,
-}
-
-fn transpile_class_expr<'py>(
-    ast: &TlCtx<'py>,
-    name: &SIdent,
-    bases: &Vec<SCallItem>,
-    body: &Box<SBlock>,
-    span: &Span,
-) -> TlResult<PyExprWithAux> {
-    unimplemented!();
-}
-
-fn transpile_class_stmt<'py>(
-    ast: &TlCtx<'py>,
-    name: &SIdent,
-    bases: &Vec<SCallItem>,
-    body: &Box<SBlock>,
-    span: &Span,
-) -> TlResult<PyStmts> {
-    let mut stmts = vec![];
-    let mut bases_nodes = vec![];
-    let mut keywords_nodes = vec![];
-
-    let block = transpile_block_with_final_stmt(ast, body)?;
-
-    for base in bases {
-        match &base.0 {
-            CallItem::Arg(expr) => {
-                let base_node = transpile_expr(ast, &expr)?;
-                stmts.extend(base_node.aux_stmts);
-                bases_nodes.push(base_node.expr);
-            }
-            CallItem::Kwarg(name, expr) => {
-                let expr_node = transpile_expr(ast, &expr)?;
-                stmts.extend(expr_node.aux_stmts);
-                keywords_nodes.push((name.0, expr_node.expr));
-            }
-            _ => {
-                Err(TlErrBuilder::default()
-                    .message("only expressions and keyword arguments are allowed in class bases")
-                    .span(*span)
-                    .build_errs())?;
-            }
-        }
-    }
-
-    let class_node = ast.method1_unbound(
-        "ClassDef",
-        (
-            name.0,
-            bases_nodes,
-            keywords_nodes,
-            block,
-            PyList::empty(ast.py), // decorator_list
-            PyList::empty(ast.py), // type_params
-        ),
-        Some(span),
-    )?;
-
-    stmts.push(class_node);
-    Ok(stmts)
 }
 
 fn transpile_if_stmt<'py>(
@@ -667,12 +646,68 @@ fn transpile_match_expr<'py>(
     })
 }
 
-fn make_fn_node<'py>(
+fn make_classdef_stmts<'py>(
     ast: &TlCtx<'py>,
-    arglist: &[ArgItem],
-    body: &SBlock,
+    name: &str,
+    bases: &Vec<SCallItem>,
+    body: &Box<SBlock>,
     span: &Span,
-) -> TlResult<(Vec<PyObject>, PyObject, Vec<PyObject>, Vec<PyObject>)> {
+) -> TlResult<PyStmts> {
+    let mut stmts = vec![];
+    let mut bases_nodes = vec![];
+    let mut keywords_nodes = vec![];
+
+    let block = transpile_block_with_final_stmt(ast, body)?;
+
+    for base in bases {
+        match &base.0 {
+            CallItem::Arg(expr) => {
+                let base_node = transpile_expr(ast, &expr)?;
+                stmts.extend(base_node.aux_stmts);
+                bases_nodes.push(base_node.expr);
+            }
+            CallItem::Kwarg(name, expr) => {
+                let expr_node = transpile_expr(ast, &expr)?;
+                stmts.extend(expr_node.aux_stmts);
+                keywords_nodes.push((name.0, expr_node.expr));
+            }
+            _ => {
+                Err(TlErrBuilder::default()
+                    .message("spread args are not allowed in class bases")
+                    .span(*span)
+                    .build_errs())?;
+            }
+        }
+    }
+
+    stmts.push(ast.method1_unbound(
+        "ClassDef",
+        (
+            name,
+            bases_nodes,
+            keywords_nodes,
+            block,
+            PyList::empty(ast.py), // decorator_list
+            PyList::empty(ast.py), // type_params
+        ),
+        Some(span),
+    )?);
+
+    Ok(stmts)
+}
+
+enum FnDefBody<'a> {
+    Stmts(PyStmts),
+    Block(&'a SBlock<'a>),
+}
+
+fn make_fndef_stmts<'py>(
+    ast: &TlCtx<'py>,
+    name: &str,
+    arglist: &[ArgItem],
+    body: FnDefBody,
+    span: &Span,
+) -> TlResult<PyStmts> {
     let empty = || Vec::<PyObject>::new();
     let posonly = empty();
     let mut args = empty();
@@ -726,53 +761,26 @@ fn make_fn_node<'py>(
         Some(span),
     )?;
 
-    let block = transpile_block_with_final_expr(ast, body)?;
-    let mut body_stmts = block.stmts;
+    let body_stmts = match body {
+        FnDefBody::Stmts(stmts) => stmts,
+        FnDefBody::Block(block) => {
+            let block = transpile_block_with_final_expr(ast, block)?;
+            let mut stmts = block.stmts;
 
-    if let Some(final_expr) = block.final_expr {
-        body_stmts.push(ast.method1_unbound("Return", (final_expr,), Some(span))?);
+            if let Some(final_expr) = block.final_expr {
+                stmts.push(ast.method1_unbound("Return", (final_expr,), Some(span))?);
+            };
+
+            stmts
+        }
     };
 
     let decorators = empty();
 
-    Ok((aux_stmts, args, body_stmts, decorators))
-}
-
-fn transpile_fn_expr<'py>(
-    ast: &TlCtx<'py>,
-    arglist: &[ArgItem],
-    body: &SBlock,
-    span: &Span,
-) -> TlResult<PyExprWithAux> {
-    let name = ast.temp_var_name("fnexp", span.start);
-    let (aux_stmts, args, body_stmts, decorators) = make_fn_node(ast, arglist, body, span)?;
-
-    let mut aux_stmts = aux_stmts;
-
-    aux_stmts.push(ast.method1_unbound(
-        "FunctionDef",
-        (&name, args, body_stmts, decorators),
-        Some(span),
-    )?);
-
-    Ok(PyExprWithAux {
-        expr: ast.name(&name, PyAccessCtx::Load, Some(span))?,
-        aux_stmts,
-    })
-}
-
-fn transpile_fn_def<'py>(
-    ast: &TlCtx<'py>,
-    arglist: &[ArgItem],
-    body: &SBlock,
-    name: &str,
-    span: &Span,
-) -> TlResult<PyStmts> {
-    let (aux_stmts, args, body_stmts, decorators) = make_fn_node(ast, arglist, body, span)?;
     let mut stmts = aux_stmts;
     stmts.push(ast.method1_unbound(
         "FunctionDef",
-        (name, args, body_stmts, decorators),
+        (&name, args, body_stmts, decorators),
         Some(span),
     )?);
 
@@ -788,7 +796,24 @@ fn transpile_expr<'py>(ast: &TlCtx<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
     let (expr, span) = expr;
 
     match expr {
-        Expr::Fn(arglist, body) => transpile_fn_expr(ast, arglist, body, span),
+        Expr::Fn(arglist, body) => {
+            let name = ast.temp_var_name("fnexp", span.start);
+            let aux_stmts = make_fndef_stmts(ast, &name, arglist, FnDefBody::Block(body), span)?;
+
+            Ok(PyExprWithAux {
+                expr: ast.name(&name, PyAccessCtx::Load, Some(span))?,
+                aux_stmts,
+            })
+        }
+        Expr::Class(bases, body) => {
+            let name = ast.temp_var_name("classexp", span.start);
+            let aux_stmts = make_classdef_stmts(ast, &name, bases, body, span)?;
+
+            Ok(PyExprWithAux {
+                expr: ast.name(&name, PyAccessCtx::Load, Some(span))?,
+                aux_stmts,
+            })
+        }
         Expr::Literal((lit, span)) => {
             let value = match lit {
                 Literal::Num(num) => match num.parse::<i128>() {
@@ -957,7 +982,6 @@ fn transpile_expr<'py>(ast: &TlCtx<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
         Expr::If(cond, then_block, else_block) => {
             transpile_if_expr(ast, cond, then_block, else_block, span)
         }
-        Expr::Class(name, bases, body) => transpile_class_expr(ast, name, bases, body, span),
         Expr::Match(subject, cases) => transpile_match_expr(ast, subject, cases, span),
         Expr::Yield(expr) => {
             let value = transpile_expr(ast, expr)?;

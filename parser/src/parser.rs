@@ -128,7 +128,7 @@ pub enum Expr<'a> {
 
     If(Box<SExpr<'a>>, Box<SBlock<'a>>, Option<Box<SBlock<'a>>>),
     Match(Box<SExpr<'a>>, Vec<(SExpr<'a>, Box<SBlock<'a>>)>),
-    Class(SIdent<'a>, Vec<SCallItem<'a>>, Box<SBlock<'a>>),
+    Class(Vec<SCallItem<'a>>, Box<SBlock<'a>>),
 
     Call(Box<SExpr<'a>>, Vec<SCallItem<'a>>),
     Subscript(Box<SExpr<'a>>, Vec<ListItem<'a>>),
@@ -488,8 +488,7 @@ where
 
     let class_ = just(Token::Kw("class"))
         .pad_cont()
-        .ignore_then(group((
-            ident.clone(),
+        .ignore_then(
             enumeration(
                 choice((
                     ident
@@ -503,17 +502,11 @@ where
                 .boxed(),
             )
             .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")))
-            .or_not()
-            .then_ignore(just(START_BLOCK)),
-            sblock.clone(),
-        )))
-        .map(|(ident, arglist, block)| {
-            Expr::Class(
-                ident,
-                arglist.unwrap_or_else(|| Vec::new()),
-                Box::new(block),
-            )
-        })
+            .or_not(),
+        )
+        .then_ignore(just(START_BLOCK))
+        .then(sblock.clone())
+        .map(|(arglist, block)| Expr::Class(arglist.unwrap_or_else(|| Vec::new()), Box::new(block)))
         .spanned()
         .labelled("class")
         .boxed();
@@ -592,6 +585,7 @@ where
         .then_ignore(just(START_BLOCK))
         .then(sblock.clone())
         .map(|(cond, body)| Stmt::While(cond, body))
+        .then_ignore(just(Token::Eol))
         .labelled("while statement")
         .boxed();
 
