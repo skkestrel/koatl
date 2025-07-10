@@ -3,6 +3,7 @@
 use chumsky::{
     input::{Cursor, InputRef, StrInput},
     prelude::*,
+    recursive::Indirect,
 };
 use std::fmt;
 
@@ -20,7 +21,6 @@ pub enum Token<'src> {
 
     FstringBegin(&'src str),
     FstringMiddle(&'src str),
-    FstringEnd(&'src str),
 
     Eol,
     Continuation,
@@ -37,13 +37,13 @@ impl fmt::Display for Token<'_> {
             Token::Kw(s) => write!(f, "<{s}>"),
             Token::Eol => write!(f, "<eol>"),
             Token::Continuation => write!(f, "<cont>"),
-            Token::FstringBegin(s) => write!(f, "f\"{s}"),
-            Token::FstringMiddle(s) => write!(f, "{s}"),
-            Token::FstringEnd(s) => write!(f, "{s}\""),
+            Token::FstringBegin(s) => write!(f, "<f_begin {s}>"),
+            Token::FstringMiddle(s) => write!(f, "<f_middle {s}>"),
         }
     }
 }
 
+#[derive(Debug)]
 struct TokenizeLineInfo<'src> {
     text: &'src str,
     span: Span,
@@ -53,8 +53,8 @@ struct TokenizeLineInfo<'src> {
 }
 
 #[derive(Debug)]
-pub enum LexerLine<'src> {
-    Line(&'src str, Span, Option<Token<'src>>),
+enum LexerLine<'src> {
+    Line(TokenizeLineInfo<'src>),
     IndentError(&'static str, Span),
     BeginBlock(Span),
     EndBlock(Span, Token<'src>),
@@ -82,6 +82,7 @@ enum LineParseErr {
     UnterminatedVerbatimString,
     UnterminatedFstringExpr,
     UnmatchedFstringBrace,
+    NoNestedStringsInFstring,
     Eof,
 }
 
@@ -274,11 +275,12 @@ fn semantic_whitespace<'src>()
         let mut next_parse_line_in_verbatim_fstring = false;
 
         loop {
-            let parsed = parse_line(
-                input,
-                next_parse_line_in_fstring,
-                next_parse_line_in_verbatim_fstring,
-            );
+            let parse_line_in_fstring = next_parse_line_in_fstring;
+            let parse_line_in_verbatim_fstring = next_parse_line_in_verbatim_fstring;
+
+            let parsed = parse_line(input, parse_line_in_fstring, parse_line_in_verbatim_fstring);
+
+            println!("{parse_line_in_fstring:?}, {parse_line_in_verbatim_fstring:?}");
 
             next_parse_line_in_fstring = false;
             next_parse_line_in_verbatim_fstring = false;
@@ -373,8 +375,9 @@ fn semantic_whitespace<'src>()
                     // rewrite the line-end token if its a continuation
                     if indents.last().unwrap().typ == IndentationLevelType::Continuation {
                         match lines.pop().unwrap() {
-                            LexerLine::Line(a, b, _) => {
-                                lines.push(LexerLine::Line(a, b, Some(Token::Continuation)));
+                            LexerLine::Line(mut l) => {
+                                l.end_token = Some(Token::Continuation);
+                                lines.push(LexerLine::Line(l));
                             }
                             LexerLine::EndBlock(a, _) => {
                                 lines.push(LexerLine::EndBlock(a, Token::Continuation));
@@ -386,15 +389,17 @@ fn semantic_whitespace<'src>()
                         }
                     }
 
-                    lines.push(LexerLine::Line(
-                        text,
-                        Span::new((), *text_start.inner()..*text_end.inner()),
-                        if next_next_line == NextLineExpectation::None {
+                    lines.push(LexerLine::Line(TokenizeLineInfo {
+                        text: text,
+                        span: Span::new((), *line_start.inner()..*line_end.inner()),
+                        end_token: if next_next_line == NextLineExpectation::None {
                             Some(Token::Eol)
                         } else {
                             None
                         },
-                    ));
+                        starts_as_fstring: parse_line_in_fstring,
+                        starts_as_verbatim_fstring: parse_line_in_verbatim_fstring,
+                    }));
 
                     next_line_expectation = next_next_line;
                 }
@@ -421,6 +426,12 @@ fn semantic_whitespace<'src>()
                     return Err(Rich::custom(
                         Span::new((), *input.cursor().inner() - 1..*input.cursor().inner()),
                         "unmatched fstring brace",
+                    ));
+                }
+                Err(LineParseErr::NoNestedStringsInFstring) => {
+                    return Err(Rich::custom(
+                        Span::new((), *input.cursor().inner() - 1..*input.cursor().inner()),
+                        "no nested strings in fstring",
                     ));
                 }
             }
@@ -454,6 +465,7 @@ fn semantic_whitespace<'src>()
     })
 }
 
+#[derive(Debug)]
 pub struct TokenList<'src>(pub Vec<Spanned<Token<'src>>>);
 
 impl<'src> std::iter::FromIterator<Spanned<Token<'src>>> for TokenList<'src> {
@@ -475,34 +487,32 @@ impl fmt::Display for TokenList<'_> {
 }
 
 pub type LexerError<'src> = Rich<'src, char, Span>;
+pub type TExtra<'src> = extra::Err<LexerError<'src>>;
 
-fn line_lexer<'src, TInput>()
--> impl Parser<'src, TInput, TokenList<'src>, extra::Err<LexerError<'src>>>
+fn line_lexer<'src, TInput>(
+    starts_as_fstring: bool,
+    starts_as_verbatim_fstring: bool,
+) -> impl Parser<'src, TInput, TokenList<'src>, TExtra<'src>>
 where
     TInput: StrInput<'src, Token = char, Span = SimpleSpan, Slice = &'src str>,
 {
+    let mut tokens =
+        chumsky::recursive::Recursive::<Indirect<TInput, TokenList, TExtra>>::declare();
+
     let num = text::int(10)
         .then(just('.').then(text::digits(10)).or_not())
         .to_slice()
         .map(Token::Num);
 
-    // let fstr_begin = custom
-
-    let str_ = custom(|input| {
+    let str_ = just("\"").ignore_then(custom(|input| {
         let mut start = input.cursor();
-        let mut quotes = 0;
+        let mut quotes = 1;
 
         while input.peek() == Some('"') && quotes < 3 {
             quotes += 1;
             input.next();
         }
 
-        if quotes == 0 {
-            return Err(Rich::custom(
-                Span::new((), *start.inner()..*start.inner()),
-                "expected string to start with \"",
-            ));
-        }
         if quotes == 2 {
             return Ok(Token::Str(input.slice(&start..&start)));
         }
@@ -536,14 +546,171 @@ where
         if input.peek().is_none() {
             return Err(Rich::custom(
                 Span::new((), *start.inner()..*end.inner()),
-                "unterminated string",
+                "unterminated regular string",
             ));
         }
 
         input.next();
 
         Ok(Token::Str(input.slice(&start..&end)))
-    });
+    }));
+
+    let fstr_bare = just("f\"").ignore_then(custom(|input| {
+        let start = input.cursor();
+
+        while let Some(chr) = input.peek() {
+            println!("fstr_bare: {chr:?}");
+
+            if chr == '"' {
+                input.next();
+                return Ok(Token::FstringBegin(input.slice(&start..&input.cursor())));
+            }
+
+            if chr == '{' {
+                input.next();
+                if input.peek() != Some('{') {
+                    return Err(Rich::custom(
+                        Span::new((), *start.inner()..*input.cursor().inner()),
+                        "expected no {",
+                    ));
+                }
+                input.next();
+            }
+
+            input.next();
+        }
+
+        Err(Rich::custom(
+            Span::new((), *start.inner()..*input.cursor().inner()),
+            "unterminated fstring",
+        ))
+    }));
+
+    let fstr_begin = just("f\"").ignore_then(custom(|input| {
+        let start = input.cursor();
+
+        while let Some(chr) = input.peek() {
+            println!("fstr_begin: {chr:?}");
+
+            if chr == '"' {
+                input.next();
+                return Err(Rich::custom(
+                    Span::new((), *start.inner()..*input.cursor().inner()),
+                    "expected a {",
+                ));
+            }
+
+            if chr == '{' {
+                let end = input.cursor();
+
+                input.next();
+                if input.peek() != Some('{') {
+                    return Ok(Token::FstringBegin(input.slice(&start..&end)));
+                }
+                input.next();
+            }
+
+            input.next();
+        }
+
+        Err(Rich::custom(
+            Span::new((), *start.inner()..*input.cursor().inner()),
+            "unterminated fstring",
+        ))
+    }));
+
+    let fstr_middle = just("}").ignore_then(custom(|input| {
+        let start = input.cursor();
+
+        while let Some(chr) = input.peek() {
+            println!("fstr_middle: {chr:?}");
+
+            if chr == '"' {
+                input.next();
+                return Err(Rich::custom(
+                    Span::new((), *start.inner()..*input.cursor().inner()),
+                    "expected a {",
+                ));
+            }
+
+            if chr == '{' {
+                let end = input.cursor();
+                input.next();
+                if input.peek() != Some('{') {
+                    return Ok(Token::FstringMiddle(input.slice(&start..&end)));
+                }
+                input.next();
+            }
+
+            input.next();
+        }
+
+        Err(Rich::custom(
+            Span::new((), *start.inner()..*input.cursor().inner()),
+            "unterminated fstring",
+        ))
+    }));
+
+    let fstr_end = just("}")
+        .ignore_then(custom(|input| {
+            let start = input.cursor();
+
+            while let Some(chr) = input.peek() {
+                println!("fstr_end: {chr:?}");
+
+                if chr == '"' {
+                    let end = input.cursor();
+                    input.next();
+                    return Ok(Token::FstringMiddle(input.slice(&start..&end)));
+                }
+
+                if chr == '{' {
+                    input.next();
+                    if input.peek() != Some('{') {
+                        return Err(Rich::custom(
+                            Span::new((), *start.inner()..*input.cursor().inner()),
+                            "expected no more {",
+                        ));
+                    }
+                    input.next();
+                }
+
+                input.next();
+            }
+
+            Err(Rich::custom(
+                Span::new((), *start.inner()..*input.cursor().inner()),
+                "unterminated fstring-end",
+            ))
+        }))
+        .map_with(|end, e| (end, e.span()));
+
+    let fstr = group((
+        fstr_begin.map_with(|begin, e| (begin, e.span())),
+        text::whitespace().ignore_then(tokens.clone()),
+        fstr_middle
+            .map_with(|mid, e| (mid, e.span()))
+            .then(text::whitespace().ignore_then(tokens.clone()))
+            .map(|(a, mut b)| {
+                b.0.insert(0, a);
+                b
+            })
+            .repeated()
+            .collect::<Vec<_>>(),
+        fstr_end,
+    ))
+    .map(|(begin, first_tokens, parts, end)| {
+        println!("{begin:?}, {first_tokens:?}, {parts:?}, {end:?}");
+        let mut result = vec![begin];
+        result.extend(first_tokens.0);
+        for part in parts {
+            result.extend(part.0);
+        }
+        result.push(end);
+        TokenList(result)
+    })
+    .or(fstr_bare.map_with(|begin, e| TokenList(vec![(begin, e.span())])))
+    .boxed();
 
     let symbol = choice((
         just("=>"),
@@ -564,22 +731,30 @@ where
         "finally", "and", "or", "not",
     ];
 
-    let ident = text::ascii::ident().map(|ident: &str| {
-        if KEYWORDS.contains(&ident) {
-            Token::Kw(ident)
-        } else {
-            Token::Ident(ident)
-        }
-    });
+    let ident = text::ascii::ident::<TInput, TExtra>()
+        .and_is(just("f\"").not())
+        .map(|ident: &str| {
+            if KEYWORDS.contains(&ident) {
+                Token::Kw(ident)
+            } else {
+                Token::Ident(ident)
+            }
+        });
 
-    let token = choice((num, str_, symbol, ident)).boxed();
+    let unit = choice((num, str_, symbol, ident)).boxed();
 
-    token
-        .then_ignore(text::whitespace())
-        .map_with(|token, e| (token, e.span()))
+    tokens.define(
+        choice((
+            fstr,
+            fstr_begin
+                .then_ignore(end())
+                .map_with(|begin, e| TokenList(vec![(begin, e.span())])),
+            unit.then_ignore(text::whitespace())
+                .map_with(|token, e| (TokenList(vec![(token, e.span())]))),
+        ))
         .repeated()
         .collect::<Vec<_>>()
-        .map(|x: Vec<_>| TokenList(x))
+        .map(|x: Vec<_>| TokenList(x.into_iter().flat_map(|x| x.0).collect()))
         .map_err(|e: LexerError| {
             Rich::custom(
                 *e.span(),
@@ -588,7 +763,20 @@ where
                     e.found().map_or("EOF".to_string(), |x| x.to_string())
                 ),
             )
-        })
+        }),
+    );
+
+    if starts_as_fstring {
+        fstr_end
+            .then(tokens)
+            .map(|(end, mut tokens)| {
+                tokens.0.insert(0, end);
+                tokens
+            })
+            .boxed()
+    } else {
+        tokens.boxed()
+    }
 }
 
 pub fn tokenize<'src>(s: &'src str) -> (TokenList<'src>, Vec<LexerError<'src>>) {
@@ -606,12 +794,21 @@ pub fn tokenize<'src>(s: &'src str) -> (TokenList<'src>, Vec<LexerError<'src>>) 
 
     for l in lines {
         match l {
-            LexerLine::Line(txt, span, end_token) => {
-                let (line_tokens, mut line_errs) = line_lexer()
-                    .parse(txt.map_span(move |s| {
-                        Span::new(s.context, span.start + s.start()..span.start + s.end())
-                    }))
-                    .into_output_errors();
+            LexerLine::Line(line_info) => {
+                let TokenizeLineInfo {
+                    text,
+                    span,
+                    end_token,
+                    starts_as_fstring,
+                    starts_as_verbatim_fstring,
+                } = line_info;
+
+                let (line_tokens, mut line_errs) =
+                    line_lexer(starts_as_fstring, starts_as_verbatim_fstring)
+                        .parse(text.map_span(move |s| {
+                            Span::new(s.context, span.start + s.start()..span.start + s.end())
+                        }))
+                        .into_output_errors();
 
                 if let Some(mut tok) = line_tokens {
                     tokens.0.append(&mut tok.0);

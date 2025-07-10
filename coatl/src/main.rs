@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tokens, errs) = tokenize(&src);
     let (ast, parse_errs) = parse_tokens(&src, &tokens);
 
-    // println!("{tokens}");
+    println!("{tokens}");
     // println!("{ast:?}");
 
     errs.into_iter()
