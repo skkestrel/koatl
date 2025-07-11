@@ -1028,6 +1028,19 @@ fn transpile_expr<'py>(ast: &TlCtx<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
         Expr::If(cond, then_block, else_block) => {
             transpile_if_expr(ast, cond, then_block, else_block, span)
         }
+        Expr::Block(block) => {
+            let PyBlock { stmts, final_expr } = transpile_block_with_final_expr(ast, block)?;
+
+            Ok(PyExprWithAux {
+                expr: final_expr.ok_or_else(|| {
+                    TlErrBuilder::default()
+                        .message("block-expression must have a final expression")
+                        .span(block.1)
+                        .build_errs()
+                })?,
+                aux_stmts: stmts,
+            })
+        }
         Expr::Match(subject, cases) => transpile_match_expr(ast, subject, cases, span),
         Expr::Yield(expr) => {
             let value = transpile_expr(ast, expr)?;
@@ -1070,6 +1083,8 @@ fn transpile_expr<'py>(ast: &TlCtx<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
                 BinaryOp::Geq => Some("GtE"),
                 BinaryOp::Eq => Some("Eq"),
                 BinaryOp::Neq => Some("NotEq"),
+                BinaryOp::Is => Some("Is"),
+                BinaryOp::Nis => Some("IsNot"),
                 _ => None,
             };
 

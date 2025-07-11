@@ -18,6 +18,8 @@ pub enum BinaryOp {
     Geq,
     Eq,
     Neq,
+    Is,
+    Nis,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -149,6 +151,8 @@ pub enum Expr<'a> {
 
     Fn(Vec<ArgItem<'a>>, Box<SBlock<'a>>),
     Fstr(Spanned<String>, Vec<(SFmtExpr<'a>, Spanned<String>)>),
+
+    Block(Box<SBlock<'a>>),
 }
 
 pub type SExpr<'a> = Spanned<Expr<'a>>;
@@ -268,6 +272,7 @@ where
     .delimited_by_with_eol(just_symbol("["), just_symbol("]"))
     .map(Expr::List)
     .labelled("list")
+    .as_context()
     .boxed();
 
     let mapping = enumeration(choice((
@@ -283,6 +288,7 @@ where
     .delimited_by_with_eol(just(Token::Symbol("[")), just(Token::Symbol("]")))
     .map(Expr::Mapping)
     .labelled("mapping")
+    .as_context()
     .boxed();
 
     atom.define(
@@ -291,9 +297,11 @@ where
             ident.clone().map(Expr::Ident).spanned(),
             list.spanned(),
             mapping.spanned(),
-            sexpr
+            sblock_or_expr
                 .clone()
-                .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
+                .map(|b| Expr::Block(Box::new(b)))
+                .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")))
+                .spanned(),
         ))
         .labelled("atom")
         .boxed(),
@@ -326,7 +334,8 @@ where
     )
     .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")))
     .map(Postfix::Call)
-    .labelled("call")
+    .labelled("argument-list")
+    .as_context()
     .boxed();
 
     let subscript = enumeration(
@@ -341,6 +350,7 @@ where
     .delimited_by_with_eol(just(Token::Symbol("[")), just(Token::Symbol("]")))
     .map(Postfix::Subscript)
     .labelled("subscript")
+    .as_context()
     .boxed();
 
     let attribute = just_symbol(".")
@@ -441,7 +451,9 @@ where
             Token::Symbol(">") => BinaryOp::Gt,
             Token::Symbol(">=") => BinaryOp::Geq,
             Token::Symbol("==") => BinaryOp::Eq,
-            Token::Symbol("!=") => BinaryOp::Neq,
+            Token::Symbol("<>") => BinaryOp::Neq,
+            Token::Symbol("===") => BinaryOp::Is,
+            Token::Symbol("<=>") => BinaryOp::Nis,
         },
     );
 
@@ -577,7 +589,7 @@ where
             .map(|(key, value)| ArgItem::DefaultArg(key, value)),
         ident.clone().map(ArgItem::Arg),
     )))
-    .labelled("arg-list")
+    .labelled("argument-def-list")
     .boxed();
 
     let fn_ = choice((
