@@ -407,6 +407,13 @@ where
     }
 
     fn parse_empty_line(&mut self) -> TResult<'src, ()> {
+        if self.peek().is_none() {
+            return Err(Rich::custom(
+                self.span_since(&self.cursor()),
+                "expected empty line, not eof",
+            ));
+        }
+
         while let Some(c) = self.peek() {
             if c == ' ' || c == '\t' {
                 self.next();
@@ -626,7 +633,13 @@ where
     ) -> TResult<'src, Spanned<TokenList<'src>>> {
         let mut tokens = vec![];
 
-        let (indent_level, indent_span) = self.try_parse(|x| x.parse_indentation())?;
+        let (indent_level, indent_span) =
+            self.try_parse(|x| x.parse_indentation()).map_err(|_| {
+                Rich::custom(
+                    self.span_since(&self.cursor()),
+                    "expected indentation at the beginning of parse_block",
+                )
+            })?;
 
         match block_type {
             NewBlockType::BeginInput => {}
@@ -738,10 +751,9 @@ where
             if let Ok((cur_indent_level, cur_indent_span)) =
                 self.look_ahead(|x| x.parse_indentation())
             {
-                if cur_indent_level < indent_level {
-                    break;
-                } else if cur_indent_level > indent_level {
+                if cur_indent_level > indent_level {
                     // handle continuation
+
                     let (new_block, new_block_span) = self.try_parse(|x| {
                         x.parse_block(indent_level, NewBlockType::Continuation, close_brace_err)
                     })?;
@@ -752,9 +764,16 @@ where
                         new_block_span.end..new_block_span.end,
                     );
                 }
+            }
+
+            if let Ok((cur_indent_level, cur_indent_span)) =
+                self.look_ahead(|x| x.parse_indentation())
+            {
+                if cur_indent_level < indent_level {
+                    break;
+                }
 
                 self.parse_indentation()?;
-                // successfully parsed indentation of next line
 
                 tokens.push((
                     if block_type == NewBlockType::Continuation {
@@ -764,6 +783,8 @@ where
                     },
                     self.span_since(&self.cursor()),
                 ));
+            } else {
+                break;
             }
         }
 
