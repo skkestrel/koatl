@@ -73,7 +73,7 @@ pub type SLiteral<'a> = Spanned<Literal<'a>>;
 
 #[derive(Debug)]
 pub struct FmtExpr<'a> {
-    pub expr: SExpr<'a>,
+    pub block: SBlock<'a>,
     pub fmt: Option<&'a str>,
 }
 
@@ -147,7 +147,7 @@ pub enum Expr<'a> {
     YieldFrom(Box<SExpr<'a>>),
 
     Fn(Vec<ArgItem<'a>>, Box<SBlock<'a>>),
-    FmtStr(Vec<Box<SFmtExpr<'a>>>),
+    Fstr(Spanned<String>, Vec<(SFmtExpr<'a>, Spanned<String>)>),
 }
 
 pub type SExpr<'a> = Spanned<Expr<'a>>;
@@ -471,6 +471,40 @@ where
         .labelled("if")
         .boxed();
 
+    let fstr_begin = select! {
+        Token::FstrBegin(s) => s,
+    };
+    let fstr_continue = select! {
+        Token::FstrContinue(s) => s,
+    };
+
+    let fstr = fstr_begin
+        .spanned()
+        .then(
+            sblock_or_expr
+                .clone()
+                .spanned()
+                .then(fstr_continue.spanned())
+                .map(|(block, cont)| {
+                    (
+                        (
+                            FmtExpr {
+                                block: block.0,
+                                fmt: None,
+                            },
+                            block.1,
+                        ),
+                        cont,
+                    )
+                })
+                .repeated()
+                .collect::<Vec<_>>(),
+        )
+        .map(|(begin, parts)| Expr::Fstr(begin, parts))
+        .spanned()
+        .labelled("f-string")
+        .boxed();
+
     let case_ = sexpr
         .clone()
         .then_ignore(just(START_BLOCK))
@@ -567,9 +601,11 @@ where
         .boxed();
 
     sexpr.define(
-        choice((slice0, slice1, fn_, class_, if_, match_, yield_, binary))
-            .labelled("expression")
-            .boxed(),
+        choice((
+            slice0, slice1, fstr, fn_, class_, if_, match_, yield_, binary,
+        ))
+        .labelled("expression")
+        .boxed(),
     );
 
     let expr_stmt = sexpr
@@ -611,6 +647,7 @@ where
             ))
             .or_not(),
         )
+        .boxed()
         .then(just(START_BLOCK).ignore_then(sblock.clone()))
         .map(|(opt, body)| {
             if let Some((typ, name)) = opt {

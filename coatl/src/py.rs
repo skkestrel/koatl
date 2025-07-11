@@ -1217,8 +1217,34 @@ fn transpile_expr<'py>(ast: &TlCtx<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
                 aux_stmts,
             });
         }
-        Expr::FmtStr(parts) => {
-            unimplemented!();
+        Expr::Fstr(begin, parts) => {
+            let mut aux_stmts = Vec::new();
+            let mut nodes = Vec::new();
+            nodes.push(ast.constant(&begin.0)?);
+
+            for (fmt_expr, str_part) in parts {
+                // TODO format specifiers
+                let block_node = transpile_block_with_final_expr(ast, &fmt_expr.0.block)?;
+                aux_stmts.extend(block_node.stmts);
+
+                let expr_node = block_node.final_expr.ok_or_else(|| {
+                    TlErrBuilder::default()
+                        .message("f-string expression must have a final expression")
+                        .span(fmt_expr.1)
+                        .build_errs()
+                })?;
+
+                nodes.push(ast.method1_unbound(
+                    "FormattedValue",
+                    (expr_node, -1),
+                    Some(&fmt_expr.1),
+                )?);
+
+                nodes.push(ast.constant(&str_part.0)?);
+            }
+
+            let expr = ast.method1_unbound("JoinedStr", (nodes,), Some(span))?;
+            return Ok(PyExprWithAux { expr, aux_stmts });
         }
     }
 }

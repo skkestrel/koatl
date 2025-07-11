@@ -535,6 +535,10 @@ where
                 }
                 current_str = String::new();
 
+                // TODO either parse a new block or an inline expression
+                self.parse_nonsemantic()?;
+                let _ = self.try_parse(|x| x.parse_newline());
+
                 let (expr, expr_span) =
                     self.try_parse(|x| x.parse_block(0, NewBlockType::BeginInput, false))?;
 
@@ -638,6 +642,10 @@ where
             }
         }
 
+        if block_type == NewBlockType::Continuation {
+            tokens.push((Token::Continuation, self.span_since(&self.cursor())));
+        }
+
         loop {
             let mut has_token = false;
             let mut expect_new_block = false;
@@ -723,21 +731,12 @@ where
                         return Err(e);
                     }
                 }
-
-                tokens.push((
-                    if block_type == NewBlockType::Continuation {
-                        Token::Continuation
-                    } else {
-                        Token::Eol
-                    },
-                    self.span_since(&self.cursor()),
-                ));
             }
 
             while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
 
             if let Ok((cur_indent_level, cur_indent_span)) =
-                self.try_parse(|x| x.parse_indentation())
+                self.look_ahead(|x| x.parse_indentation())
             {
                 if cur_indent_level < indent_level {
                     break;
@@ -752,8 +751,19 @@ where
                         new_block_span.context,
                         new_block_span.end..new_block_span.end,
                     );
-                    tokens.push((Token::Eol, end_span));
                 }
+
+                self.parse_indentation()?;
+                // successfully parsed indentation of next line
+
+                tokens.push((
+                    if block_type == NewBlockType::Continuation {
+                        Token::Continuation
+                    } else {
+                        Token::Eol
+                    },
+                    self.span_since(&self.cursor()),
+                ));
             }
         }
 
