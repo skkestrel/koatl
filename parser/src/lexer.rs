@@ -182,6 +182,7 @@ where
             self.next();
         }
 
+        self.parse_nonsemantic()?;
         Ok((indent_level, self.span_since(&start)))
     }
 
