@@ -153,26 +153,34 @@ pub enum Expr<'a> {
 
 pub type SExpr<'a> = Spanned<Expr<'a>>;
 
-fn enumeration<'tokens, 'src: 'tokens, I, O, E, ItemParser>(
+fn enumeration<'tokens, 'src: 'tokens, I, O: 'tokens, E, ItemParser>(
     item_parser: ItemParser,
 ) -> impl Parser<'tokens, I, Vec<O>, E> + Clone
 where
     I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
     E: ParserExtra<'tokens, I, Error = Rich<'tokens, Token<'src>, Span>>,
-    ItemParser: Parser<'tokens, I, O, E> + Clone,
+    ItemParser: Parser<'tokens, I, O, E> + Clone + 'tokens,
 {
-    let a = choice((
-        just(Token::Symbol(","))
-            .padded_by(just(Token::Continuation).repeated())
-            .ignored(),
-        just(Token::Continuation).repeated().at_least(1).ignored(),
+    choice((
+        item_parser
+            .clone()
+            .separated_by(just(Token::Symbol(",")).or_not().then(just(Token::Eol)))
+            .allow_trailing()
+            .collect()
+            .delimited_by(
+                just(Token::Symbol("BEGIN_BLOCK")),
+                just(Token::Symbol("END_BLOCK")),
+            )
+            .labelled("block enumeration"),
+        item_parser
+            .separated_by(just(Token::Symbol(",")))
+            .allow_trailing()
+            .collect()
+            .labelled("inline enumeration"),
     ))
-    .labelled("enumeration separator");
-
-    just(Token::Continuation)
-        .repeated()
-        .ignore_then(item_parser.separated_by(a).allow_trailing().collect())
-        .labelled("enumeration")
+    .labelled("enumeration")
+    .as_context()
+    .boxed()
 }
 
 pub trait ParserExt<'tokens, 'src: 'tokens, I, O, E>: Parser<'tokens, I, O, E>
@@ -624,6 +632,7 @@ where
             slice0, slice1, fstr, fn_, class_, if_, match_, yield_, binary,
         ))
         .labelled("expression")
+        .as_context()
         .boxed(),
     );
 
@@ -850,6 +859,7 @@ where
         .collect::<Vec<_>>()
         .map(Block::Stmts)
         .spanned()
+        .labelled("program")
         .boxed()
 }
 

@@ -655,10 +655,6 @@ where
             }
         }
 
-        if block_type == NewBlockType::Continuation {
-            tokens.push((Token::Continuation, self.span_since(&self.cursor())));
-        }
-
         loop {
             let mut has_token = false;
             let mut expect_new_block = false;
@@ -683,7 +679,12 @@ where
                         break;
                     }
 
-                    expect_new_block = tok.0 == Token::Symbol("=>") || tok.0 == Token::Symbol(":");
+                    expect_new_block = tok.0 == Token::Symbol("=>")
+                        || tok.0 == Token::Symbol(":")
+                        || tok.0 == Token::Symbol("{")
+                        || tok.0 == Token::Symbol("[")
+                        || tok.0 == Token::Symbol("(");
+
                     tokens.push(tok);
                     has_token = true;
                 }
@@ -775,14 +776,9 @@ where
 
                 self.parse_indentation()?;
 
-                tokens.push((
-                    if block_type == NewBlockType::Continuation {
-                        Token::Continuation
-                    } else {
-                        Token::Eol
-                    },
-                    self.span_since(&self.cursor()),
-                ));
+                if block_type != NewBlockType::Continuation {
+                    tokens.push((Token::Eol, self.span_since(&self.cursor())));
+                }
             } else {
                 break;
             }

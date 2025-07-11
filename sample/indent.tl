@@ -1,4 +1,10 @@
-    123.123 a b c f
-    g h I
-        f a fi =>
-            asidojfoisadjfoi
+print([
+    1
+    2
+    *[3]
+    4
+])
+
+print([1, 2, 3, 4])
+print([1, 2,
+    3, 4])
