@@ -286,6 +286,7 @@ where
         mapping.spanned(),
         sexpr
             .clone()
+            .pad_cont()
             .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
     ))
     .boxed();
