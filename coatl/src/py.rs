@@ -317,8 +317,6 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
             }
 
             // TODO allow destructuring in assign and for loop and fn def and match
-            // TODO fstrings
-            // TODO prelude - iterable slices
 
             let mut target_node = transpile_expr(ast, target)?;
             let value_node = transpile_expr(ast, value)?;
@@ -1112,6 +1110,7 @@ fn transpile_expr<'py>(ast: &TlCtx<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
                 UnaryOp::Neg => "USub",
                 UnaryOp::Pos => "UAdd",
                 UnaryOp::Inv => "Invert",
+                UnaryOp::Await => todo!(),
             };
 
             return Ok(PyExprWithAux {
@@ -1223,7 +1222,7 @@ fn transpile_expr<'py>(ast: &TlCtx<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
             nodes.push(ast.constant(&begin.0)?);
 
             for (fmt_expr, str_part) in parts {
-                // TODO format specifiers
+                // TODO format specifiers?
                 let block_node = transpile_block_with_final_expr(ast, &fmt_expr.0.block)?;
                 aux_stmts.extend(block_node.stmts);
 

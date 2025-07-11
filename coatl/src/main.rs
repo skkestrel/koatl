@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut parse_errs = vec![];
 
     if let Some(ref tokens) = tokens {
-        // println!("tokens: {tokens}");
+        println!("tokens: {tokens}");
 
         let (ast, parse_errs_) = parse_tokens(&src, tokens);
 

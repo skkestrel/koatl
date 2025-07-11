@@ -25,6 +25,7 @@ pub enum UnaryOp {
     Inv,
     Pos,
     Neg,
+    Await,
 }
 
 pub type Ident<'a> = &'a str;
@@ -160,17 +161,17 @@ where
     E: ParserExtra<'tokens, I, Error = Rich<'tokens, Token<'src>, Span>>,
     ItemParser: Parser<'tokens, I, O, E> + Clone,
 {
+    let a = choice((
+        just(Token::Symbol(","))
+            .padded_by(just(Token::Continuation).repeated())
+            .ignored(),
+        just(Token::Continuation).repeated().at_least(1).ignored(),
+    ))
+    .labelled("enumeration separator");
+
     just(Token::Continuation)
         .repeated()
-        .ignore_then(item_parser)
-        .separated_by(choice((
-            just(Token::Symbol(","))
-                .padded_by(just(Token::Continuation).repeated())
-                .ignored(),
-            just(Token::Continuation).repeated().at_least(1).ignored(),
-        )))
-        .allow_trailing()
-        .collect()
+        .ignore_then(item_parser.separated_by(a).allow_trailing().collect())
         .labelled("enumeration")
 }
 
@@ -223,7 +224,11 @@ where
     let just_symbol = |s: &'static str| just(Token::Symbol(s));
 
     let mut stmt = chumsky::recursive::Recursive::declare();
+    let mut atom = chumsky::recursive::Recursive::declare();
+    let mut postfix = chumsky::recursive::Recursive::declare();
+    let mut unary = chumsky::recursive::Recursive::declare();
     let mut sexpr = chumsky::recursive::Recursive::declare();
+
     let sstmt = stmt.clone().spanned();
 
     let block = sstmt
@@ -255,7 +260,7 @@ where
 
     let list = enumeration(choice((
         just_symbol("*")
-            .ignore_then(sexpr.clone())
+            .ignore_then(unary.clone())
             .map(ListItem::Spread),
         sexpr.clone().map(ListItem::Item),
     )))
@@ -266,7 +271,7 @@ where
 
     let mapping = enumeration(choice((
         just_symbol("**")
-            .ignore_then(sexpr.clone())
+            .ignore_then(unary.clone())
             .map(MappingItem::Spread),
         sexpr
             .clone()
@@ -279,17 +284,20 @@ where
     .labelled("mapping")
     .boxed();
 
-    let atom = choice((
-        literal.spanned(),
-        ident.clone().map(Expr::Ident).spanned(),
-        list.spanned(),
-        mapping.spanned(),
-        sexpr
-            .clone()
-            .pad_cont()
-            .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
-    ))
-    .boxed();
+    atom.define(
+        choice((
+            literal.spanned(),
+            ident.clone().map(Expr::Ident).spanned(),
+            list.spanned(),
+            mapping.spanned(),
+            sexpr
+                .clone()
+                .pad_cont()
+                .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
+        ))
+        .labelled("atom")
+        .boxed(),
+    );
 
     enum Postfix<'a> {
         Call(Vec<SCallItem<'a>>),
@@ -301,10 +309,10 @@ where
     let call = enumeration(
         choice((
             just_symbol("*")
-                .ignore_then(sexpr.clone())
+                .ignore_then(unary.clone())
                 .map(CallItem::ArgSpread),
             just_symbol("**")
-                .ignore_then(sexpr.clone())
+                .ignore_then(unary.clone())
                 .map(CallItem::KwargSpread),
             ident
                 .clone()
@@ -352,34 +360,40 @@ where
         .labelled("then")
         .boxed();
 
-    let postfix = atom
-        .clone()
-        .foldl_with(
-            choice((call, subscript, attribute, then)).repeated(),
-            |expr, op, e| -> SExpr {
-                (
-                    match op {
-                        Postfix::Call(args) => Expr::Call(Box::new(expr), args),
-                        Postfix::Subscript(args) => Expr::Subscript(Box::new(expr), args),
-                        Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
-                        Postfix::Then(rhs) => Expr::Pipe(Box::new(expr), Box::new(rhs)),
-                    },
-                    e.span(),
-                )
-            },
-        )
-        .boxed();
+    postfix.define(
+        atom.clone()
+            .foldl_with(
+                choice((call, subscript, attribute, then)).repeated(),
+                |expr, op, e| -> SExpr {
+                    (
+                        match op {
+                            Postfix::Call(args) => Expr::Call(Box::new(expr), args),
+                            Postfix::Subscript(args) => Expr::Subscript(Box::new(expr), args),
+                            Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
+                            Postfix::Then(rhs) => Expr::Pipe(Box::new(expr), Box::new(rhs)),
+                        },
+                        e.span(),
+                    )
+                },
+            )
+            .labelled("postfix")
+            .boxed(),
+    );
 
-    let unary = select! {
-        Token::Symbol("+") => UnaryOp::Pos,
-        Token::Symbol("-") => UnaryOp::Neg,
-        Token::Symbol("~") => UnaryOp::Inv,
-    }
-    .repeated()
-    .foldr_with(postfix, |op: UnaryOp, rhs: SExpr, e| {
-        (Expr::Unary(op, Box::new(rhs)), e.span())
-    })
-    .boxed();
+    unary.define(
+        select! {
+            Token::Symbol("@") => UnaryOp::Await,
+            Token::Symbol("+") => UnaryOp::Pos,
+            Token::Symbol("-") => UnaryOp::Neg,
+            Token::Symbol("~") => UnaryOp::Inv,
+        }
+        .repeated()
+        .foldr_with(postfix, |op: UnaryOp, rhs: SExpr, e| {
+            (Expr::Unary(op, Box::new(rhs)), e.span())
+        })
+        .labelled("unary")
+        .boxed(),
+    );
 
     fn make_binary_op<'tokens, 'src: 'tokens, I, POp, PArg>(
         arg: PArg,
@@ -390,11 +404,15 @@ where
         POp: Parser<'tokens, I, BinaryOp, extra::Err<Rich<'tokens, Token<'src>, Span>>> + Clone,
         I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
     {
-        arg.clone()
-            .pad_cont()
-            .foldl_with(op.pad_cont().then(arg).repeated(), |lhs, (op, rhs), e| {
-                (Expr::Binary(op, Box::new(lhs), Box::new(rhs)), e.span())
-            })
+        arg.clone().foldl_with(
+            just(Token::Continuation)
+                .repeated()
+                .ignore_then(op)
+                .pad_cont()
+                .then(arg)
+                .repeated(),
+            |lhs, (op, rhs), e| (Expr::Binary(op, Box::new(lhs), Box::new(rhs)), e.span()),
+        )
     }
 
     let binary0 = make_binary_op(
@@ -844,6 +862,7 @@ pub fn parse_tokens<'tokens, 'src: 'tokens>(
             tokens
                 .0
                 .as_slice()
+                // convert the span type with map
                 .map((src.len()..src.len()).into(), |(t, s)| (t, s)),
         )
         .into_output_errors()
