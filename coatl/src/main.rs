@@ -15,99 +15,108 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let filename = std::env::args().nth(2).ok_or("Missing filename argument")?;
 
     let src = std::fs::read_to_string(&filename).unwrap();
+    let mut errs = vec![];
 
-    let (tokens, errs) = tokenize(&src);
-    let (ast, parse_errs) = parse_tokens(&src, &tokens);
+    let (tokens, token_errs) = tokenize(&src);
+    errs.extend(
+        token_errs
+            .into_iter()
+            .map(|e| e.map_token(|c| c.to_string())),
+    );
 
-    println!("{tokens}");
-    // println!("{ast:?}");
+    if let Some(ref tokens) = tokens {
+        println!("tokens: {tokens}");
 
-    errs.into_iter()
-        .map(|e| e.map_token(|c| c.to_string()))
-        .chain(
+        let (ast, parse_errs) = parse_tokens(&src, tokens);
+        errs.extend(
             parse_errs
                 .into_iter()
                 .map(|e| e.map_token(|c| c.to_string())),
-        )
-        .for_each(|e| {
-            Report::build(ReportKind::Error, (filename.clone(), e.span().into_range()))
-                .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
-                .with_message(e.to_string())
-                .with_label(
-                    Label::new((filename.clone(), e.span().into_range()))
-                        .with_message(e.reason().to_string())
-                        .with_color(Color::Red),
-                )
-                .with_labels(e.contexts().map(|(label, span)| {
-                    Label::new((filename.clone(), span.into_range()))
-                        .with_message(format!("while parsing this {label}"))
-                        .with_color(Color::Yellow)
-                }))
-                .finish()
-                .eprint(sources([(filename.clone(), src.clone())]))
-                .unwrap()
-        });
+        );
 
-    if let Some(ast) = ast {
-        match transpile(&src, &ast) {
-            Ok(code) => {
-                if cmd == "trans" {
-                    println!("{}", code);
-                } else if cmd == "run" {
-                    let mut child = Command::new("python3").stdin(Stdio::piped()).spawn()?;
+        if let Some(ast) = ast {
+            println!("AST: {ast:?}");
 
-                    if let Some(stdin) = child.stdin.as_mut() {
-                        stdin.write_all(code.as_bytes())?;
+            match transpile(&src, &ast) {
+                Ok(code) => {
+                    if cmd == "trans" {
+                        println!("{}", code);
+                    } else if cmd == "run" {
+                        let mut child = Command::new("python3").stdin(Stdio::piped()).spawn()?;
+
+                        if let Some(stdin) = child.stdin.as_mut() {
+                            stdin.write_all(code.as_bytes())?;
+                        }
+
+                        let output = child.wait_with_output()?;
+                        if !output.status.success() {
+                            eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+                        }
+                    } else {
+                        return Err("Unknown command. Use 'trans' or 'run'.".into());
                     }
-
-                    let output = child.wait_with_output()?;
-                    if !output.status.success() {
-                        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-                    }
-                } else {
-                    return Err("Unknown command. Use 'trans' or 'run'.".into());
                 }
-            }
-            Err(TlErrs(e)) => {
-                for e in e {
-                    let span = e.span.map(|x| x.into_range()).unwrap_or(0..0);
-                    let mut py_err_details: Option<(String, String)> = None;
+                Err(TlErrs(e)) => {
+                    for e in e {
+                        let span = e.span.map(|x| x.into_range()).unwrap_or(0..0);
+                        let mut py_err_details: Option<(String, String)> = None;
 
-                    if let Some(py_err) = e.py_err {
-                        pyo3::Python::with_gil(|py| {
-                            let py_err_name = py_err.to_string();
-                            let py_err_tb = py_err
-                                .traceback(py)
-                                .map(|tb| tb.format().unwrap_or_default());
+                        if let Some(py_err) = e.py_err {
+                            pyo3::Python::with_gil(|py| {
+                                let py_err_name = py_err.to_string();
+                                let py_err_tb = py_err
+                                    .traceback(py)
+                                    .map(|tb| tb.format().unwrap_or_default());
 
-                            py_err_details = Some((py_err_name, py_err_tb.unwrap_or_default()));
-                        });
+                                py_err_details = Some((py_err_name, py_err_tb.unwrap_or_default()));
+                            });
+                        }
+
+                        let mut builder =
+                            Report::build(ReportKind::Error, (filename.clone(), span.clone()))
+                                .with_config(
+                                    ariadne::Config::new()
+                                        .with_index_type(ariadne::IndexType::Byte),
+                                )
+                                .with_message(&e.message)
+                                .with_label(
+                                    Label::new((filename.clone(), span.clone()))
+                                        .with_message(&e.message)
+                                        .with_color(Color::Red),
+                                );
+
+                        if let Some((name, tb)) = py_err_details {
+                            builder = builder.with_note(format!("{name}\n{tb}"));
+                        }
+
+                        builder
+                            .finish()
+                            .eprint(sources([(filename.clone(), src.clone())]))
+                            .unwrap();
                     }
-
-                    let mut builder =
-                        Report::build(ReportKind::Error, (filename.clone(), span.clone()))
-                            .with_config(
-                                ariadne::Config::new().with_index_type(ariadne::IndexType::Byte),
-                            )
-                            .with_message(&e.message)
-                            .with_label(
-                                Label::new((filename.clone(), span.clone()))
-                                    .with_message(&e.message)
-                                    .with_color(Color::Red),
-                            );
-
-                    if let Some((name, tb)) = py_err_details {
-                        builder = builder.with_note(format!("{name}\n{tb}"));
-                    }
-
-                    builder
-                        .finish()
-                        .eprint(sources([(filename.clone(), src.clone())]))
-                        .unwrap();
                 }
             }
         }
     }
+
+    errs.into_iter().for_each(|e| {
+        Report::build(ReportKind::Error, (filename.clone(), e.span().into_range()))
+            .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
+            .with_message(e.to_string())
+            .with_label(
+                Label::new((filename.clone(), e.span().into_range()))
+                    .with_message(e.reason().to_string())
+                    .with_color(Color::Red),
+            )
+            .with_labels(e.contexts().map(|(label, span)| {
+                Label::new((filename.clone(), span.into_range()))
+                    .with_message(format!("while parsing this {label}"))
+                    .with_color(Color::Yellow)
+            }))
+            .finish()
+            .eprint(sources([(filename.clone(), src.clone())]))
+            .unwrap()
+    });
 
     Ok(())
 }

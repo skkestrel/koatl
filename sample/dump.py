@@ -1,6 +1,12 @@
 import ast
 
 print(ast.dump(ast.parse("""
-from a import *
-from a.b import *
+try:
+    pass
+except Exception as e:
+    pass
+except Exception:
+    pass
+except:
+    pass
 """), indent=4))

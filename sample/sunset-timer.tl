@@ -3,7 +3,7 @@ import datetime.(date, datetime)
 import time
 import sys
 
-class slice:
+slice = class:
     __init__ = (self, start, stop, step) =>
         self.start = start
         self.stop = stop
