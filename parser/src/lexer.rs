@@ -1,16 +1,15 @@
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code)]
 
 use chumsky::{
     input::{Cursor, InputRef, StrInput},
     prelude::*,
-    recursive::Indirect,
 };
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 pub type Span = SimpleSpan<usize, ()>;
 pub type Spanned<T> = (T, Span);
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token<'src> {
     Ident(&'src str),
     Bool(bool),
@@ -19,8 +18,8 @@ pub enum Token<'src> {
     Kw(&'src str),
     Symbol(&'src str),
 
-    FstrBegin(&'src str),
-    FstrContinue(&'src str),
+    FstringBegin(&'src str),
+    FstringContinue(&'src str),
 
     Eol,
     Continuation,
@@ -28,14 +27,6 @@ pub enum Token<'src> {
 
 #[derive(Debug)]
 pub struct TokenList<'src>(pub Vec<Spanned<Token<'src>>>);
-
-impl<'src> TokenList<'src> {
-    pub fn concat(a: TokenList<'src>, b: TokenList<'src>) -> Self {
-        let mut result = a;
-        result.0.extend(b.0);
-        result
-    }
-}
 
 impl fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -48,8 +39,8 @@ impl fmt::Display for Token<'_> {
             Token::Kw(s) => write!(f, "<{s}>"),
             Token::Eol => write!(f, "<eol>"),
             Token::Continuation => write!(f, "<cont>"),
-            Token::FstrBegin(s) => write!(f, "<f_begin {s}>"),
-            Token::FstrContinue(s) => write!(f, "<f_continue {s}>"),
+            Token::FstringBegin(s) => write!(f, "<f_begin {s}>"),
+            Token::FstringContinue(s) => write!(f, "<f_middle {s}>"),
         }
     }
 }
@@ -72,192 +63,522 @@ impl fmt::Display for TokenList<'_> {
     }
 }
 
-pub type TError<'src> = Rich<'src, char, Span>;
-
-#[derive(Debug, Copy, Clone, PartialEq, Default)]
-enum NextLineExpectation {
-    #[default]
-    BeginInput,
-    None,
-    NewBlock,
+#[derive(Debug, Clone)]
+pub struct IndentLevel {
+    pub level: usize,
+    pub start_cursor: usize,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-enum IndentAction {
-    Unknown,
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum NewBlockType {
+    #[default]
     BeginInput,
-    None,
-    BeginBlock,
+    NewBlock,
     Continuation,
 }
 
-#[derive(Debug, Clone)]
-struct Context {
-    current_indent: usize,
-    next_line_expectation: NextLineExpectation,
-    indent_action: IndentAction,
-}
+pub type TOutput<'src> = TokenList<'src>;
+pub type TError<'src> = Rich<'src, char, Span>;
+pub type TExtra<'src> = extra::Full<TError<'src>, (), ()>;
 
 type TResult<'src, T> = Result<T, TError<'src>>;
-type TExtra<'src> = extra::Full<TError<'src>, (), Context>;
-type TOutput<'src> = TokenList<'src>;
 
-fn lexer<'src, TInput>() -> impl Parser<'src, TInput, TokenList<'src>, extra::Err<TError<'src>>>
+struct TokenizeCtx<'src: 'parse, 'parse, 'input, TInput>
 where
     TInput: StrInput<'src, Token = char, Span = SimpleSpan, Slice = &'src str>,
 {
-    let mut block = chumsky::recursive::Recursive::<Indirect<TInput, TOutput, TExtra>>::declare();
+    input: &'input mut InputRef<'src, 'parse, TInput, TExtra<'src>>,
+    keywords: HashSet<String>,
+}
 
-    let indentation = custom(|input: &mut InputRef<TInput, TExtra>| {
-        let start = input.cursor();
+impl<'src: 'parse, 'parse, 'input, TInput> TokenizeCtx<'src, 'parse, 'input, TInput>
+where
+    TInput: StrInput<'src, Token = char, Span = SimpleSpan, Slice = &'src str>,
+{
+    fn new(input: &'input mut InputRef<'src, 'parse, TInput, TExtra<'src>>) -> Self {
+        static KEYWORDS: &[&str] = &[
+            "if", "then", "else", "match", "import", "as", "class", "while", "for", "in", "break",
+            "continue", "with", "yield", "global", "nonlocal", "return", "raise", "try", "except",
+            "finally", "and", "or", "not",
+        ];
+
+        let keywords = HashSet::<String>::from_iter(KEYWORDS.iter().map(|s| s.to_string()));
+
+        TokenizeCtx { input, keywords }
+    }
+
+    fn cursor(&self) -> Cursor<'src, 'parse, TInput> {
+        self.input.cursor()
+    }
+
+    fn ucursor(&self) -> usize {
+        *self.cursor().inner()
+    }
+
+    fn peek(&mut self) -> Option<char> {
+        self.input.peek()
+    }
+
+    fn next(&mut self) -> Option<char> {
+        self.input.next()
+    }
+
+    fn span_since(&mut self, start: &Cursor<'src, 'parse, TInput>) -> Span {
+        self.input.span_since(start)
+    }
+
+    fn slice_since(&mut self, range: &Cursor<'src, 'parse, TInput>) -> &'src str {
+        self.input.slice_since(range..)
+    }
+
+    fn try_parse<TOut>(
+        &mut self,
+        parse_fn: impl FnOnce(&mut Self) -> TResult<'src, TOut>,
+    ) -> TResult<'src, TOut> {
+        let start = self.input.save();
+
+        match parse_fn(self) {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                self.input.rewind(start);
+                Err(e)
+            }
+        }
+    }
+
+    fn look_ahead<TOut>(
+        &mut self,
+        parse_fn: impl FnOnce(&mut Self) -> TResult<'src, TOut>,
+    ) -> TResult<'src, TOut> {
+        let start = self.input.save();
+
+        match parse_fn(self) {
+            Ok(r) => {
+                self.input.rewind(start);
+                Ok(r)
+            }
+            Err(e) => {
+                self.input.rewind(start);
+                Err(e)
+            }
+        }
+    }
+
+    fn parse_indentation(&mut self) -> TResult<'src, Spanned<usize>> {
+        let start = self.cursor();
         let mut indent_level = 0;
 
-        while let Some(c) = input.peek() {
+        if self.peek().is_none() {
+            return Err(Rich::custom(
+                self.span_since(&start),
+                "expected indentation, not eof",
+            ));
+        }
+
+        while let Some(c) = self.peek() {
             if c != ' ' && c != '\t' {
                 break;
             }
 
             indent_level += 1;
-            input.next();
+            self.next();
         }
 
-        println!("indentation: {indent_level} {:?}", input.ctx());
+        Ok((indent_level, self.span_since(&start)))
+    }
 
-        let action = match input.ctx().next_line_expectation {
-            NextLineExpectation::BeginInput => IndentAction::BeginInput,
-            NextLineExpectation::NewBlock => {
-                if indent_level < input.ctx().current_indent {
-                    return Err(Rich::custom(
-                        input.span_since(&start),
-                        "expected an indented block",
-                    ));
-                }
+    fn parse_ident_or_token(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
+        let start = self.cursor();
 
-                IndentAction::BeginBlock
+        let c = self.peek();
+        if c.is_none_or(|c| !c.is_ascii_alphabetic() && c != '_') {
+            return Err(Rich::custom(self.span_since(&start), "expected identifier"));
+        }
+
+        while let Some(c) = self.peek() {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                self.next();
+            } else {
+                break;
             }
-            NextLineExpectation::None => {
-                if indent_level < input.ctx().current_indent {
-                    return Err(Rich::custom(
-                        input.span_since(&start),
-                        "unexpected dedentation",
-                    ));
-                } else if indent_level > input.ctx().current_indent {
-                    indent_level = input.ctx().current_indent;
-                    IndentAction::Continuation
-                } else {
-                    IndentAction::None
+        }
+
+        let ident = self.slice_since(&start);
+        if self.keywords.contains(ident) {
+            return Ok((Token::Kw(ident), self.span_since(&start)));
+        }
+
+        Ok((
+            Token::Ident(self.slice_since(&start)),
+            self.span_since(&start),
+        ))
+    }
+
+    fn parse_symbol(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
+        const POLYGRAMS: &[&str] = &["===", "=>", "..", "==", "<>", "<=", ">=", "//", "**"];
+        const MONOGRAMS: &str = "[]{}()<>.,;:!?@$%^&*+-=|\\/`~";
+
+        let saved = self.input.save();
+        let start = self.cursor();
+        for _ in 0..3 {
+            self.next();
+        }
+
+        let sl = self.slice_since(&start);
+        for polygram in POLYGRAMS {
+            if sl.starts_with(polygram) {
+                self.input.rewind(saved);
+                for _ in 0..polygram.len() {
+                    self.next();
                 }
+                return Ok((Token::Symbol(polygram), self.span_since(&start)));
             }
+        }
+        for monogram in MONOGRAMS.chars() {
+            if sl.starts_with(monogram) {
+                self.input.rewind(saved);
+                self.next();
+                return Ok((
+                    Token::Symbol(self.slice_since(&start)),
+                    self.span_since(&start),
+                ));
+            }
+        }
+
+        Err(Rich::custom(self.span_since(&start), "expected a symbol"))
+    }
+
+    fn parse_number(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
+        let start = self.cursor();
+
+        let c = self.peek();
+
+        if c.is_none_or(|c| !(c.is_ascii_digit() || c == '.')) {
+            return Err(Rich::custom(self.span_since(&start), "expected a number"));
         };
 
-        Ok(Context {
-            current_indent: indent_level,
-            next_line_expectation: NextLineExpectation::None,
-            indent_action: action,
-        })
-    });
+        let mut after_dot = c == Some('.');
+        let digits_before_dot = !after_dot;
+        let mut digits_after_dot = false;
+        self.next();
 
-    let num = text::int::<TInput, TExtra>(10)
-        .then(just('.').then(text::digits(10)).or_not())
-        .to_slice()
-        .map(Token::Num)
-        .boxed();
-
-    let symbol = choice((
-        just("=>"),
-        just(".."),
-        just("=="),
-        just("!="),
-        just("<="),
-        just(">="),
-        just("//"),
-        just("**"),
-        one_of("+-*/%|&$:=,.()[]<>").to_slice(),
-    ))
-    .map(Token::Symbol);
-
-    static KEYWORDS: &[&str] = &[
-        "if", "then", "else", "match", "import", "as", "class", "while", "for", "in", "break",
-        "continue", "with", "yield", "global", "nonlocal", "return", "raise", "try", "except",
-        "finally", "and", "or", "not",
-    ];
-
-    let ident = text::ascii::ident::<TInput, TExtra>()
-        .and_is(just("f\"").not())
-        .map(|ident: &str| {
-            if KEYWORDS.contains(&ident) {
-                Token::Kw(ident)
-            } else {
-                Token::Ident(ident)
+        while let Some(c) = self.peek() {
+            if c == '.' {
+                if after_dot {
+                    return Err(Rich::custom(
+                        self.span_since(&start),
+                        "unexpected second dot",
+                    ));
+                }
+                after_dot = true;
+            } else if !(c.is_ascii_digit() || c == '_') {
+                break;
             }
-        });
 
-    let non_semantic = group((
-        text::inline_whitespace(),
-        just('#').then(any().and_is(text::newline().not())).or_not(),
-    ))
-    .ignored();
-
-    let expect_new_block = just("=>")
-        .or(just(":"))
-        .then_ignore(non_semantic.clone())
-        .then(text::newline())
-        .ignored();
-
-    let line_end_handler = choice((
-        expect_new_block.ignore_then(block.clone()),
-        text::newline().map(|_| TokenList(vec![])),
-    ))
-    .boxed();
-
-    let line_semantic = choice((num, symbol, ident))
-        .and_is(expect_new_block.not())
-        .then_ignore(non_semantic.clone())
-        .map_with(|x, e| (x, e.span()))
-        .repeated()
-        .collect::<Vec<_>>()
-        .map(|x| TokenList(x))
-        .then(line_end_handler.clone())
-        .map(|(a, b)| TokenList::concat(a, b))
-        .boxed();
-
-    // tokens.define(
-    //     unit.then_ignore(text::inline_whitespace())
-    //         .map_with(|token, e| (token, e.span()))
-    //         .repeated()
-    //         .collect::<Vec<_>>()
-    //         .map(|x: Vec<_>| TokenList(x))
-    //         .map_err(|e: Error| {
-    //             Rich::custom(
-    //                 *e.span(),
-    //                 format!(
-    //                     "unexpected {:?}",
-    //                     e.found().map_or("EOF".to_string(), |x| x.to_string())
-    //                 ),
-    //             )
-    //         }),
-    // );
-
-    let line = indentation.then_with_ctx(line_semantic).map(|(ctx, b)| {
-        println!("then_with_ctx: {ctx:?}, {b:?}");
-        b
-    });
-
-    block.define(line.repeated().collect::<Vec<_>>().map(|x| {
-        let mut l = TokenList(Vec::new());
-        for tokens in x {
-            l.0.extend(tokens.0);
+            digits_after_dot = true;
+            self.next();
         }
-        l
-    }));
 
-    block.with_ctx(Context {
-        current_indent: 0,
-        next_line_expectation: NextLineExpectation::BeginInput,
-        indent_action: IndentAction::Unknown,
+        if !digits_before_dot && !digits_after_dot {
+            return Err(Rich::custom(
+                self.span_since(&start),
+                "expected at least one digit",
+            ));
+        }
+
+        Ok((
+            Token::Num(self.slice_since(&start)),
+            self.span_since(&start),
+        ))
+    }
+
+    fn parse_block_comment_begin(&mut self) -> TResult<'src, ()> {
+        let start = self.cursor();
+
+        if self.next() != Some('#') || self.next() != Some('-') {
+            return Err(Rich::custom(
+                self.span_since(&start),
+                "expected block comment start",
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn parse_block_comment_end(&mut self) -> TResult<'src, ()> {
+        let start = self.cursor();
+
+        if self.next() != Some('-') || self.next() != Some('#') {
+            return Err(Rich::custom(
+                self.span_since(&start),
+                "expected block comment end",
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn parse_block_comment(&mut self) -> TResult<'src, ()> {
+        let start = self.cursor();
+
+        self.parse_block_comment_begin()?;
+
+        while let Some(c) = self.peek() {
+            if self.try_parse(|x| x.parse_block_comment_end()).is_ok() {
+                return Ok(());
+            }
+
+            if self
+                .look_ahead(TokenizeCtx::parse_block_comment_begin)
+                .is_ok()
+            {
+                self.parse_block_comment()?;
+            }
+
+            self.next();
+        }
+
+        return Err(Rich::custom(
+            self.span_since(&start),
+            "unterminated block comment",
+        ));
+    }
+
+    fn parse_newline(&mut self) -> TResult<'src, ()> {
+        let start = self.cursor();
+        let mut err = false;
+
+        match self.next() {
+            Some('\r') => {
+                if self.next() != Some('\n') {
+                    err = true;
+                }
+            }
+            Some('\n') => {}
+            None => {
+                err = true;
+            }
+            _ => {
+                err = true;
+            }
+        }
+
+        if err {
+            return Err(Rich::custom(self.span_since(&start), "expected newline"));
+        } else {
+            Ok(())
+        }
+    }
+
+    fn parse_newline_or_eof(&mut self) -> TResult<'src, ()> {
+        if self.peek().is_none() {
+            return Ok(());
+        }
+
+        if self.try_parse(TokenizeCtx::parse_newline).is_ok() {
+            return Ok(());
+        }
+
+        return Err(Rich::custom(
+            self.span_since(&self.cursor()),
+            "expected newline or end of file",
+        ));
+    }
+
+    fn parse_nonsemantic(&mut self) -> TResult<'src, ()> {
+        while let Some(c) = self.peek() {
+            if c == ' ' || c == '\t' {
+                self.next();
+            } else if self
+                .look_ahead(TokenizeCtx::parse_block_comment_begin)
+                .is_ok()
+            {
+                self.parse_block_comment()?;
+            } else if c == '#' {
+                while self.try_parse(TokenizeCtx::parse_newline_or_eof).is_err() {
+                    self.next();
+                }
+            } else {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn parse_empty_line(&mut self) -> TResult<'src, ()> {
+        while let Some(c) = self.peek() {
+            if c == ' ' || c == '\t' {
+                self.next();
+            } else if self.try_parse(TokenizeCtx::parse_newline).is_ok() {
+                return Ok(());
+            } else {
+                return Err(Rich::custom(
+                    self.span_since(&self.cursor()),
+                    "expected empty line",
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn parse_block(
+        &mut self,
+        current_indent: usize,
+        block_type: NewBlockType,
+    ) -> TResult<'src, Spanned<TokenList<'src>>> {
+        let mut tokens = vec![];
+
+        let (indent_level, indent_span) = self.try_parse(|x| x.parse_indentation())?;
+
+        match block_type {
+            NewBlockType::BeginInput => {}
+            NewBlockType::NewBlock => {
+                if indent_level <= current_indent {
+                    return Err(Rich::custom(indent_span, "expected new block indentation"));
+                }
+            }
+            NewBlockType::Continuation => {
+                if indent_level <= current_indent {
+                    return Err(Rich::custom(indent_span, "expected continuation"));
+                }
+            }
+        }
+
+        loop {
+            let mut last_token = None;
+
+            loop {
+                let tok;
+
+                if let Ok(token) = self.try_parse(TokenizeCtx::parse_number) {
+                    tok = token;
+                } else if let Ok(token) = self.try_parse(TokenizeCtx::parse_ident_or_token) {
+                    tok = token;
+                } else if let Ok(token) = self.try_parse(TokenizeCtx::parse_symbol) {
+                    tok = token;
+                } else {
+                    break;
+                }
+
+                println!("{tok:?}");
+                tokens.push(tok.clone());
+                last_token = Some(tok);
+
+                self.parse_nonsemantic()?;
+            }
+
+            if self.peek().is_none() {
+                // reached eof
+                break;
+            }
+
+            if self.try_parse(|x| x.parse_newline()).is_err() {
+                return Err(Rich::custom(
+                    self.span_since(&self.cursor()),
+                    format!("unexpected '{}'", self.peek().unwrap()),
+                ));
+            }
+
+            if let Some(last_token) = last_token {
+                if last_token.0 == Token::Symbol("=>") || last_token.0 == Token::Symbol(":") {
+                    // parse a new block
+                    let new_block =
+                        self.try_parse(|x| x.parse_block(indent_level, NewBlockType::NewBlock));
+
+                    if let Ok((new_block, new_block_span)) = new_block {
+                        tokens.push((
+                            Token::Symbol("BEGIN_BLOCK"),
+                            Span::new(
+                                new_block_span.context,
+                                new_block_span.start..new_block_span.start,
+                            ),
+                        ));
+                        tokens.extend(new_block.0);
+
+                        let end_span = Span::new(
+                            new_block_span.context,
+                            new_block_span.end..new_block_span.end,
+                        );
+                        tokens.push((Token::Eol, end_span));
+                        tokens.push((Token::Symbol("END_BLOCK"), end_span));
+                    } else if let Err(e) = new_block {
+                        while self.try_parse(TokenizeCtx::parse_newline_or_eof).is_err() {
+                            self.next();
+                        }
+
+                        return Err(e);
+                    }
+                }
+
+                tokens.push((
+                    if block_type == NewBlockType::Continuation {
+                        Token::Continuation
+                    } else {
+                        Token::Eol
+                    },
+                    Span::new(last_token.1.context, last_token.1.end..last_token.1.end),
+                ));
+            }
+
+            while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
+
+            if let Ok((cur_indent_level, cur_indent_span)) =
+                self.try_parse(|x| x.parse_indentation())
+            {
+                if cur_indent_level < indent_level {
+                    break;
+                } else if cur_indent_level > indent_level {
+                    // handle continuation
+                    let (new_block, new_block_span) = self
+                        .try_parse(|x| x.parse_block(indent_level, NewBlockType::Continuation))?;
+
+                    tokens.extend(new_block.0);
+                    let end_span = Span::new(
+                        new_block_span.context,
+                        new_block_span.end..new_block_span.end,
+                    );
+                    tokens.push((Token::Eol, end_span));
+                }
+            }
+        }
+
+        let Some(last_block_token) = tokens.last() else {
+            return Err(Rich::custom(indent_span, "empty block"));
+        };
+
+        let block_span = Span::new(
+            indent_span.context,
+            indent_span.start..last_block_token.1.end,
+        );
+
+        Ok((TokenList(tokens), block_span))
+    }
+
+    fn tokenize_input(&mut self) -> TResult<'src, TokenList<'src>> {
+        let (mut tokens, span) = self.parse_block(0, NewBlockType::BeginInput)?;
+        tokens.0.insert(0, (Token::Symbol("BEGIN_BLOCK"), span));
+        tokens.0.push((Token::Eol, span));
+        tokens.0.push((Token::Symbol("END_BLOCK"), span));
+        Ok(tokens)
+    }
+}
+
+fn lexer<'src, TInput>() -> impl Parser<'src, TInput, TOutput<'src>, TExtra<'src>>
+where
+    TInput: StrInput<'src, Token = char, Span = SimpleSpan, Slice = &'src str>,
+{
+    custom(|input| {
+        let mut ctx = TokenizeCtx::new(input);
+        ctx.tokenize_input()
     })
 }
 
 pub fn tokenize<'src>(s: &'src str) -> (Option<TokenList<'src>>, Vec<TError<'src>>) {
-    lexer().parse(s).into_output_errors()
+    let output = lexer()
+        .parse(s.map_span(|s| Span::new(s.context, s.start()..s.end())))
+        .into_output_errors();
+
+    output
 }

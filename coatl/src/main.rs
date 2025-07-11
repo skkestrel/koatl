@@ -15,21 +15,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let filename = std::env::args().nth(2).ok_or("Missing filename argument")?;
 
     let src = std::fs::read_to_string(&filename).unwrap();
-    let mut errs = vec![];
 
     let (tokens, token_errs) = tokenize(&src);
-    errs.extend(
-        token_errs
-            .into_iter()
-            .map(|e| e.map_token(|c| c.to_string())),
-    );
+    let token_errs = token_errs
+        .into_iter()
+        .map(|e| e.map_token(|c| c.to_string()))
+        .collect::<Vec<_>>();
+
+    let mut parse_errs = vec![];
 
     if let Some(ref tokens) = tokens {
         println!("tokens: {tokens}");
 
-        let (ast, parse_errs) = parse_tokens(&src, tokens);
-        errs.extend(
-            parse_errs
+        let (ast, parse_errs_) = parse_tokens(&src, tokens);
+
+        parse_errs.extend(
+            parse_errs_
                 .into_iter()
                 .map(|e| e.map_token(|c| c.to_string())),
         );
@@ -99,10 +100,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    errs.into_iter().for_each(|e| {
+    token_errs.into_iter().for_each(|e| {
         Report::build(ReportKind::Error, (filename.clone(), e.span().into_range()))
             .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
-            .with_message(e.to_string())
+            .with_message("Tokenizer Error: ".to_string() + &e.to_string())
+            .with_label(
+                Label::new((filename.clone(), e.span().into_range()))
+                    .with_message(e.reason().to_string())
+                    .with_color(Color::Red),
+            )
+            .with_labels(e.contexts().map(|(label, span)| {
+                Label::new((filename.clone(), span.into_range()))
+                    .with_message(format!("while parsing this {label}"))
+                    .with_color(Color::Yellow)
+            }))
+            .finish()
+            .eprint(sources([(filename.clone(), src.clone())]))
+            .unwrap()
+    });
+
+    parse_errs.into_iter().for_each(|e| {
+        Report::build(ReportKind::Error, (filename.clone(), e.span().into_range()))
+            .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
+            .with_message("Parser Error: ".to_string() + &e.to_string())
             .with_label(
                 Label::new((filename.clone(), e.span().into_range()))
                     .with_message(e.reason().to_string())
