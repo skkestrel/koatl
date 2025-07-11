@@ -13,13 +13,13 @@ pub type Spanned<T> = (T, Span);
 pub enum Token<'src> {
     Ident(&'src str),
     Bool(bool),
+    Str(String),
+    FstrBegin(String),
+    FstrContinue(String),
+
     Num(&'src str),
-    Str(&'src str),
     Kw(&'src str),
     Symbol(&'src str),
-
-    FstringBegin(&'src str),
-    FstringContinue(&'src str),
 
     Eol,
     Continuation,
@@ -39,8 +39,8 @@ impl fmt::Display for Token<'_> {
             Token::Kw(s) => write!(f, "<{s}>"),
             Token::Eol => write!(f, "<eol>"),
             Token::Continuation => write!(f, "<cont>"),
-            Token::FstringBegin(s) => write!(f, "<f_begin {s}>"),
-            Token::FstringContinue(s) => write!(f, "<f_middle {s}>"),
+            Token::FstrBegin(s) => write!(f, "<f_begin {s}>"),
+            Token::FstrContinue(s) => write!(f, "<f_middle {s}>"),
         }
     }
 }
@@ -216,7 +216,7 @@ where
 
     fn parse_symbol(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
         const POLYGRAMS: &[&str] = &["===", "=>", "..", "==", "<>", "<=", ">=", "//", "**"];
-        const MONOGRAMS: &str = "[]{}()<>.,;:!?@$%^&*+-=|\\/`~";
+        const MONOGRAMS: &str = "[]()<>.,;:!?@$%^&*+-=|\\/`~";
 
         let saved = self.input.save();
         let start = self.cursor();
@@ -423,10 +423,202 @@ where
         Ok(())
     }
 
+    fn parse_seq(&mut self, seq: &str) -> TResult<'src, ()> {
+        let start = self.cursor();
+
+        for c in seq.chars() {
+            if self.next() != Some(c) {
+                return Err(Rich::custom(
+                    self.span_since(&start),
+                    format!("expected '{c}'"),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn parse_escaped_char(&mut self) -> TResult<'src, char> {
+        let start = self.cursor();
+
+        match self.next() {
+            Some('\\') => {
+                if let Some(next) = self.next() {
+                    match next {
+                        'n' => return Ok('\n'),
+                        't' => return Ok('\t'),
+                        'r' => return Ok('\r'),
+                        c => {
+                            return Ok(c);
+                        }
+                    }
+                }
+
+                Err(Rich::custom(self.span_since(&start), "unterminated escape"))
+            }
+            Some(c) => Ok(c),
+            None => Err(Rich::custom(self.span_since(&start), "unterminated string")),
+        }
+    }
+
+    fn parse_regular_str(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
+        let start = self.cursor();
+
+        self.parse_seq("\"")?;
+
+        let mut s = String::new();
+        loop {
+            if self.try_parse(|x| x.parse_seq("\"")).is_ok() {
+                return Ok((Token::Str(s), self.span_since(&start)));
+            }
+
+            if self.try_parse(|x| x.parse_newline()).is_ok() {
+                return Err(Rich::custom(self.span_since(&start), "unterminated string"));
+            }
+
+            s.push(self.parse_escaped_char()?);
+        }
+    }
+
+    fn parse_verbatim_str(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
+        let start = self.cursor();
+
+        self.parse_seq("\"\"\"")?;
+
+        let mut s = String::new();
+        loop {
+            if self.try_parse(|x| x.parse_seq("\"\"\"")).is_ok() {
+                return Ok((Token::Str(s), self.span_since(&start)));
+            }
+
+            s.push(self.next().ok_or_else(|| {
+                Rich::custom(self.span_since(&start), "unterminated verbatim string")
+            })?);
+        }
+    }
+
+    fn parse_regular_fstr(&mut self) -> TResult<'src, TokenList<'src>> {
+        let mut marker = self.cursor();
+
+        self.parse_seq("f\"")?;
+
+        let mut tokens = vec![];
+        let mut current_str = String::new();
+
+        loop {
+            if self.try_parse(|x| x.parse_seq("\"")).is_ok() {
+                if tokens.len() == 0 {
+                    tokens.push((Token::FstrBegin(current_str), self.span_since(&marker)));
+                } else {
+                    tokens.push((Token::FstrContinue(current_str), self.span_since(&marker)));
+                }
+
+                return Ok(TokenList(tokens));
+            }
+
+            if self.try_parse(|x| x.parse_newline()).is_ok() {
+                return Err(Rich::custom(
+                    self.span_since(&marker),
+                    "unterminated fstring",
+                ));
+            }
+
+            if self.try_parse(|x| x.parse_seq("{{")).is_ok() {
+                current_str.push('{');
+            }
+
+            if self.try_parse(|x| x.parse_seq("{")).is_ok() {
+                if tokens.len() == 0 {
+                    tokens.push((Token::FstrBegin(current_str), self.span_since(&marker)));
+                } else {
+                    tokens.push((Token::FstrContinue(current_str), self.span_since(&marker)));
+                }
+                current_str = String::new();
+
+                let (expr, expr_span) =
+                    self.try_parse(|x| x.parse_block(0, NewBlockType::BeginInput, false))?;
+
+                self.try_parse(|x| x.parse_seq("}"))?;
+
+                tokens.push((
+                    Token::Symbol("BEGIN_BLOCK"),
+                    Span::new(expr_span.context, expr_span.start..expr_span.start),
+                ));
+                tokens.extend(expr.0);
+                tokens.push((
+                    Token::Eol,
+                    Span::new(expr_span.context, expr_span.end..expr_span.end),
+                ));
+                tokens.push((
+                    Token::Symbol("END_BLOCK"),
+                    Span::new(expr_span.context, expr_span.end..expr_span.end),
+                ));
+
+                marker = self.cursor();
+
+                continue;
+            }
+
+            current_str.push(self.parse_escaped_char()?);
+        }
+    }
+
+    fn parse_verbatim_fstr(&mut self) -> TResult<'src, TokenList<'src>> {
+        return Err(Rich::custom(
+            self.span_since(&self.cursor()),
+            "verbatim fstrings are not supported",
+        ));
+    }
+
+    fn parse_str_start(&mut self) -> TResult<'src, ()> {
+        let start = self.cursor();
+
+        if self.try_parse(|x| x.parse_seq("f\"")).is_ok() {
+            return Ok(());
+        }
+
+        if self.try_parse(|x| x.parse_seq("\"")).is_ok() {
+            return Ok(());
+        }
+
+        Err(Rich::custom(
+            self.span_since(&start),
+            "expected string start",
+        ))
+    }
+
+    fn parse_str(&mut self) -> TResult<'src, TokenList<'src>> {
+        if self.look_ahead(|x| x.parse_seq("\"\"\"")).is_ok() {
+            let token = self.parse_verbatim_str()?;
+            return Ok(TokenList(vec![token]));
+        }
+
+        if self.look_ahead(|x| x.parse_seq("\"")).is_ok() {
+            let token = self.parse_regular_str()?;
+            return Ok(TokenList(vec![token]));
+        }
+
+        if self.look_ahead(|x| x.parse_seq("f\"\"\"")).is_ok() {
+            let tokens = self.parse_verbatim_fstr()?;
+            return Ok(tokens);
+        }
+
+        if self.look_ahead(|x| x.parse_seq("f\"")).is_ok() {
+            let tokens = self.parse_regular_fstr()?;
+            return Ok(tokens);
+        }
+
+        Err(Rich::custom(
+            self.span_since(&self.cursor()),
+            "expected string start",
+        ))
+    }
+
     fn parse_block(
         &mut self,
         current_indent: usize,
         block_type: NewBlockType,
+        close_brace_err: bool,
     ) -> TResult<'src, Spanned<TokenList<'src>>> {
         let mut tokens = vec![];
 
@@ -447,24 +639,33 @@ where
         }
 
         loop {
-            let mut last_token = None;
+            let mut has_token = false;
+            let mut expect_new_block = false;
 
             loop {
-                let tok;
+                if self.look_ahead(TokenizeCtx::parse_str_start).is_ok() {
+                    let toks = self.parse_str()?;
+                    tokens.extend(toks.0);
 
-                if let Ok(token) = self.try_parse(TokenizeCtx::parse_number) {
-                    tok = token;
-                } else if let Ok(token) = self.try_parse(TokenizeCtx::parse_ident_or_token) {
-                    tok = token;
-                } else if let Ok(token) = self.try_parse(TokenizeCtx::parse_symbol) {
-                    tok = token;
+                    has_token = true;
+                    expect_new_block = false;
                 } else {
-                    break;
-                }
+                    let tok;
 
-                println!("{tok:?}");
-                tokens.push(tok.clone());
-                last_token = Some(tok);
+                    if let Ok(token) = self.try_parse(TokenizeCtx::parse_number) {
+                        tok = token;
+                    } else if let Ok(token) = self.try_parse(TokenizeCtx::parse_ident_or_token) {
+                        tok = token;
+                    } else if let Ok(token) = self.try_parse(TokenizeCtx::parse_symbol) {
+                        tok = token;
+                    } else {
+                        break;
+                    }
+
+                    expect_new_block = tok.0 == Token::Symbol("=>") || tok.0 == Token::Symbol(":");
+                    tokens.push(tok);
+                    has_token = true;
+                }
 
                 self.parse_nonsemantic()?;
             }
@@ -474,6 +675,17 @@ where
                 break;
             }
 
+            if self.peek() == Some('}') {
+                if close_brace_err {
+                    return Err(Rich::custom(
+                        self.span_since(&self.cursor()),
+                        "unexpected '}' outside fstr",
+                    ));
+                } else {
+                    break;
+                }
+            }
+
             if self.try_parse(|x| x.parse_newline()).is_err() {
                 return Err(Rich::custom(
                     self.span_since(&self.cursor()),
@@ -481,11 +693,11 @@ where
                 ));
             }
 
-            if let Some(last_token) = last_token {
-                if last_token.0 == Token::Symbol("=>") || last_token.0 == Token::Symbol(":") {
-                    // parse a new block
-                    let new_block =
-                        self.try_parse(|x| x.parse_block(indent_level, NewBlockType::NewBlock));
+            if has_token {
+                if expect_new_block {
+                    let new_block = self.try_parse(|x| {
+                        x.parse_block(indent_level, NewBlockType::NewBlock, close_brace_err)
+                    });
 
                     if let Ok((new_block, new_block_span)) = new_block {
                         tokens.push((
@@ -518,7 +730,7 @@ where
                     } else {
                         Token::Eol
                     },
-                    Span::new(last_token.1.context, last_token.1.end..last_token.1.end),
+                    self.span_since(&self.cursor()),
                 ));
             }
 
@@ -531,8 +743,9 @@ where
                     break;
                 } else if cur_indent_level > indent_level {
                     // handle continuation
-                    let (new_block, new_block_span) = self
-                        .try_parse(|x| x.parse_block(indent_level, NewBlockType::Continuation))?;
+                    let (new_block, new_block_span) = self.try_parse(|x| {
+                        x.parse_block(indent_level, NewBlockType::Continuation, close_brace_err)
+                    })?;
 
                     tokens.extend(new_block.0);
                     let end_span = Span::new(
@@ -557,10 +770,8 @@ where
     }
 
     fn tokenize_input(&mut self) -> TResult<'src, TokenList<'src>> {
-        let (mut tokens, span) = self.parse_block(0, NewBlockType::BeginInput)?;
-        tokens.0.insert(0, (Token::Symbol("BEGIN_BLOCK"), span));
-        tokens.0.push((Token::Eol, span));
-        tokens.0.push((Token::Symbol("END_BLOCK"), span));
+        let (mut tokens, span) = self.parse_block(0, NewBlockType::BeginInput, true)?;
+        tokens.0.push((Token::Eol, self.span_since(&self.cursor())));
         Ok(tokens)
     }
 }

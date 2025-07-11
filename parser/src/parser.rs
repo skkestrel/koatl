@@ -66,7 +66,7 @@ pub type SStmt<'a> = Spanned<Stmt<'a>>;
 #[derive(Debug)]
 pub enum Literal<'a> {
     Num(&'a str),
-    Str(&'a str),
+    Str(String),
 }
 
 pub type SLiteral<'a> = Spanned<Literal<'a>>;
@@ -794,10 +794,6 @@ where
         .collect::<Vec<_>>()
         .map(Block::Stmts)
         .spanned()
-        .delimited_by(
-            just_symbol("BEGIN_BLOCK"),
-            just_symbol("END_BLOCK").then(just(Token::Eol)),
-        )
         .boxed()
 }
 
