@@ -22,7 +22,6 @@ pub enum Token<'src> {
     Symbol(&'src str),
 
     Eol,
-    Continuation,
 }
 
 #[derive(Debug)]
@@ -38,7 +37,6 @@ impl fmt::Display for Token<'_> {
             Token::Ident(s) => write!(f, "{s}"),
             Token::Kw(s) => write!(f, "<{s}>"),
             Token::Eol => write!(f, "<eol>"),
-            Token::Continuation => write!(f, "<cont>"),
             Token::FstrBegin(s) => write!(f, "<f_begin {s}>"),
             Token::FstrContinue(s) => write!(f, "<f_middle {s}>"),
         }

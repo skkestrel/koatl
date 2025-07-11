@@ -188,13 +188,6 @@ where
     I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
     E: ParserExtra<'tokens, I>,
 {
-    fn pad_cont(self) -> impl Parser<'tokens, I, O, E> + Clone + Sized
-    where
-        Self: Sized + Clone,
-    {
-        self.padded_by(just(Token::Continuation).repeated())
-    }
-
     fn spanned(self) -> impl Parser<'tokens, I, Spanned<O>, E> + Clone + Sized
     where
         Self: Sized + Clone,
@@ -300,7 +293,6 @@ where
             mapping.spanned(),
             sexpr
                 .clone()
-                .pad_cont()
                 .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
         ))
         .labelled("atom")
@@ -352,13 +344,11 @@ where
     .boxed();
 
     let attribute = just_symbol(".")
-        .pad_cont()
         .ignore_then(ident.clone())
         .map(Postfix::Attribute)
         .labelled("attr");
 
     let then = just_symbol(".")
-        .pad_cont()
         .ignore_then(
             sexpr
                 .clone()
@@ -412,15 +402,10 @@ where
         POp: Parser<'tokens, I, BinaryOp, extra::Err<Rich<'tokens, Token<'src>, Span>>> + Clone,
         I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
     {
-        arg.clone().foldl_with(
-            just(Token::Continuation)
-                .repeated()
-                .ignore_then(op)
-                .pad_cont()
-                .then(arg)
-                .repeated(),
-            |lhs, (op, rhs), e| (Expr::Binary(op, Box::new(lhs), Box::new(rhs)), e.span()),
-        )
+        arg.clone()
+            .foldl_with(op.then(arg).repeated(), |lhs, (op, rhs), e| {
+                (Expr::Binary(op, Box::new(lhs), Box::new(rhs)), e.span())
+            })
     }
 
     let binary0 = make_binary_op(
@@ -481,12 +466,11 @@ where
         .boxed();
 
     let if_ = just(Token::Kw("if"))
-        .pad_cont()
         .ignore_then(group((
             sexpr.clone().then_ignore(just(START_BLOCK)),
             sblock_or_expr.clone(),
             group((
-                one_of([Token::Continuation, Token::Eol]).or_not(),
+                just(Token::Eol).or_not(),
                 just(Token::Kw("else")),
                 just(START_BLOCK),
             ))
@@ -542,7 +526,6 @@ where
         .boxed();
 
     let match_ = just(Token::Kw("match"))
-        .pad_cont()
         .ignore_then(sexpr.clone())
         .then_ignore(just(START_BLOCK))
         .then(
@@ -557,7 +540,6 @@ where
         .boxed();
 
     let class_ = just(Token::Kw("class"))
-        .pad_cont()
         .ignore_then(
             enumeration(
                 choice((
@@ -604,7 +586,6 @@ where
             .delimited_by_with_eol(just_symbol("("), just_symbol(")")),
         ident.clone().map(|x| vec![ArgItem::Arg(x)]),
     ))
-    .pad_cont()
     .then_ignore(just_symbol("=>"))
     .then(sblock_or_expr.clone())
     .map(|(args, body)| Expr::Fn(args, Box::new(body)))
@@ -614,7 +595,6 @@ where
 
     let yield_ = just(Token::Kw("yield"))
         .ignore_then(just_symbol("*").or_not())
-        .pad_cont()
         .then(sexpr.clone())
         .map(|(star, expr)| {
             if star.is_some() {
@@ -645,7 +625,7 @@ where
 
     let assign_stmt = sexpr
         .clone()
-        .then_ignore(just_symbol("=").pad_cont())
+        .then_ignore(just_symbol("="))
         .then(sexpr.clone())
         .map(|(lhs, rhs)| Stmt::Assign(lhs, rhs))
         .then_ignore(just(Token::Eol))
@@ -653,7 +633,6 @@ where
         .boxed();
 
     let while_stmt = just(Token::Kw("while"))
-        .pad_cont()
         .ignore_then(sexpr.clone())
         .then_ignore(just(START_BLOCK))
         .then(sblock.clone())
@@ -662,16 +641,12 @@ where
         .labelled("while statement")
         .boxed();
 
-    let except_block = one_of([Token::Continuation, Token::Eol])
+    let except_block = just(Token::Eol)
         .then(just(Token::Kw("except")))
-        .pad_cont()
         .ignore_then(
             group((
                 choice((sexpr.clone().map(Some), just_symbol("*").map(|_| None))),
-                just(Token::Kw("as"))
-                    .pad_cont()
-                    .ignore_then(ident.clone())
-                    .or_not(),
+                just(Token::Kw("as")).ignore_then(ident.clone()).or_not(),
             ))
             .or_not(),
         )
@@ -691,7 +666,7 @@ where
         .labelled("except block")
         .boxed();
 
-    let finally_block = one_of([Token::Continuation, Token::Eol])
+    let finally_block = one_of([Token::Eol])
         .then(just(Token::Kw("finally")))
         .then(just(START_BLOCK))
         .ignore_then(sblock.clone())
@@ -711,9 +686,8 @@ where
         .boxed();
 
     let for_stmt = just(Token::Kw("for"))
-        .pad_cont()
         .ignore_then(group((
-            sexpr.clone().then_ignore(just(Token::Kw("in")).pad_cont()),
+            sexpr.clone().then_ignore(just(Token::Kw("in"))),
             sexpr.clone().then_ignore(just(START_BLOCK)),
             sblock.clone(),
         )))
@@ -723,7 +697,6 @@ where
         .boxed();
 
     let return_stmt = just(Token::Kw("return"))
-        .pad_cont()
         .ignore_then(sexpr.clone())
         .then_ignore(just(Token::Eol))
         .map(Stmt::Return)
@@ -731,7 +704,6 @@ where
         .boxed();
 
     let raise_stmt = just(Token::Kw("raise"))
-        .pad_cont()
         .ignore_then(sexpr.clone())
         .then_ignore(just(Token::Eol))
         .map(Stmt::Raise)
@@ -739,14 +711,12 @@ where
         .boxed();
 
     let break_stmt = just(Token::Kw("break"))
-        .pad_cont()
         .ignore_then(just(Token::Eol))
         .map(|_| Stmt::Break)
         .labelled("break statement")
         .boxed();
 
     let continue_stmt = just(Token::Kw("continue"))
-        .pad_cont()
         .ignore_then(just(Token::Eol))
         .map(|_| Stmt::Continue)
         .labelled("continue statement")
@@ -758,84 +728,76 @@ where
         Star,
     }
 
-    let import_stmt = just(Token::Kw("import"))
-        .pad_cont()
-        .ignore_then(
-            ident
-                .clone()
-                .pad_cont()
-                .separated_by(just(Token::Symbol(".")).pad_cont())
-                .at_least(1)
-                .collect()
-                .pad_cont()
-                .boxed()
-                .then(
-                    choice((
-                        just(Token::Symbol(".")).ignore_then(
-                            enumeration(
-                                ident.clone().pad_cont().then(
-                                    just(Token::Kw("as"))
-                                        .pad_cont()
-                                        .ignore_then(ident.clone())
-                                        .or_not(),
-                                ),
-                            )
-                            .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
-                            .map(ImportLeaves::Multiple),
-                        ),
-                        just(Token::Symbol("."))
-                            .then(just(Token::Symbol("*")))
-                            .map(|_| ImportLeaves::Star),
-                        just(Token::Kw("as"))
-                            .pad_cont()
-                            .ignore_then(ident.clone())
-                            .map(|x| ImportLeaves::SingleAlias(x)),
-                    ))
+    let import_stmt =
+        just(Token::Kw("import"))
+            .ignore_then(
+                ident
+                    .clone()
+                    .separated_by(just(Token::Symbol(".")))
+                    .at_least(1)
+                    .collect()
                     .boxed()
-                    .or_not(),
-                ),
-        )
-        .map(
-            |(mut trunk, leaves): (Vec<SIdent>, Option<ImportLeaves>)| -> Stmt {
-                match leaves {
-                    Some(ImportLeaves::Multiple(leaves)) => Stmt::Import(ImportStmt {
-                        trunk,
-                        leaves,
-                        star: false,
-                    }),
-                    Some(ImportLeaves::SingleAlias(alias)) => {
-                        if let Some(leaf) = trunk.pop() {
-                            Stmt::Import(ImportStmt {
-                                trunk,
-                                leaves: vec![(leaf, Some(alias))],
-                                star: false,
-                            })
-                        } else {
-                            panic!("trunk should not be empty here")
+                    .then(
+                        choice((
+                            just(Token::Symbol(".")).ignore_then(
+                                enumeration(ident.clone().then(
+                                    just(Token::Kw("as")).ignore_then(ident.clone()).or_not(),
+                                ))
+                                .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
+                                .map(ImportLeaves::Multiple),
+                            ),
+                            just(Token::Symbol("."))
+                                .then(just(Token::Symbol("*")))
+                                .map(|_| ImportLeaves::Star),
+                            just(Token::Kw("as"))
+                                .ignore_then(ident.clone())
+                                .map(|x| ImportLeaves::SingleAlias(x)),
+                        ))
+                        .boxed()
+                        .or_not(),
+                    ),
+            )
+            .map(
+                |(mut trunk, leaves): (Vec<SIdent>, Option<ImportLeaves>)| -> Stmt {
+                    match leaves {
+                        Some(ImportLeaves::Multiple(leaves)) => Stmt::Import(ImportStmt {
+                            trunk,
+                            leaves,
+                            star: false,
+                        }),
+                        Some(ImportLeaves::SingleAlias(alias)) => {
+                            if let Some(leaf) = trunk.pop() {
+                                Stmt::Import(ImportStmt {
+                                    trunk,
+                                    leaves: vec![(leaf, Some(alias))],
+                                    star: false,
+                                })
+                            } else {
+                                panic!("trunk should not be empty here")
+                            }
+                        }
+                        Some(ImportLeaves::Star) => Stmt::Import(ImportStmt {
+                            trunk,
+                            leaves: vec![],
+                            star: true,
+                        }),
+                        None => {
+                            if let Some(leaf) = trunk.pop() {
+                                Stmt::Import(ImportStmt {
+                                    trunk,
+                                    leaves: vec![(leaf, None)],
+                                    star: false,
+                                })
+                            } else {
+                                panic!("trunk should not be empty here")
+                            }
                         }
                     }
-                    Some(ImportLeaves::Star) => Stmt::Import(ImportStmt {
-                        trunk,
-                        leaves: vec![],
-                        star: true,
-                    }),
-                    None => {
-                        if let Some(leaf) = trunk.pop() {
-                            Stmt::Import(ImportStmt {
-                                trunk,
-                                leaves: vec![(leaf, None)],
-                                star: false,
-                            })
-                        } else {
-                            panic!("trunk should not be empty here")
-                        }
-                    }
-                }
-            },
-        )
-        .then_ignore(just(Token::Eol))
-        .labelled("import statement")
-        .boxed();
+                },
+            )
+            .then_ignore(just(Token::Eol))
+            .labelled("import statement")
+            .boxed();
 
     stmt.define(
         choice((
