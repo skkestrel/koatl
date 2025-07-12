@@ -1,5 +1,6 @@
 #![allow(unused_variables)]
 
+pub mod ast;
 pub mod py;
 
 use ariadne::{Color, Label, Report, ReportKind, sources};

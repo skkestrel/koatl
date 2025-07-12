@@ -278,6 +278,160 @@ fn transpile_block_with_final_expr<'py>(ast: &TlCtx<'py>, block: &SBlock) -> TlR
     }
 }
 
+fn make_lvalue<'py>(ast: &TlCtx<'py>, node: &PyObject, span: &Span) -> TlResult<()> {
+    node.getattr(ast.py, "ctx").map_err(|e| {
+        TlErrBuilder::default()
+            .message(format!("Assignment target is not an lvalue"))
+            .py_err(e)
+            .span(*span)
+            .build_errs()
+    })?;
+
+    node.setattr(ast.py, "ctx", ast.name_ctx(PyAccessCtx::Load)?)?;
+
+    Ok(())
+}
+
+struct DestructureBindings {
+    assign_to: PyObject,
+    post_stmts: PyStmts,
+}
+
+fn make_destructure_bindings<'py>(
+    ast: &TlCtx<'py>,
+    target: &SExpr,
+    decl_only: bool,
+) -> TlResult<DestructureBindings> {
+    let mut post_stmts = vec![];
+
+    let assign_to: PyObject = match &target.0 {
+        Expr::Ident(..) | Expr::Attribute(..) | Expr::Subscript(..) => {
+            let target_node = transpile_expr(ast, target)?;
+            post_stmts.extend(target_node.aux_stmts);
+
+            let lhs = target_node.expr;
+            make_lvalue(ast, &lhs, &target.1)?;
+
+            lhs
+        }
+        Expr::List(items) => {
+            let store_var = |name| ast.name(name, PyAccessCtx::Store, Some(&target.1));
+            let load_var = |name| ast.name(name, PyAccessCtx::Load, Some(&target.1));
+            let call = |node1, node2| {
+                ast.method1_unbound(
+                    "Call",
+                    (node1, [node2], PyList::empty(ast.py)),
+                    Some(&target.1),
+                )
+            };
+            let assign =
+                |node1, node2| ast.method1_unbound("Assign", ([node1], node2), Some(&target.1));
+
+            let cursor_var = ast.temp_var_name("des_cur", target.1.start);
+            let list_var = ast.temp_var_name("des_list", target.1.start);
+            let len_var = ast.temp_var_name("des_len", target.1.start);
+
+            // list_var = list(cursor_var)
+            // len_var = len(list_var)
+
+            post_stmts.push(assign(
+                store_var(&list_var)?,
+                call(load_var("tuple")?, load_var(&cursor_var)?)?,
+            )?);
+
+            post_stmts.push(assign(
+                store_var(&len_var)?,
+                call(load_var("len")?, load_var(&list_var)?)?,
+            )?);
+
+            // a = list_var[0]
+            // b = list_var[1]
+            // c = list_var[i:len_var-n_single_spreads]
+
+            let mut seen_spread = false;
+
+            for (i, item) in items.iter().enumerate() {
+                match item {
+                    ListItem::Item(expr) => {
+                        let item_node = transpile_expr(ast, expr)?;
+                        post_stmts.extend(item_node.aux_stmts);
+                        post_stmts.push(assign(
+                            item_node.expr,
+                            ast.method1_unbound(
+                                "Subscript",
+                                (
+                                    load_var(&list_var)?,
+                                    ast.constant(i)?,
+                                    ast.name_ctx(PyAccessCtx::Load)?,
+                                ),
+                                Some(&target.1),
+                            )?,
+                        )?);
+                    }
+                    ListItem::Spread(expr) => {
+                        if seen_spread {
+                            return Err(TlErrBuilder::default()
+                                .message(
+                                    "Destructuring assignment with multiple spreads is not allowed",
+                                )
+                                .span(target.1)
+                                .build_errs());
+                        }
+
+                        seen_spread = true;
+
+                        let spread_node = transpile_expr(ast, expr)?;
+                        post_stmts.extend(spread_node.aux_stmts);
+                        post_stmts.push(assign(
+                            spread_node.expr,
+                            ast.method1_unbound(
+                                "Subscript",
+                                (
+                                    load_var(&list_var)?,
+                                    ast.method1_unbound(
+                                        "Slice",
+                                        (
+                                            ast.constant(i)?,
+                                            ast.method1_unbound(
+                                                "BinOp",
+                                                (
+                                                    load_var(&len_var)?,
+                                                    ast.constant(items.len() - 1)?,
+                                                ),
+                                                Some(&target.1),
+                                            )?,
+                                        ),
+                                        Some(&target.1),
+                                    )?,
+                                    ast.name_ctx(PyAccessCtx::Load)?,
+                                ),
+                                Some(&target.1),
+                            )?,
+                        )?);
+                    }
+                }
+            }
+
+            load_var(&cursor_var)?
+        }
+        Expr::Mapping(item) => {
+            todo!();
+            // [1: a, **c] = [1: b, 2: c]
+        }
+        _ => {
+            return Err(TlErrBuilder::default()
+                .message("Destructuring assignment target is not allowed")
+                .span(target.1)
+                .build_errs());
+        }
+    };
+
+    Ok(DestructureBindings {
+        post_stmts,
+        assign_to,
+    })
+}
+
 fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts> {
     let (stmt, span) = stmt;
 
