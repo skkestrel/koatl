@@ -349,8 +349,9 @@ fn make_destructure_bindings<'py>(
             // c = list_var[i:len_var-n_single_spreads]
 
             let mut seen_spread = false;
+            let mut i = 0;
 
-            for (i, item) in items.iter().enumerate() {
+            for item in items.iter() {
                 match item {
                     ListItem::Item(expr) => {
                         let item_node = transpile_expr(ast, expr)?;
@@ -367,6 +368,7 @@ fn make_destructure_bindings<'py>(
                                 Some(&target.1),
                             )?,
                         )?);
+                        i += 1;
                     }
                     ListItem::Spread(expr) => {
                         if seen_spread {
@@ -396,6 +398,11 @@ fn make_destructure_bindings<'py>(
                                                 "BinOp",
                                                 (
                                                     load_var(&len_var)?,
+                                                    ast.method1_unbound(
+                                                        "Sub",
+                                                        (),
+                                                        Some(&target.1),
+                                                    )?,
                                                     ast.constant(items.len() - 1)?,
                                                 ),
                                                 Some(&target.1),
@@ -470,27 +477,15 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
                 return make_classdef_stmts(ast, ident, &bases, &body, span);
             }
 
-            // TODO allow destructuring in assign and for loop and fn def and match
-
-            let mut target_node = transpile_expr(ast, target)?;
-            let value_node = transpile_expr(ast, value)?;
-
+            let value_node = transpile_expr(ast, &value)?;
             let mut stmts = value_node.aux_stmts;
-            stmts.append(&mut target_node.aux_stmts);
-
-            let lhs = target_node.expr;
-
-            lhs.getattr(ast.py, "ctx").map_err(|e| {
-                TlErrBuilder::default()
-                    .message(format!("Assignment target is not an lvalue"))
-                    .py_err(e)
-                    .span(target.1)
-                    .build_errs()
-            })?;
-
-            lhs.setattr(ast.py, "ctx", ast.name_ctx(PyAccessCtx::Load)?)?;
-
-            stmts.push(ast.method1_unbound("Assign", ([lhs], value_node.expr), Some(&target.1))?);
+            let destructure = make_destructure_bindings(ast, target, false)?;
+            stmts.push(ast.method1_unbound(
+                "Assign",
+                ([destructure.assign_to], value_node.expr),
+                Some(&target.1),
+            )?);
+            stmts.extend(destructure.post_stmts);
 
             Ok(stmts)
         }
