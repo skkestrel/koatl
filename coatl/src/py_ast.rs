@@ -20,7 +20,7 @@ pub struct PyExceptHandler<'a> {
 #[derive(Debug, Clone)]
 pub enum PyStmt<'a> {
     Expr(SPyExpr<'a>),
-    If(SPyExpr<'a>, Vec<PyStmt<'a>>, Option<Vec<PyStmt<'a>>>),
+    If(SPyExpr<'a>, SPyStmts<'a>, Option<SPyStmts<'a>>),
     Assign(SPyExpr<'a>, SPyExpr<'a>),
     Return(SPyExpr<'a>),
     Raise(SPyExpr<'a>),
@@ -29,18 +29,17 @@ pub enum PyStmt<'a> {
     Nonlocal(Vec<PyIdent<'a>>),
     Import(PyImportAlias<'a>),
     ImportFrom(PyIdent<'a>, Vec<PyImportAlias<'a>>),
-    FnDef(PyIdent<'a>, Vec<PyArgDefItem<'a>>, Vec<PyStmt<'a>>),
-    ClassDef(PyIdent<'a>, Vec<PyCallItem<'a>>, Vec<PyStmt<'a>>),
-    While(SPyExpr<'a>, Vec<PyStmt<'a>>),
-    For(SPyExpr<'a>, SPyExpr<'a>, Vec<PyStmt<'a>>),
-    Try(
-        Vec<PyStmt<'a>>,
-        Vec<PyExceptHandler<'a>>,
-        Option<Vec<PyStmt<'a>>>,
-    ),
+    FnDef(PyIdent<'a>, Vec<PyArgDefItem<'a>>, SPyStmts<'a>),
+    ClassDef(PyIdent<'a>, Vec<PyCallItem<'a>>, SPyStmts<'a>),
+    While(SPyExpr<'a>, SPyStmts<'a>),
+    For(SPyExpr<'a>, SPyExpr<'a>, SPyStmts<'a>),
+    Try(SPyStmts<'a>, Vec<PyExceptHandler<'a>>, Option<SPyStmts<'a>>),
     Break,
     Continue,
 }
+
+pub type SPyStmt<'a> = PySpanned<PyStmt<'a>>;
+pub type SPyStmts<'a> = Vec<SPyStmt<'a>>;
 
 #[derive(Debug, Clone)]
 pub enum PyBinaryOp {
@@ -95,7 +94,7 @@ pub enum PyArgDefItem<'a> {
 
 #[derive(Debug, Clone)]
 pub enum PyExpr<'a> {
-    Name(PyIdent<'a>, PyNameCtx),
+    Name(PyIdent<'a>),
 
     Binary(PyBinaryOp, Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
     Unary(PyUnaryOp, Box<SPyExpr<'a>>),

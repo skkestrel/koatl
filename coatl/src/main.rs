@@ -1,14 +1,14 @@
 #![allow(unused_variables)]
 
 pub mod ast_util;
-pub mod py;
 pub mod py_ast;
 pub mod py_gen;
+pub mod trans_ast;
 
 use ariadne::{Color, Label, Report, ReportKind, sources};
 use pyo3::types::PyTracebackMethods;
 
-use crate::py::{TlErrs, transpile};
+use crate::trans_ast::{TlErrs, transpile};
 use parser::{parse_tokens, tokenize};
 use std::io::Write;
 use std::process::{Command, Stdio};
