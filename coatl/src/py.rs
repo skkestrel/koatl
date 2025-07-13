@@ -5,6 +5,8 @@ use pyo3::{
     types::{PyDict, PyList, PyString},
 };
 
+use crate::ast::AstBuilder;
+
 pub struct TlErr {
     pub message: String,
     pub py_err: Option<PyErr>,
@@ -292,6 +294,150 @@ fn make_lvalue<'py>(ast: &TlCtx<'py>, node: &PyObject, span: &Span) -> TlResult<
     Ok(())
 }
 
+#[allow(dead_code)]
+fn generate_list_destructure_ast<'py, 'ast>(
+    ast: &TlCtx<'py>,
+    target: &SExpr,
+    items: &'ast [ListItem],
+) -> TlResult<(SBlock<'ast>, SExpr<'ast>)> {
+    let cursor_var = ast.temp_var_name("des_curs", target.1.start);
+    let list_var = ast.temp_var_name("des_list", target.1.start);
+    let len_var = ast.temp_var_name("des_len", target.1.start);
+
+    // list_var = list(cursor_var)
+    // len_var = len(list_var)
+
+    let a = AstBuilder::new(target.1);
+    let mut stmts = vec![
+        a.assign(
+            a.ident(list_var.clone()),
+            a.call(
+                a.ident("tuple"),
+                vec![a.call_arg(a.ident(cursor_var.clone()))],
+            ),
+        ),
+        a.assign(
+            a.ident(len_var.clone()),
+            a.call(a.ident("len"), vec![a.call_arg(a.ident(list_var.clone()))]),
+        ),
+    ];
+
+    // a = list_var[0]
+    // b = list_var[1]
+    // c = list_var[i:len_var-n_single_spreads]
+
+    let mut seen_spread = false;
+    let mut i = 0;
+
+    for item in items.iter() {
+        match item {
+            ListItem::Item(expr) => {
+                stmts.push(a.assign(
+                    expr.clone(),
+                    a.subscript(
+                        a.ident(list_var.clone()),
+                        vec![
+                                        a.list_item(
+                                            a.num(
+                                                (if seen_spread {
+                                                    -((items.len() - i - 1) as i32)
+                                                } else {
+                                                    i as i32
+                                                })
+                                                .to_string(),
+                                            ),
+                                        ),
+                                    ],
+                    ),
+                ));
+                i += 1;
+            }
+            ListItem::Spread(expr) => {
+                if seen_spread {
+                    return Err(TlErrBuilder::default()
+                        .message("Destructuring assignment with multiple spreads is not allowed")
+                        .span(target.1)
+                        .build_errs());
+                }
+
+                seen_spread = true;
+
+                stmts.push(a.assign(
+                    expr.clone(),
+                    a.subscript(
+                        a.ident(list_var.clone()),
+                        vec![a.list_item(a.slice(
+                            Some(a.num(i.to_string())),
+                            Some(a.binary(
+                                BinaryOp::Sub,
+                                a.ident(len_var.clone()),
+                                a.num((items.len() - 2).to_string()),
+                            )),
+                            None,
+                        ))],
+                    ),
+                ));
+            }
+        }
+    }
+
+    Ok((a.stmts_block(stmts), a.ident(cursor_var).clone()))
+}
+
+fn generate_mapping_destructure_ast<'py, 'ast>(
+    ast: &TlCtx<'py>,
+    target: &SExpr,
+    items: &'ast [MappingItem],
+) -> TlResult<(SBlock<'ast>, SExpr<'ast>)> {
+    let cursor_var = ast.temp_var_name("des_curs", target.1.start);
+    let dict_var = ast.temp_var_name("des_dict", target.1.start);
+
+    // dict_var = dict(cursor_var)
+    let a = AstBuilder::new(target.1);
+    let mut stmts = vec![a.assign(
+        a.ident(dict_var.clone()),
+        a.call(
+            a.ident("dict"),
+            vec![a.call_arg(a.ident(cursor_var.clone()))],
+        ),
+    )];
+
+    // a = dict_var.pop(a_key)
+    // b = dict_var.pop(b_key)
+    // c = dict_var
+
+    let mut spread_var = None;
+    for item in items.iter() {
+        match item {
+            MappingItem::Item(key, expr) => {
+                stmts.push(a.assign(
+                    expr.clone(),
+                    a.call(
+                        a.attribute(a.ident(dict_var.clone()), "pop"),
+                        vec![a.call_arg(key.clone())],
+                    ),
+                ));
+            }
+            MappingItem::Spread(expr) => {
+                if spread_var.is_some() {
+                    return Err(TlErrBuilder::default()
+                        .message("Destructuring assignment with multiple spreads is not allowed")
+                        .span(target.1)
+                        .build_errs());
+                }
+
+                spread_var = Some(expr.clone());
+            }
+        }
+    }
+
+    if let Some(spread_var) = spread_var {
+        stmts.push(a.assign(spread_var, a.ident(dict_var.clone())));
+    }
+
+    Ok((a.stmts_block(stmts), a.ident(cursor_var).clone()))
+}
+
 struct DestructureBindings {
     assign_to: PyObject,
     post_stmts: PyStmts,
@@ -306,6 +452,18 @@ fn make_destructure_bindings<'py>(
 
     let assign_to: PyObject = match &target.0 {
         Expr::Ident(..) | Expr::Attribute(..) | Expr::Subscript(..) => {
+            if decl_only {
+                match &target.0 {
+                    Expr::Ident(_) => {}
+                    _ => {
+                        return Err(TlErrBuilder::default()
+                            .message("Destructuring assignment target must be an identifier")
+                            .span(target.1)
+                            .build_errs());
+                    }
+                }
+            }
+
             let target_node = transpile_expr(ast, target)?;
             post_stmts.extend(target_node.aux_stmts);
 
@@ -315,115 +473,68 @@ fn make_destructure_bindings<'py>(
             lhs
         }
         Expr::List(items) => {
-            let store_var = |name| ast.name(name, PyAccessCtx::Store, Some(&target.1));
-            let load_var = |name| ast.name(name, PyAccessCtx::Load, Some(&target.1));
-            let call = |node1, node2| {
-                ast.method1_unbound(
-                    "Call",
-                    (node1, [node2], PyList::empty(ast.py)),
-                    Some(&target.1),
-                )
-            };
-            let assign =
-                |node1, node2| ast.method1_unbound("Assign", ([node1], node2), Some(&target.1));
+            /*
+            Python destructure (destructures everything into a list)
+            let mut py_targets = vec![];
+            let des_target = ast.temp_var_name("des", target.1.start);
 
-            let cursor_var = ast.temp_var_name("des_cur", target.1.start);
-            let list_var = ast.temp_var_name("des_list", target.1.start);
-            let len_var = ast.temp_var_name("des_len", target.1.start);
+            let mut post_post_stmts = vec![];
 
-            // list_var = list(cursor_var)
-            // len_var = len(list_var)
-
-            post_stmts.push(assign(
-                store_var(&list_var)?,
-                call(load_var("tuple")?, load_var(&cursor_var)?)?,
-            )?);
-
-            post_stmts.push(assign(
-                store_var(&len_var)?,
-                call(load_var("len")?, load_var(&list_var)?)?,
-            )?);
-
-            // a = list_var[0]
-            // b = list_var[1]
-            // c = list_var[i:len_var-n_single_spreads]
-
-            let mut seen_spread = false;
-            let mut i = 0;
-
-            for item in items.iter() {
-                match item {
+            for i in items {
+                match i {
                     ListItem::Item(expr) => {
-                        let item_node = transpile_expr(ast, expr)?;
-                        post_stmts.extend(item_node.aux_stmts);
-                        post_stmts.push(assign(
-                            item_node.expr,
-                            ast.method1_unbound(
-                                "Subscript",
-                                (
-                                    load_var(&list_var)?,
-                                    ast.constant(i)?,
-                                    ast.name_ctx(PyAccessCtx::Load)?,
-                                ),
-                                Some(&target.1),
-                            )?,
-                        )?);
-                        i += 1;
+                        let binding = make_destructure_bindings(ast, expr, decl_only)?;
+                        post_post_stmts.extend(binding.post_stmts);
+                        py_targets.push(binding.assign_to);
                     }
                     ListItem::Spread(expr) => {
-                        if seen_spread {
-                            return Err(TlErrBuilder::default()
-                                .message(
-                                    "Destructuring assignment with multiple spreads is not allowed",
-                                )
-                                .span(target.1)
-                                .build_errs());
-                        }
-
-                        seen_spread = true;
-
-                        let spread_node = transpile_expr(ast, expr)?;
-                        post_stmts.extend(spread_node.aux_stmts);
-                        post_stmts.push(assign(
-                            spread_node.expr,
-                            ast.method1_unbound(
-                                "Subscript",
-                                (
-                                    load_var(&list_var)?,
-                                    ast.method1_unbound(
-                                        "Slice",
-                                        (
-                                            ast.constant(i)?,
-                                            ast.method1_unbound(
-                                                "BinOp",
-                                                (
-                                                    load_var(&len_var)?,
-                                                    ast.method1_unbound(
-                                                        "Sub",
-                                                        (),
-                                                        Some(&target.1),
-                                                    )?,
-                                                    ast.constant(items.len() - 1)?,
-                                                ),
-                                                Some(&target.1),
-                                            )?,
-                                        ),
-                                        Some(&target.1),
-                                    )?,
-                                    ast.name_ctx(PyAccessCtx::Load)?,
-                                ),
-                                Some(&target.1),
-                            )?,
+                        let binding = make_destructure_bindings(ast, expr, decl_only)?;
+                        post_post_stmts.extend(binding.post_stmts);
+                        py_targets.push(ast.method1_unbound(
+                            "Starred",
+                            (binding.assign_to,),
+                            Some(&target.1),
                         )?);
                     }
                 }
             }
 
-            load_var(&cursor_var)?
+            post_stmts.push(ast.method1_unbound(
+                "Assign",
+                (
+                    [ast.method1_unbound("Tuple", (py_targets,), Some(&target.1))?],
+                    ast.name(&des_target, PyAccessCtx::Load, Some(&target.1))?,
+                ),
+                Some(&target.1),
+            )?);
+
+            post_stmts.extend(post_post_stmts);
+
+            ast.name(&des_target, PyAccessCtx::Store, Some(&target.1))?
+            */
+
+            // Native coatl AST
+
+            let (block, cursor) = generate_list_destructure_ast(ast, target, items)?;
+
+            let stmts = transpile_block_with_final_stmt(ast, &block)?;
+            let curs = transpile_expr(ast, &cursor)?;
+
+            post_stmts.extend(stmts);
+            post_stmts.extend(curs.aux_stmts);
+
+            curs.expr
         }
-        Expr::Mapping(item) => {
-            todo!();
-            // [1: a, **c] = [1: b, 2: c]
+        Expr::Mapping(items) => {
+            let (block, cursor) = generate_mapping_destructure_ast(ast, target, items)?;
+
+            let stmts = transpile_block_with_final_stmt(ast, &block)?;
+            let curs = transpile_expr(ast, &cursor)?;
+
+            post_stmts.extend(stmts);
+            post_stmts.extend(curs.aux_stmts);
+
+            curs.expr
         }
         _ => {
             return Err(TlErrBuilder::default()
@@ -456,6 +567,21 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
                 Ok(stmts)
             }
         },
+        Stmt::Assert(expr, msg) => {
+            let expr_node = transpile_expr(ast, &expr)?;
+            let msg = msg.as_ref().map(|x| transpile_expr(ast, &x)).transpose()?;
+
+            let mut stmts = expr_node.aux_stmts;
+            let mut msg_node = None;
+            if let Some(msg) = msg {
+                stmts.extend(msg.aux_stmts);
+                msg_node = Some(msg.expr);
+            }
+
+            stmts.push(ast.method1_unbound("Assert", (expr_node.expr, msg_node), Some(span))?);
+
+            Ok(stmts)
+        }
         Stmt::Return(expr) => {
             let value = transpile_expr(ast, &expr)?;
             let mut stmts = value.aux_stmts;
@@ -492,7 +618,7 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
         Stmt::Global(names) => {
             let names: Vec<_> = names
                 .iter()
-                .map(|name| ast.name(name.0, PyAccessCtx::Store, Some(span)))
+                .map(|name| ast.name(&name.0, PyAccessCtx::Store, Some(span)))
                 .collect::<TlResult<_>>()?;
 
             Ok(vec![ast.method1_unbound("Global", (names,), Some(span))?])
@@ -500,7 +626,7 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
         Stmt::Nonlocal(names) => {
             let names: Vec<_> = names
                 .iter()
-                .map(|name| ast.name(name.0, PyAccessCtx::Store, Some(span)))
+                .map(|name| ast.name(&name.0, PyAccessCtx::Store, Some(span)))
                 .collect::<TlResult<_>>()?;
 
             Ok(vec![ast.method1_unbound(
@@ -599,7 +725,7 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
                 };
 
                 let ident_node = if let Some(ident) = &except.name {
-                    PyString::new(ast.py, ident.0).into_any()
+                    PyString::new(ast.py, &ident.0).into_any()
                 } else {
                     ast.py.None().bind(ast.py).clone()
                 };
@@ -639,7 +765,7 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
                     import_stmt
                         .trunk
                         .iter()
-                        .map(|ident| ident.0)
+                        .map(|ident| ident.0.as_ref())
                         .collect::<Vec<_>>()
                         .join("."),
                 );
@@ -651,7 +777,7 @@ fn transpile_stmt<'py, 'src>(ast: &TlCtx<'py>, stmt: &SStmt) -> TlResult<PyStmts
                 for (ident, alias) in &import_stmt.leaves {
                     aliases.push(ast.method1_unbound(
                         "alias",
-                        (ident.0, alias.map(|a| a.0)),
+                        (&ident.0, alias.as_ref().map(|a| a.0.as_ref())),
                         Some(span),
                     )?);
                 }
@@ -864,7 +990,7 @@ fn make_classdef_stmts<'py>(
             CallItem::Kwarg(name, expr) => {
                 let expr_node = transpile_expr(ast, &expr)?;
                 stmts.extend(expr_node.aux_stmts);
-                keywords_nodes.push((name.0, expr_node.expr));
+                keywords_nodes.push((name.0.as_ref(), expr_node.expr));
             }
             _ => {
                 Err(TlErrBuilder::default()
@@ -919,18 +1045,18 @@ fn make_fndef_stmts<'py>(
     for arg in arglist {
         match arg {
             ArgItem::Arg(name) => {
-                args.push(arg_node(name.0)?);
+                args.push(arg_node(name.0.as_ref())?);
                 defaults.push(ast.py.None());
             }
             ArgItem::DefaultArg(name, default) => {
                 let mut expr = transpile_expr(ast, default)?;
                 aux_stmts.append(&mut expr.aux_stmts);
 
-                args.push(arg_node(name.0)?);
+                args.push(arg_node(name.0.as_ref())?);
                 defaults.push(expr.expr);
             }
             ArgItem::ArgSpread(name) => {
-                vararg.push(arg_node(name.0)?);
+                vararg.push(arg_node(name.0.as_ref())?);
                 if vararg.len() > 1 {
                     return Err(TlErrBuilder::default()
                         .message("only one vararg is allowed")
@@ -939,7 +1065,7 @@ fn make_fndef_stmts<'py>(
                 }
             }
             ArgItem::KwargSpread(name) => {
-                kwarg.push(arg_node(name.0)?);
+                kwarg.push(arg_node(name.0.as_ref())?);
                 if kwarg.len() > 1 {
                     return Err(TlErrBuilder::default()
                         .message("only one kwarg is allowed")
@@ -1036,7 +1162,7 @@ fn transpile_expr<'py>(ast: &TlCtx<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
             Ok(PyExprWithAux {
                 expr: ast.method1_unbound(
                     "Attribute",
-                    (obj.expr, attr.0, ast.name_ctx(PyAccessCtx::Load)?),
+                    (obj.expr, attr.0.as_ref(), ast.name_ctx(PyAccessCtx::Load)?),
                     Some(span),
                 )?,
                 aux_stmts: obj.aux_stmts,
@@ -1319,13 +1445,13 @@ fn transpile_expr<'py>(ast: &TlCtx<'py>, expr: &SExpr) -> TlResult<PyExprWithAux
                 match item {
                     MappingItem::Item(key, value) => {
                         let key = transpile_expr(ast, key)?;
-                        let value = transpile_block_with_final_expr(ast, value)?;
+                        let value = transpile_expr(ast, value)?;
 
                         aux_stmts.extend(key.aux_stmts);
-                        aux_stmts.extend(value.stmts);
+                        aux_stmts.extend(value.aux_stmts);
 
                         keys.push(key.expr);
-                        values.push(value.final_expr.unwrap_or_else(|| ast.py.None()));
+                        values.push(value.expr);
                     }
                     MappingItem::Spread(expr) => {
                         let e = transpile_expr(ast, expr)?;

@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use parser::*;
 
 pub struct AstBuilder {
@@ -14,6 +16,10 @@ impl AstBuilder {
         (Stmt::Expr(expr), self.span)
     }
 
+    pub fn ident<'src>(&self, name: impl Into<Cow<'src, str>>) -> SExpr<'src> {
+        (Expr::Ident((name.into(), self.span)), self.span)
+    }
+
     pub fn assign<'src>(&self, target: SExpr<'src>, value: SExpr<'src>) -> SStmt<'src> {
         (Stmt::Assign(target, value), self.span)
     }
@@ -22,11 +28,23 @@ impl AstBuilder {
         (Stmt::Return(expr), self.span)
     }
 
-    pub fn global<'src>(&self, names: Vec<SIdent<'src>>) -> SStmt<'src> {
+    pub fn assert<'src>(&self, expr: SExpr<'src>, msg: Option<SExpr<'src>>) -> SStmt<'src> {
+        (Stmt::Assert(expr, msg), self.span)
+    }
+
+    pub fn global<'src>(&self, names: Vec<impl Into<Cow<'src, str>>>) -> SStmt<'src> {
+        let names = names
+            .into_iter()
+            .map(|name| (name.into(), self.span))
+            .collect();
         (Stmt::Global(names), self.span)
     }
 
-    pub fn nonlocal<'src>(&self, names: Vec<SIdent<'src>>) -> SStmt<'src> {
+    pub fn nonlocal<'src>(&self, names: Vec<impl Into<Cow<'src, str>>>) -> SStmt<'src> {
+        let names = names
+            .into_iter()
+            .map(|name| (name.into(), self.span))
+            .collect();
         (Stmt::Nonlocal(names), self.span)
     }
 
@@ -71,10 +89,6 @@ impl AstBuilder {
     // Expression builders
     pub fn literal<'src>(&self, lit: SLiteral<'src>) -> SExpr<'src> {
         (Expr::Literal(lit), self.span)
-    }
-
-    pub fn ident<'src>(&self, name: SIdent<'src>) -> SExpr<'src> {
-        (Expr::Ident(name), self.span)
     }
 
     pub fn unary<'src>(&self, op: UnaryOp, operand: SExpr<'src>) -> SExpr<'src> {
@@ -137,8 +151,15 @@ impl AstBuilder {
         (Expr::Subscript(Box::new(value), slice), self.span)
     }
 
-    pub fn attribute<'src>(&self, value: SExpr<'src>, attr: SIdent<'src>) -> SExpr<'src> {
-        (Expr::Attribute(Box::new(value), attr), self.span)
+    pub fn attribute<'src>(
+        &self,
+        value: SExpr<'src>,
+        attr: impl Into<Cow<'src, str>>,
+    ) -> SExpr<'src> {
+        (
+            Expr::Attribute(Box::new(value), (attr.into(), self.span)),
+            self.span,
+        )
     }
 
     pub fn pipe<'src>(&self, left: SExpr<'src>, right: SExpr<'src>) -> SExpr<'src> {
@@ -179,12 +200,18 @@ impl AstBuilder {
     }
 
     // Literal builders
-    pub fn num<'src>(&self, value: &'src str) -> SLiteral<'src> {
-        (Literal::Num(value), self.span)
+    pub fn num<'src>(&self, value: impl Into<Cow<'src, str>>) -> SExpr<'src> {
+        (
+            Expr::Literal((Literal::Num(value.into()), self.span)),
+            self.span,
+        )
     }
 
-    pub fn str<'src>(&self, value: String) -> SLiteral<'src> {
-        (Literal::Str(value), self.span)
+    pub fn str<'src>(&self, value: impl Into<Cow<'src, str>>) -> SExpr<'src> {
+        (
+            Expr::Literal((Literal::Str(value.into()), self.span)),
+            self.span,
+        )
     }
 
     // Utility builders for list/mapping items
@@ -196,7 +223,7 @@ impl AstBuilder {
         ListItem::Spread(expr)
     }
 
-    pub fn mapping_item<'src>(&self, key: SExpr<'src>, value: SBlock<'src>) -> MappingItem<'src> {
+    pub fn mapping_item<'src>(&self, key: SExpr<'src>, value: SExpr<'src>) -> MappingItem<'src> {
         MappingItem::Item(key, value)
     }
 
@@ -209,8 +236,12 @@ impl AstBuilder {
         (CallItem::Arg(expr), self.span)
     }
 
-    pub fn call_kwarg<'src>(&self, name: SIdent<'src>, value: SExpr<'src>) -> SCallItem<'src> {
-        (CallItem::Kwarg(name, value), self.span)
+    pub fn call_kwarg<'src>(
+        &self,
+        name: impl Into<Cow<'src, str>>,
+        value: SExpr<'src>,
+    ) -> SCallItem<'src> {
+        (CallItem::Kwarg((name.into(), self.span), value), self.span)
     }
 
     pub fn call_arg_spread<'src>(&self, expr: SExpr<'src>) -> SCallItem<'src> {
@@ -222,20 +253,27 @@ impl AstBuilder {
     }
 
     // Argument item builders
-    pub fn arg<'src>(&self, name: SIdent<'src>) -> SArgItem<'src> {
-        (ArgItem::Arg(name), self.span)
+    pub fn arg<'src>(&self, name: impl Into<Cow<'src, str>>) -> SArgItem<'src> {
+        (ArgItem::Arg((name.into(), self.span)), self.span)
     }
 
-    pub fn default_arg<'src>(&self, name: SIdent<'src>, default: SExpr<'src>) -> SArgItem<'src> {
-        (ArgItem::DefaultArg(name, default), self.span)
+    pub fn default_arg<'src>(
+        &self,
+        name: impl Into<Cow<'src, str>>,
+        default: SExpr<'src>,
+    ) -> SArgItem<'src> {
+        (
+            ArgItem::DefaultArg((name.into(), self.span), default),
+            self.span,
+        )
     }
 
-    pub fn arg_spread<'src>(&self, name: SIdent<'src>) -> SArgItem<'src> {
-        (ArgItem::ArgSpread(name), self.span)
+    pub fn arg_spread<'src>(&self, name: impl Into<Cow<'src, str>>) -> SArgItem<'src> {
+        (ArgItem::ArgSpread((name.into(), self.span)), self.span)
     }
 
-    pub fn kwarg_spread<'src>(&self, name: SIdent<'src>) -> SArgItem<'src> {
-        (ArgItem::KwargSpread(name), self.span)
+    pub fn kwarg_spread<'src>(&self, name: impl Into<Cow<'src, str>>) -> SArgItem<'src> {
+        (ArgItem::KwargSpread((name.into(), self.span)), self.span)
     }
 
     // Format expression builder
@@ -247,28 +285,35 @@ impl AstBuilder {
     pub fn except_handler<'src>(
         &self,
         typ: Option<SExpr<'src>>,
-        name: Option<SIdent<'src>>,
+        name: Option<impl Into<Cow<'src, str>>>,
         body: SBlock<'src>,
     ) -> ExceptHandler<'src> {
-        ExceptHandler { typ, name, body }
+        ExceptHandler {
+            typ,
+            name: name.map(|n| (n.into(), self.span)),
+            body,
+        }
     }
 
     // Import statement builder
     pub fn import_stmt<'src>(
         &self,
-        trunk: Vec<SIdent<'src>>,
-        leaves: Vec<(SIdent<'src>, Option<SIdent<'src>>)>,
+        trunk: Vec<impl Into<Cow<'src, str>>>,
+        leaves: Vec<(impl Into<Cow<'src, str>>, Option<impl Into<Cow<'src, str>>>)>,
         star: bool,
     ) -> ImportStmt<'src> {
         ImportStmt {
-            trunk,
-            leaves,
+            trunk: trunk.into_iter().map(|t| (t.into(), self.span)).collect(),
+            leaves: leaves
+                .into_iter()
+                .map(|(name, alias)| {
+                    (
+                        (name.into(), self.span),
+                        alias.map(|a| (a.into(), self.span)),
+                    )
+                })
+                .collect(),
             star,
         }
-    }
-
-    // Spanned identifier helper
-    pub fn ident_<'src>(&self, name: &'src str) -> SIdent<'src> {
-        (name, self.span)
     }
 }

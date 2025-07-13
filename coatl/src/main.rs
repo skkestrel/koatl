@@ -16,12 +16,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let filename = std::env::args().nth(2).ok_or("Missing filename argument")?;
 
     let src = std::fs::read_to_string(&filename).unwrap();
+    let mut error = None;
 
     let (tokens, token_errs) = tokenize(&src);
     let token_errs = token_errs
         .into_iter()
         .map(|e| e.map_token(|c| c.to_string()))
         .collect::<Vec<_>>();
+
+    if !token_errs.is_empty() {
+        error = Some("Tokenization errors occurred".into());
+    }
 
     let mut parse_errs = vec![];
 
@@ -35,6 +40,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .into_iter()
                 .map(|e| e.map_token(|c| c.to_string())),
         );
+
+        if error.is_none() && !parse_errs.is_empty() {
+            error = Some("Parsing errors occurred".into());
+        }
 
         if let Some(ast) = ast {
             // println!("AST: {ast:?}");
@@ -52,6 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         let output = child.wait_with_output()?;
                         if !output.status.success() {
+                            error = Some("Python script execution failed".into());
                             eprintln!("{}", String::from_utf8_lossy(&output.stderr));
                         }
                     } else {
@@ -59,6 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 Err(TlErrs(e)) => {
+                    error = Some("Transpilation errors occurred".into());
+
                     for e in e {
                         let span = e.span.map(|x| x.into_range()).unwrap_or(0..0);
                         let mut py_err_details: Option<(String, String)> = None;
@@ -138,6 +150,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .eprint(sources([(filename.clone(), src.clone())]))
             .unwrap()
     });
+
+    if let Some(error) = error {
+        return Err(error);
+    }
 
     Ok(())
 }

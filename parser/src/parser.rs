@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::borrow::Cow;
+
 use crate::lexer::*;
 use chumsky::{extra::ParserExtra, input::ValueInput, prelude::*};
 
@@ -30,24 +32,25 @@ pub enum UnaryOp {
     Await,
 }
 
-pub type Ident<'a> = &'a str;
-pub type SIdent<'a> = Spanned<&'a str>;
+pub type Ident<'a> = Cow<'a, str>;
+pub type SIdent<'a> = Spanned<Ident<'a>>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImportStmt<'a> {
     pub trunk: Vec<SIdent<'a>>,
     pub leaves: Vec<(SIdent<'a>, Option<SIdent<'a>>)>,
     pub star: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExceptHandler<'a> {
     pub typ: Option<SExpr<'a>>,
     pub name: Option<SIdent<'a>>,
     pub body: SBlock<'a>,
 }
 
-#[derive(Debug)]
+// TODO should these be cows
+#[derive(Debug, Clone)]
 pub enum Stmt<'a> {
     Global(Vec<SIdent<'a>>),
     Nonlocal(Vec<SIdent<'a>>),
@@ -58,6 +61,7 @@ pub enum Stmt<'a> {
     For(SExpr<'a>, SExpr<'a>, SBlock<'a>),
     Import(ImportStmt<'a>),
     Try(SBlock<'a>, Vec<ExceptHandler<'a>>, Option<SBlock<'a>>),
+    Assert(SExpr<'a>, Option<SExpr<'a>>),
     Raise(SExpr<'a>),
     Break,
     Continue,
@@ -66,15 +70,15 @@ pub enum Stmt<'a> {
 
 pub type SStmt<'a> = Spanned<Stmt<'a>>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Literal<'a> {
-    Num(&'a str),
-    Str(String),
+    Num(Cow<'a, str>),
+    Str(Cow<'a, str>),
 }
 
 pub type SLiteral<'a> = Spanned<Literal<'a>>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FmtExpr<'a> {
     pub block: SBlock<'a>,
     pub fmt: Option<&'a str>,
@@ -82,19 +86,19 @@ pub struct FmtExpr<'a> {
 
 pub type SFmtExpr<'a> = Spanned<FmtExpr<'a>>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ListItem<'a> {
     Item(SExpr<'a>),
     Spread(SExpr<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MappingItem<'a> {
-    Item(SExpr<'a>, SBlock<'a>),
+    Item(SExpr<'a>, SExpr<'a>),
     Spread(SExpr<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CallItem<'a> {
     Arg(SExpr<'a>),
     Kwarg(SIdent<'a>, SExpr<'a>),
@@ -104,7 +108,7 @@ pub enum CallItem<'a> {
 
 pub type SCallItem<'a> = Spanned<CallItem<'a>>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ArgItem<'a> {
     Arg(SIdent<'a>),
     DefaultArg(SIdent<'a>, SExpr<'a>),
@@ -114,7 +118,7 @@ pub enum ArgItem<'a> {
 
 pub type SArgItem<'a> = Spanned<ArgItem<'a>>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Block<'a> {
     Stmts(Vec<SStmt<'a>>),
     Expr(SExpr<'a>),
@@ -122,7 +126,7 @@ pub enum Block<'a> {
 
 pub type SBlock<'a> = Spanned<Block<'a>>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr<'a> {
     Literal(SLiteral<'a>),
     Ident(SIdent<'a>),
@@ -168,7 +172,12 @@ where
     choice((
         item_parser
             .clone()
-            .separated_by(just(Token::Symbol(",")).or_not().then(just(Token::Eol)))
+            .separated_by(
+                choice((
+                    just(Token::Symbol(",")).then(just(Token::Eol).or_not()).ignored(),
+                    just(Token::Symbol(",")).or_not().then(just(Token::Eol)).ignored()
+                ))
+            )
             .allow_trailing()
             .collect()
             .delimited_by(
@@ -250,18 +259,21 @@ where
     let sblock_or_expr = block_or_expr.clone().spanned().boxed();
 
     let literal = select! {
-        Token::Num(s) => Literal::Num(s),
-        Token::Str(s) => Literal::Str(s),
+        Token::Num(s) => Literal::Num(Cow::Borrowed(s)),
+        Token::Str(s) => Literal::Str(Cow::Owned(s)),
     }
     .spanned()
     .map(Expr::Literal)
-    .labelled("literal");
+    .labelled("literal")
+    .spanned()
+    .boxed();
 
     let ident = select! {
-        Token::Ident(s) => s,
+        Token::Ident(s) => Cow::Borrowed(s),
     }
     .spanned()
-    .labelled("identifier");
+    .labelled("identifier")
+    .boxed();
 
     let list = enumeration(choice((
         just_symbol("*")
@@ -273,6 +285,7 @@ where
     .map(Expr::List)
     .labelled("list")
     .as_context()
+    .spanned()
     .boxed();
 
     let mapping = enumeration(choice((
@@ -282,21 +295,57 @@ where
         sexpr
             .clone()
             .then_ignore(just(START_BLOCK))
-            .then(sblock_or_expr.clone())
+            .then(sexpr.clone())
             .map(|(key, value)| MappingItem::Item(key, value)),
     )))
     .delimited_by_with_eol(just(Token::Symbol("[")), just(Token::Symbol("]")))
     .map(Expr::Mapping)
     .labelled("mapping")
     .as_context()
+    .spanned()
     .boxed();
+
+    let fstr_begin = select! {
+        Token::FstrBegin(s) => s,
+    };
+    let fstr_continue = select! {
+        Token::FstrContinue(s) => s,
+    };
+
+    let fstr = fstr_begin
+        .spanned()
+        .then(
+            sblock_or_expr
+                .clone()
+                .spanned()
+                .then(fstr_continue.spanned())
+                .map(|(block, cont)| {
+                    (
+                        (
+                            FmtExpr {
+                                block: block.0,
+                                fmt: None,
+                            },
+                            block.1,
+                        ),
+                        cont,
+                    )
+                })
+                .repeated()
+                .collect::<Vec<_>>(),
+        )
+        .map(|(begin, parts)| Expr::Fstr(begin, parts))
+        .spanned()
+        .labelled("f-string")
+        .boxed();
 
     atom.define(
         choice((
-            literal.spanned(),
+            literal,
             ident.clone().map(Expr::Ident).spanned(),
-            list.spanned(),
-            mapping.spanned(),
+            list,
+            mapping,
+            fstr,
             sblock_or_expr
                 .clone()
                 .map(|b| Expr::Block(Box::new(b)))
@@ -494,40 +543,6 @@ where
         .labelled("if")
         .boxed();
 
-    let fstr_begin = select! {
-        Token::FstrBegin(s) => s,
-    };
-    let fstr_continue = select! {
-        Token::FstrContinue(s) => s,
-    };
-
-    let fstr = fstr_begin
-        .spanned()
-        .then(
-            sblock_or_expr
-                .clone()
-                .spanned()
-                .then(fstr_continue.spanned())
-                .map(|(block, cont)| {
-                    (
-                        (
-                            FmtExpr {
-                                block: block.0,
-                                fmt: None,
-                            },
-                            block.1,
-                        ),
-                        cont,
-                    )
-                })
-                .repeated()
-                .collect::<Vec<_>>(),
-        )
-        .map(|(begin, parts)| Expr::Fstr(begin, parts))
-        .spanned()
-        .labelled("f-string")
-        .boxed();
-
     let case_ = sexpr
         .clone()
         .then_ignore(just(START_BLOCK))
@@ -620,12 +635,10 @@ where
         .boxed();
 
     sexpr.define(
-        choice((
-            slice0, slice1, fstr, fn_, class_, if_, match_, yield_, binary,
-        ))
-        .labelled("expression")
-        .as_context()
-        .boxed(),
+        choice((slice0, slice1, fn_, class_, if_, match_, yield_, binary))
+            .labelled("expression")
+            .as_context()
+            .boxed(),
     );
 
     let expr_stmt = sexpr
@@ -713,6 +726,14 @@ where
         .then_ignore(just(Token::Eol))
         .map(Stmt::Return)
         .labelled("return statement")
+        .boxed();
+
+    let assert_stmt = just(Token::Kw("assert"))
+        .ignore_then(sexpr.clone())
+        .then(just_symbol(",").ignore_then(sexpr.clone()).or_not())
+        .then_ignore(just(Token::Eol))
+        .map(|(x, y)| Stmt::Assert(x, y))
+        .labelled("assert statement")
         .boxed();
 
     let raise_stmt = just(Token::Kw("raise"))
@@ -818,6 +839,7 @@ where
             while_stmt,
             for_stmt,
             return_stmt,
+            assert_stmt,
             raise_stmt,
             break_stmt,
             continue_stmt,

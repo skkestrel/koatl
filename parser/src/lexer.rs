@@ -97,7 +97,7 @@ where
         static KEYWORDS: &[&str] = &[
             "if", "then", "else", "match", "import", "as", "class", "while", "for", "in", "break",
             "continue", "with", "yield", "global", "nonlocal", "return", "raise", "try", "except",
-            "finally", "and", "or", "not",
+            "finally", "and", "or", "not", "assert",
         ];
 
         let keywords = HashSet::<String>::from_iter(KEYWORDS.iter().map(|s| s.to_string()));
@@ -257,9 +257,8 @@ where
         };
 
         let mut after_dot = c == Some('.');
-        let digits_before_dot = !after_dot;
+        let mut digits_before_dot = false;
         let mut digits_after_dot = false;
-        self.next();
 
         while let Some(c) = self.peek() {
             if c == '.' {
@@ -274,7 +273,14 @@ where
                 break;
             }
 
-            digits_after_dot = true;
+            if after_dot && c.is_ascii_digit() {
+                digits_after_dot = true;
+            }
+
+            if !after_dot && c.is_ascii_digit() {
+                digits_before_dot = true;
+            }
+
             self.next();
         }
 

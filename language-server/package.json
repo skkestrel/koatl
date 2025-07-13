@@ -1,0 +1,22 @@
+{
+	"name": "coatl-language-server",
+	"version": "1.0.0",
+	"description": "",
+	"license": "ISC",
+	"author": "",
+	"type": "module",
+	"main": "src/index.js",
+	"scripts": {
+		"test": "cargo build --release && jest"
+	},
+	"dependencies": {
+		"@types/jest": "^30.0.0",
+		"glob": "^11.0.3",
+		"jest": "^29.7.0",
+		"ts-jest": "^29.4.0"
+	},
+	"devDependencies": {
+		"@babel/preset-env": "^7.28.0",
+		"@babel/preset-typescript": "^7.27.1"
+	}
+}
