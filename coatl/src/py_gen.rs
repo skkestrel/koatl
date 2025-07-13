@@ -3,8 +3,28 @@ use crate::{py::TlResult, py_ast::*};
 const LOW_PREC: f32 = -1.0;
 const HIGH_PREC: f32 = 100.0;
 
-struct GenCtx {
+pub struct GenCtx {
     indentation: usize,
+}
+
+impl GenCtx {
+    pub fn indent(&self, s: &str) -> String {
+        format!("{}{}", "  ".repeat(self.indentation), s)
+    }
+
+    pub fn indent_endl(&self, s: &str) -> String {
+        format!("{}{}\n", "  ".repeat(self.indentation), s)
+    }
+}
+
+impl PyImportAlias<'_> {
+    pub fn to_source(&self) -> String {
+        if let Some(as_name) = &self.as_name {
+            format!("{} as {}", self.name, as_name)
+        } else {
+            self.name.to_string()
+        }
+    }
 }
 
 impl PyCallItem<'_> {
@@ -14,8 +34,24 @@ impl PyCallItem<'_> {
             PyCallItem::Kwarg(name, expr) => {
                 Ok(format!("{}={}", name, expr.to_source_lhs(LOW_PREC)?))
             }
-            PyCallItem::ArgSpread(expr) => Ok(format!("*{}", expr.to_source_lhs(LOW_PREC)?)),
-            PyCallItem::KwargSpread(expr) => Ok(format!("**{}", expr.to_source_lhs(LOW_PREC)?)),
+            PyCallItem::ArgSpread(expr) => Ok(format!("*{}", expr.to_source_lhs(HIGH_PREC)?)),
+            PyCallItem::KwargSpread(expr) => Ok(format!("**{}", expr.to_source_lhs(HIGH_PREC)?)),
+        }
+    }
+}
+
+impl PyArgDefItem<'_> {
+    pub fn to_source(&self) -> TlResult<String> {
+        match self {
+            PyArgDefItem::Arg(name, default) => {
+                if let Some(default) = default {
+                    Ok(format!("{}={}", name, default.to_source_lhs(LOW_PREC)?))
+                } else {
+                    Ok(name.to_string())
+                }
+            }
+            PyArgDefItem::ArgSpread(name) => Ok(format!("*{}", name)),
+            PyArgDefItem::KwargSpread(name) => Ok(format!("**{}", name)),
         }
     }
 }
@@ -178,6 +214,151 @@ impl SPyExpr<'_> {
         } else {
             Ok(result.0)
         }
+    }
+}
+
+pub fn block_to_source(
+    block: &[PyStmt],
+    ctx: &mut GenCtx,
+    delta_indentation: i32,
+) -> TlResult<String> {
+    let old_indentation = ctx.indentation;
+    ctx.indentation = (ctx.indentation as i32 + delta_indentation) as usize;
+
+    let mut result = String::new();
+    for stmt in block {
+        result.push_str(&stmt.to_source(ctx)?);
+    }
+
+    ctx.indentation = old_indentation;
+    Ok(result)
+}
+
+impl PyStmt<'_> {
+    pub fn to_source(&self, ctx: &mut GenCtx) -> TlResult<String> {
+        let res = match &self {
+            PyStmt::Expr(expr) => ctx.indent_endl(&expr.to_source_lhs(LOW_PREC)?),
+            PyStmt::Assign(target, value) => {
+                let value_str = value.to_source_lhs(LOW_PREC)?;
+                ctx.indent_endl(&format!(
+                    "{} = {}",
+                    target.to_source_lhs(LOW_PREC)?,
+                    value_str
+                ))
+            }
+            PyStmt::Return(expr) => {
+                let expr_str = expr.to_source_lhs(LOW_PREC)?;
+                ctx.indent_endl(&format!("return {}", expr_str))
+            }
+            PyStmt::If(cond, body, orelse) => {
+                let mut s = String::new();
+
+                s.push_str(&ctx.indent_endl(&format!("if {}:", cond.to_source_lhs(LOW_PREC)?)));
+                s.push_str(&block_to_source(body, ctx, 1)?);
+
+                if let Some(orelse) = orelse {
+                    s.push_str(&ctx.indent_endl(&"else:"));
+                    s.push_str(&block_to_source(orelse, ctx, 1)?);
+                }
+
+                s
+            }
+            PyStmt::Raise(expr) => {
+                let expr_str = expr.to_source_lhs(LOW_PREC)?;
+                ctx.indent_endl(&format!("raise {}", expr_str))
+            }
+            PyStmt::Assert(expr, msg) => {
+                let expr_str = expr.to_source_lhs(LOW_PREC)?;
+                let msg_str = if let Some(msg) = msg {
+                    format!(", {}", msg.to_source_lhs(LOW_PREC)?)
+                } else {
+                    String::new()
+                };
+                ctx.indent_endl(&format!("assert {}{}", expr_str, msg_str))
+            }
+            PyStmt::Global(names) => {
+                let names_str: Vec<String> = names.iter().map(|name| name.to_string()).collect();
+                ctx.indent_endl(&format!("global {}", names_str.join(", ")))
+            }
+            PyStmt::Nonlocal(names) => {
+                let names_str: Vec<String> = names.iter().map(|name| name.to_string()).collect();
+                ctx.indent_endl(&format!("nonlocal {}", names_str.join(", ")))
+            }
+            PyStmt::Import(name) => ctx.indent_endl(&format!("import {}", name.to_source())),
+            PyStmt::ImportFrom(module, aliases) => {
+                let aliases_str: Vec<String> =
+                    aliases.iter().map(|alias| alias.to_source()).collect();
+
+                if aliases.is_empty() {
+                    ctx.indent_endl(&format!("from {} import *", module))
+                } else {
+                    ctx.indent_endl(&format!(
+                        "from {} import {}",
+                        module,
+                        aliases_str.join(", ")
+                    ))
+                }
+            }
+            PyStmt::FnDef(name, args, body) => {
+                let mut s = String::new();
+                let args_str: Vec<String> = args
+                    .iter()
+                    .map(|arg| arg.to_source())
+                    .collect::<TlResult<_>>()?;
+
+                s.push_str(&ctx.indent_endl(&format!("def {}({}):", name, args_str.join(", "))));
+                s.push_str(&block_to_source(body, ctx, 1)?);
+                s
+            }
+            PyStmt::ClassDef(name, bases, body) => {
+                let mut s = String::new();
+                let bases_str: Vec<String> = bases
+                    .iter()
+                    .map(|base| base.to_source())
+                    .collect::<TlResult<_>>()?;
+
+                s.push_str(&ctx.indent_endl(&format!("class {}({}):", name, bases_str.join(", "))));
+                s.push_str(&block_to_source(body, ctx, 1)?);
+                s
+            }
+            PyStmt::While(cond, body) => {
+                let mut s = String::new();
+                s.push_str(&ctx.indent_endl(&format!("while {}:", cond.to_source_lhs(LOW_PREC)?)));
+                s.push_str(&block_to_source(body, ctx, 1)?);
+                s
+            }
+            PyStmt::For(target, iter, body) => {
+                let mut s = String::new();
+                s.push_str(&ctx.indent_endl(&format!(
+                    "for {} in {}:",
+                    target.to_source_lhs(LOW_PREC)?,
+                    iter.to_source_lhs(LOW_PREC)?
+                )));
+                s.push_str(&block_to_source(body, ctx, 1)?);
+                s
+            }
+            PyStmt::Try(body, handlers, finally) => {
+                let mut s = String::new();
+                s.push_str(&ctx.indent_endl("try:"));
+                s.push_str(&block_to_source(body, ctx, 1)?);
+
+                for handler in handlers {
+                    // This would need handler.to_source() implementation
+                    s.push_str(&ctx.indent_endl("except:"));
+                    // Handler body would go here
+                }
+
+                if let Some(finally) = finally {
+                    s.push_str(&ctx.indent_endl("finally:"));
+                    s.push_str(&block_to_source(finally, ctx, 1)?);
+                }
+                s
+            }
+            PyStmt::Break => ctx.indent_endl("break"),
+            PyStmt::Continue => ctx.indent_endl("continue"),
+        };
+
+        Ok(res)
     }
 }
 

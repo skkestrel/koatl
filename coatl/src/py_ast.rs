@@ -11,14 +11,35 @@ pub struct PyImportAlias<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub struct PyExceptHandler<'a> {
+    pub typ: Option<SPyExpr<'a>>,
+    pub name: Option<PyIdent<'a>>,
+    pub body: Vec<PyStmt<'a>>,
+}
+
+#[derive(Debug, Clone)]
 pub enum PyStmt<'a> {
+    Expr(SPyExpr<'a>),
+    If(SPyExpr<'a>, Vec<PyStmt<'a>>, Option<Vec<PyStmt<'a>>>),
     Assign(SPyExpr<'a>, SPyExpr<'a>),
     Return(SPyExpr<'a>),
     Raise(SPyExpr<'a>),
     Assert(SPyExpr<'a>, Option<SPyExpr<'a>>),
     Global(Vec<PyIdent<'a>>),
     Nonlocal(Vec<PyIdent<'a>>),
-    Import(PyIdent<'a>, Vec<PyImportAlias<'a>>),
+    Import(PyImportAlias<'a>),
+    ImportFrom(PyIdent<'a>, Vec<PyImportAlias<'a>>),
+    FnDef(PyIdent<'a>, Vec<PyArgDefItem<'a>>, Vec<PyStmt<'a>>),
+    ClassDef(PyIdent<'a>, Vec<PyCallItem<'a>>, Vec<PyStmt<'a>>),
+    While(SPyExpr<'a>, Vec<PyStmt<'a>>),
+    For(SPyExpr<'a>, SPyExpr<'a>, Vec<PyStmt<'a>>),
+    Try(
+        Vec<PyStmt<'a>>,
+        Vec<PyExceptHandler<'a>>,
+        Option<Vec<PyStmt<'a>>>,
+    ),
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +84,13 @@ pub enum PyCallItem<'a> {
     Kwarg(PyIdent<'a>, SPyExpr<'a>),
     ArgSpread(SPyExpr<'a>),
     KwargSpread(SPyExpr<'a>),
+}
+
+#[derive(Debug, Clone)]
+pub enum PyArgDefItem<'a> {
+    Arg(PyIdent<'a>, Option<SPyExpr<'a>>),
+    ArgSpread(PyIdent<'a>),
+    KwargSpread(PyIdent<'a>),
 }
 
 #[derive(Debug, Clone)]
