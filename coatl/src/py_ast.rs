@@ -1,0 +1,117 @@
+use std::borrow::Cow;
+
+use parser::ast::Span;
+
+pub type PyIdent<'a> = Cow<'a, str>;
+
+#[derive(Debug, Clone)]
+pub struct PyImportAlias<'a> {
+    pub name: PyIdent<'a>,
+    pub as_name: Option<PyIdent<'a>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum PyStmt<'a> {
+    Assign(SPyExpr<'a>, SPyExpr<'a>),
+    Return(SPyExpr<'a>),
+    Raise(SPyExpr<'a>),
+    Assert(SPyExpr<'a>, Option<SPyExpr<'a>>),
+    Global(Vec<PyIdent<'a>>),
+    Nonlocal(Vec<PyIdent<'a>>),
+    Import(PyIdent<'a>, Vec<PyImportAlias<'a>>),
+}
+
+#[derive(Debug, Clone)]
+pub enum PyBinaryOp {
+    Add,
+    Sub,
+    Mult,
+    Div,
+    Mod,
+    Pow,
+
+    And,
+    Or,
+
+    Eq,
+    Neq,
+    Lt,
+    Leq,
+    Gt,
+    Geq,
+    Is,
+    Nis,
+}
+
+#[derive(Debug, Clone)]
+pub enum PyUnaryOp {
+    Not,
+    Neg,
+    Pos,
+    Inv,
+}
+
+#[derive(Debug, Clone)]
+pub enum PyNameCtx {
+    Load,
+    Store,
+}
+
+#[derive(Debug, Clone)]
+pub enum PyCallItem<'a> {
+    Arg(SPyExpr<'a>),
+    Kwarg(PyIdent<'a>, SPyExpr<'a>),
+    ArgSpread(SPyExpr<'a>),
+    KwargSpread(SPyExpr<'a>),
+}
+
+#[derive(Debug, Clone)]
+pub enum PyExpr<'a> {
+    Name(PyIdent<'a>, PyNameCtx),
+
+    Binary(PyBinaryOp, Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
+    Unary(PyUnaryOp, Box<SPyExpr<'a>>),
+    Call(Box<SPyExpr<'a>>, Vec<PyCallItem<'a>>),
+    Attribute(Box<SPyExpr<'a>>, PyIdent<'a>),
+    Subscript(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
+    Tuple(Vec<SPyExpr<'a>>),
+    Dict(Vec<(SPyExpr<'a>, SPyExpr<'a>)>),
+}
+
+pub type SPyExpr<'a> = PySpanned<PyExpr<'a>>;
+
+#[derive(Debug, Clone)]
+pub struct PySpanned<T> {
+    pub value: T,
+    pub tl_span: Span,
+    pub py_span: Option<PySpan>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PySpan {
+    pub start_line: usize,
+    pub start_col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
+}
+
+impl PySpan {
+    pub fn inline(start_col: usize, end_col: usize) -> Self {
+        Self {
+            start_line: 0,
+            start_col,
+            end_line: 0,
+            end_col,
+        }
+    }
+}
+
+impl<T> From<(T, Span)> for PySpanned<T> {
+    fn from((value, tl_span): (T, Span)) -> Self {
+        PySpanned {
+            value,
+            tl_span,
+            py_span: None,
+        }
+    }
+}

@@ -1,18 +1,23 @@
-use parser::*;
+use crate::py_ast::*;
+use parser::ast::*;
+
 use pyo3::{
     call::PyCallArgs,
+    ffi::c_str,
     prelude::*,
     types::{PyDict, PyList, PyString},
 };
 
-use crate::ast::AstBuilder;
+use crate::ast_util::AstBuilder;
 
+#[derive(Debug)]
 pub struct TlErr {
     pub message: String,
     pub py_err: Option<PyErr>,
     pub span: Option<Span>,
 }
 
+#[derive(Debug)]
 pub struct TlErrs(pub Vec<TlErr>);
 
 impl TlErrs {
@@ -1558,7 +1563,14 @@ pub fn transpile(source: &str, block: &SBlock) -> TlResult<String> {
             .call_method("dump", (&root_node,), Some(&dump_args))?
             .extract::<String>()?;
 
-        // println!("{}", dump);
+        let locals = PyDict::new(py);
+        locals.set_item("ast", &root_node)?;
+
+        py.run(
+            c_str!("import pickle\nwith open('ast.pkl', 'wb') as f: pickle.dump(ast, f)"),
+            None,
+            Some(&locals),
+        )?;
 
         let source = ast
             .ast_module

@@ -2,164 +2,9 @@
 
 use std::borrow::Cow;
 
+use crate::ast::*;
 use crate::lexer::*;
 use chumsky::{extra::ParserExtra, input::ValueInput, prelude::*};
-
-#[derive(Debug, Copy, Clone)]
-pub enum BinaryOp {
-    Add,
-    Sub,
-    Mul,
-    Mod,
-    MatMul,
-    Div,
-    Exp,
-    Lt,
-    Leq,
-    Gt,
-    Geq,
-    Eq,
-    Neq,
-    Is,
-    Nis,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum UnaryOp {
-    Inv,
-    Pos,
-    Neg,
-    Await,
-}
-
-pub type Ident<'a> = Cow<'a, str>;
-pub type SIdent<'a> = Spanned<Ident<'a>>;
-
-#[derive(Debug, Clone)]
-pub struct ImportStmt<'a> {
-    pub trunk: Vec<SIdent<'a>>,
-    pub leaves: Vec<(SIdent<'a>, Option<SIdent<'a>>)>,
-    pub star: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExceptHandler<'a> {
-    pub typ: Option<SExpr<'a>>,
-    pub name: Option<SIdent<'a>>,
-    pub body: SBlock<'a>,
-}
-
-// TODO should these be cows
-#[derive(Debug, Clone)]
-pub enum Stmt<'a> {
-    Global(Vec<SIdent<'a>>),
-    Nonlocal(Vec<SIdent<'a>>),
-    Assign(SExpr<'a>, SExpr<'a>),
-    Return(SExpr<'a>),
-    Expr(SExpr<'a>),
-    While(SExpr<'a>, SBlock<'a>),
-    For(SExpr<'a>, SExpr<'a>, SBlock<'a>),
-    Import(ImportStmt<'a>),
-    Try(SBlock<'a>, Vec<ExceptHandler<'a>>, Option<SBlock<'a>>),
-    Assert(SExpr<'a>, Option<SExpr<'a>>),
-    Raise(SExpr<'a>),
-    Break,
-    Continue,
-    Err,
-}
-
-pub type SStmt<'a> = Spanned<Stmt<'a>>;
-
-#[derive(Debug, Clone)]
-pub enum Literal<'a> {
-    Num(Cow<'a, str>),
-    Str(Cow<'a, str>),
-}
-
-pub type SLiteral<'a> = Spanned<Literal<'a>>;
-
-#[derive(Debug, Clone)]
-pub struct FmtExpr<'a> {
-    pub block: SBlock<'a>,
-    pub fmt: Option<&'a str>,
-}
-
-pub type SFmtExpr<'a> = Spanned<FmtExpr<'a>>;
-
-#[derive(Debug, Clone)]
-pub enum ListItem<'a> {
-    Item(SExpr<'a>),
-    Spread(SExpr<'a>),
-}
-
-#[derive(Debug, Clone)]
-pub enum MappingItem<'a> {
-    Item(SExpr<'a>, SExpr<'a>),
-    Spread(SExpr<'a>),
-}
-
-#[derive(Debug, Clone)]
-pub enum CallItem<'a> {
-    Arg(SExpr<'a>),
-    Kwarg(SIdent<'a>, SExpr<'a>),
-    ArgSpread(SExpr<'a>),
-    KwargSpread(SExpr<'a>),
-}
-
-pub type SCallItem<'a> = Spanned<CallItem<'a>>;
-
-#[derive(Debug, Clone)]
-pub enum ArgItem<'a> {
-    Arg(SIdent<'a>),
-    DefaultArg(SIdent<'a>, SExpr<'a>),
-    ArgSpread(SIdent<'a>),
-    KwargSpread(SIdent<'a>),
-}
-
-pub type SArgItem<'a> = Spanned<ArgItem<'a>>;
-
-#[derive(Debug, Clone)]
-pub enum Block<'a> {
-    Stmts(Vec<SStmt<'a>>),
-    Expr(SExpr<'a>),
-}
-
-pub type SBlock<'a> = Spanned<Block<'a>>;
-
-#[derive(Debug, Clone)]
-pub enum Expr<'a> {
-    Literal(SLiteral<'a>),
-    Ident(SIdent<'a>),
-    Unary(UnaryOp, Box<SExpr<'a>>),
-    Binary(BinaryOp, Box<SExpr<'a>>, Box<SExpr<'a>>),
-
-    List(Vec<ListItem<'a>>),
-    Mapping(Vec<MappingItem<'a>>),
-    Slice(
-        Option<Box<SExpr<'a>>>,
-        Option<Box<SExpr<'a>>>,
-        Option<Box<SExpr<'a>>>,
-    ),
-
-    If(Box<SExpr<'a>>, Box<SBlock<'a>>, Option<Box<SBlock<'a>>>),
-    Match(Box<SExpr<'a>>, Vec<(SExpr<'a>, Box<SBlock<'a>>)>),
-    Class(Vec<SCallItem<'a>>, Box<SBlock<'a>>),
-
-    Call(Box<SExpr<'a>>, Vec<SCallItem<'a>>),
-    Subscript(Box<SExpr<'a>>, Vec<ListItem<'a>>),
-    Attribute(Box<SExpr<'a>>, SIdent<'a>),
-    Pipe(Box<SExpr<'a>>, Box<SExpr<'a>>),
-
-    Yield(Box<SExpr<'a>>),
-    YieldFrom(Box<SExpr<'a>>),
-
-    Fn(Vec<ArgItem<'a>>, Box<SBlock<'a>>),
-    Fstr(Spanned<String>, Vec<(SFmtExpr<'a>, Spanned<String>)>),
-
-    Block(Box<SBlock<'a>>),
-}
-
-pub type SExpr<'a> = Spanned<Expr<'a>>;
 
 fn enumeration<'tokens, 'src: 'tokens, I, O: 'tokens, E, ItemParser>(
     item_parser: ItemParser,
@@ -172,12 +17,15 @@ where
     choice((
         item_parser
             .clone()
-            .separated_by(
-                choice((
-                    just(Token::Symbol(",")).then(just(Token::Eol).or_not()).ignored(),
-                    just(Token::Symbol(",")).or_not().then(just(Token::Eol)).ignored()
-                ))
-            )
+            .separated_by(choice((
+                just(Token::Symbol(","))
+                    .then(just(Token::Eol).or_not())
+                    .ignored(),
+                just(Token::Symbol(","))
+                    .or_not()
+                    .then(just(Token::Eol))
+                    .ignored(),
+            )))
             .allow_trailing()
             .collect()
             .delimited_by(

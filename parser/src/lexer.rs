@@ -6,8 +6,7 @@ use chumsky::{
 };
 use std::{collections::HashSet, fmt};
 
-pub type Span = SimpleSpan<usize, ()>;
-pub type Spanned<T> = (T, Span);
+use crate::ast::{Span, Spanned};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token<'src> {

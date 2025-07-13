@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use parser::*;
+use parser::ast::*;
 
 pub struct AstBuilder {
     pub span: Span,
