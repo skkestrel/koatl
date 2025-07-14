@@ -7,7 +7,6 @@ else:
 
 assert_eq(a, 1)
 
-
 a = if False:
     2 * 4
 else:
