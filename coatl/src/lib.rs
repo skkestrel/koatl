@@ -1,11 +1,11 @@
-mod py;
+pub mod py;
 pub mod transform;
 
-use parser::ast::Span;
+use parser::ast::{Block, Span};
 
-use crate::py::emit::EmitCtx;
+use crate::py::{ast::PyBlock, emit::EmitCtx};
 use crate::transform::transform_ast;
-use parser::{parse_tokens, tokenize};
+use parser::{TokenList, parse_tokens, tokenize};
 
 pub enum TlErrKind {
     Parse,
@@ -22,7 +22,7 @@ pub struct TlErr {
 
 pub type TlResult<T> = Result<T, Vec<TlErr>>;
 
-pub fn transpile(src: &str) -> TlResult<String> {
+pub fn transpile_to_py_ast<'src>(src: &'src str) -> TlResult<PyBlock<'src>> {
     let mut errs = vec![];
 
     let (tokens, token_errs) = tokenize(&src);
@@ -38,7 +38,7 @@ pub fn transpile(src: &str) -> TlResult<String> {
         }
     }));
 
-    let tokens = match tokens {
+    let tokens: TokenList<'src> = match tokens {
         Some(tokens) => tokens,
         None => return Err(errs),
     };
@@ -57,10 +57,10 @@ pub fn transpile(src: &str) -> TlResult<String> {
         }
     }));
 
-    let tl_ast = tl_ast.ok_or_else(|| errs)?;
+    let tl_ast: (Block<'src>, Span) = tl_ast.ok_or_else(|| errs)?;
     // println!("AST: {ast:?}");
 
-    let mut py_ast = transform_ast(&src, &tl_ast).map_err(|e| {
+    let py_ast: PyBlock<'src> = transform_ast(&src, &tl_ast).map_err(|e| {
         e.0.into_iter()
             .map(|e| TlErr {
                 kind: TlErrKind::Transform,
@@ -70,6 +70,12 @@ pub fn transpile(src: &str) -> TlResult<String> {
             })
             .collect::<Vec<_>>()
     })?;
+
+    Ok(py_ast)
+}
+
+pub fn transpile(src: &str) -> TlResult<String> {
+    let mut py_ast = transpile_to_py_ast(src)?;
 
     let mut ctx = EmitCtx {
         indentation: 0,

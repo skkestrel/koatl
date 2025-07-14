@@ -72,6 +72,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "coatl-python"
+version = "0.1.0"
+dependencies = [
+ "coatl",
+ "parser",
+ "pyo3",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -121,8 +121,12 @@ impl PyAstBuilder {
     }
 
     // Expression builders
-    pub fn ident<'src>(&self, name: impl Into<PyIdent<'src>>) -> SPyExpr<'src> {
-        (PyExpr::Name(name.into()), self.span).into()
+    pub fn ident<'src>(&self, name: impl Into<PyIdent<'src>>, ctx: PyNameCtx) -> SPyExpr<'src> {
+        (PyExpr::Ident(name.into(), ctx), self.span).into()
+    }
+
+    pub fn load_ident<'src>(&self, name: impl Into<PyIdent<'src>>) -> SPyExpr<'src> {
+        self.ident(name, PyNameCtx::Load)
     }
 
     pub fn literal<'src>(&self, lit: PyLiteral<'src>) -> SPyExpr<'src> {
@@ -174,13 +178,23 @@ impl PyAstBuilder {
         &self,
         value: SPyExpr<'src>,
         attr: impl Into<PyIdent<'src>>,
+        ctx: PyNameCtx,
     ) -> SPyExpr<'src> {
-        (PyExpr::Attribute(Box::new(value), attr.into()), self.span).into()
+        (
+            PyExpr::Attribute(Box::new(value), attr.into(), ctx),
+            self.span,
+        )
+            .into()
     }
 
-    pub fn subscript<'src>(&self, value: SPyExpr<'src>, slice: SPyExpr<'src>) -> SPyExpr<'src> {
+    pub fn subscript<'src>(
+        &self,
+        value: SPyExpr<'src>,
+        slice: SPyExpr<'src>,
+        ctx: PyNameCtx,
+    ) -> SPyExpr<'src> {
         (
-            PyExpr::Subscript(Box::new(value), Box::new(slice)),
+            PyExpr::Subscript(Box::new(value), Box::new(slice), ctx),
             self.span,
         )
             .into()

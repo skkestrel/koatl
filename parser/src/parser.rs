@@ -709,7 +709,7 @@ where
 
 pub fn parse_tokens<'tokens, 'src: 'tokens>(
     src: &'src str,
-    tokens: &'src TokenList<'src>,
+    tokens: &'tokens TokenList<'src>,
 ) -> (Option<SBlock<'src>>, Vec<Rich<'tokens, Token<'src>, Span>>) {
     parser()
         .parse(

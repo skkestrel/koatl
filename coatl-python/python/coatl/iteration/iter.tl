@@ -1,0 +1,2 @@
+iter = class:
+    None

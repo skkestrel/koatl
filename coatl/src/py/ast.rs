@@ -4,6 +4,13 @@ use parser::ast::Span;
 
 pub type PyIdent<'a> = Cow<'a, str>;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum PyNameCtx {
+    Load,
+    Store,
+    Del,
+}
+
 #[derive(Debug, Clone)]
 pub struct PyImportAlias<'a> {
     pub name: PyIdent<'a>,
@@ -165,13 +172,13 @@ pub enum PyFstrPart<'a> {
 pub enum PyExpr<'a> {
     Literal(PyLiteral<'a>),
     Fstr(Vec<PyFstrPart<'a>>),
-    Name(PyIdent<'a>),
+    Ident(PyIdent<'a>, PyNameCtx),
 
     Binary(PyBinaryOp, Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
     Unary(PyUnaryOp, Box<SPyExpr<'a>>),
     Call(Box<SPyExpr<'a>>, Vec<PyCallItem<'a>>),
-    Attribute(Box<SPyExpr<'a>>, PyIdent<'a>),
-    Subscript(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
+    Attribute(Box<SPyExpr<'a>>, PyIdent<'a>, PyNameCtx),
+    Subscript(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>, PyNameCtx),
 
     Tuple(Vec<PyTupleItem<'a>>),
     Dict(Vec<PyDictItem<'a>>),

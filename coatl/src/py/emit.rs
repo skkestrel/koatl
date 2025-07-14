@@ -27,17 +27,17 @@ impl EmitCtx {
         }
     }
 
-    pub fn emit_indent(&mut self) -> Span {
+    fn emit_indent(&mut self) -> Span {
         self.emit(&"  ".repeat(self.indentation))
     }
 
-    pub fn emit_endl(&mut self) -> Span {
+    fn emit_endl(&mut self) -> Span {
         self.emit("\n")
     }
 }
 
 impl PyImportAlias<'_> {
-    pub fn emit_to(&mut self, ctx: &mut EmitCtx) -> () {
+    fn emit_to(&mut self, ctx: &mut EmitCtx) -> () {
         if let Some(as_name) = &self.as_name {
             ctx.emit(&format!("{} as {}", self.name, as_name));
         } else {
@@ -47,7 +47,7 @@ impl PyImportAlias<'_> {
 }
 
 impl PyCallItem<'_> {
-    pub fn emit_to(&mut self, ctx: &mut EmitCtx) -> TfResult<()> {
+    fn emit_to(&mut self, ctx: &mut EmitCtx) -> TfResult<()> {
         match self {
             PyCallItem::Arg(expr) => {
                 expr.emit_to(ctx, LOW_PREC)?;
@@ -72,7 +72,7 @@ impl PyCallItem<'_> {
 }
 
 impl PyArgDefItem<'_> {
-    pub fn emit_to(&mut self, ctx: &mut EmitCtx) -> TfResult<()> {
+    fn emit_to(&mut self, ctx: &mut EmitCtx) -> TfResult<()> {
         match self {
             PyArgDefItem::Arg(name, default) => {
                 if let Some(default) = default {
@@ -103,7 +103,7 @@ impl PyUnaryOp {
         }
     }
 
-    pub fn emit_to(&mut self, ctx: &mut EmitCtx) {
+    fn emit_to(&mut self, ctx: &mut EmitCtx) {
         ctx.emit(match self {
             PyUnaryOp::Not => "not ",
             PyUnaryOp::Neg => "-",
@@ -183,7 +183,7 @@ impl SPyExpr<'_> {
         };
 
         match &mut self.value {
-            PyExpr::Name(id) => {
+            PyExpr::Ident(id, _ctx) => {
                 ctx.emit(&id);
             }
             PyExpr::Tuple(items) => {
@@ -256,7 +256,7 @@ impl SPyExpr<'_> {
                 }
                 ctx.emit(")");
             }
-            PyExpr::Attribute(obj, attr) => {
+            PyExpr::Attribute(obj, attr, _ctx) => {
                 let prec = 20.;
                 set_prec(prec);
 
@@ -264,7 +264,7 @@ impl SPyExpr<'_> {
                 ctx.emit(".");
                 ctx.emit(attr);
             }
-            PyExpr::Subscript(obj, index) => {
+            PyExpr::Subscript(obj, index, _ctx) => {
                 let prec = 20.;
                 set_prec(prec);
 

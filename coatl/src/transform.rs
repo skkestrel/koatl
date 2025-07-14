@@ -233,15 +233,18 @@ fn destructure_list<'src, 'ast>(
 
     let mut stmts = PyBlock(vec![
         a.assign(
-            a.ident(list_var.clone()),
+            a.ident(list_var.clone(), PyNameCtx::Store),
             a.call(
-                a.ident("tuple"),
-                vec![a.call_arg(a.ident(cursor_var.clone()))],
+                a.load_ident("tuple"),
+                vec![a.call_arg(a.load_ident(cursor_var.clone()))],
             ),
         ),
         a.assign(
-            a.ident(len_var.clone()),
-            a.call(a.ident("len"), vec![a.call_arg(a.ident(list_var.clone()))]),
+            a.ident(len_var.clone(), PyNameCtx::Store),
+            a.call(
+                a.load_ident("len"),
+                vec![a.call_arg(a.load_ident(list_var.clone()))],
+            ),
         ),
     ]);
 
@@ -264,7 +267,7 @@ fn destructure_list<'src, 'ast>(
                     a.assign(
                         item_bindings.assign_to,
                         a.subscript(
-                            a.ident(list_var.clone()),
+                            a.load_ident(list_var.clone()),
                             a.num(
                                 (if seen_spread {
                                     -((items.len() - i - 1) as i32)
@@ -273,6 +276,7 @@ fn destructure_list<'src, 'ast>(
                                 })
                                 .to_string(),
                             ),
+                            PyNameCtx::Load,
                         ),
                     ),
                 );
@@ -293,16 +297,17 @@ fn destructure_list<'src, 'ast>(
                 stmts.push(a.assign(
                     item_bindings.assign_to,
                     a.subscript(
-                        a.ident(list_var.clone()),
+                        a.load_ident(list_var.clone()),
                         a.slice(
                             Some(a.num(i.to_string())),
                             Some(a.binary(
                                 PyBinaryOp::Sub,
-                                a.ident(len_var.clone()),
+                                a.load_ident(len_var.clone()),
                                 a.num((items.len() - 2).to_string()),
                             )),
                             None,
                         ),
+                        PyNameCtx::Load,
                     ),
                 ));
             }
@@ -311,7 +316,7 @@ fn destructure_list<'src, 'ast>(
 
     stmts.extend(post_stmts);
 
-    Ok((stmts, a.ident(cursor_var).clone()))
+    Ok((stmts, a.ident(cursor_var, PyNameCtx::Store).clone()))
 }
 
 fn destructure_mapping<'src, 'ast>(
@@ -326,10 +331,10 @@ fn destructure_mapping<'src, 'ast>(
     // dict_var = dict(cursor_var)
     let a = PyAstBuilder::new(target.1);
     let mut stmts = PyBlock(vec![a.assign(
-        a.ident(dict_var.clone()),
+        a.ident(dict_var.clone(), PyNameCtx::Store),
         a.call(
-            a.ident("dict"),
-            vec![a.call_arg(a.ident(cursor_var.clone()))],
+            a.load_ident("dict"),
+            vec![a.call_arg(a.load_ident(cursor_var.clone()))],
         ),
     )]);
 
@@ -351,7 +356,7 @@ fn destructure_mapping<'src, 'ast>(
                 stmts.push(a.assign(
                     item_bindings.assign_to,
                     a.call(
-                        a.attribute(a.ident(dict_var.clone()), "pop"),
+                        a.attribute(a.load_ident(dict_var.clone()), "pop", PyNameCtx::Load),
                         vec![a.call_arg(key_node.expr)],
                     ),
                 ));
@@ -373,12 +378,12 @@ fn destructure_mapping<'src, 'ast>(
         let spread_node = spread_var.transform(ctx)?;
         post_stmts.extend(spread_node.pre_stmts);
 
-        stmts.push(a.assign(spread_node.expr, a.ident(dict_var.clone())));
+        stmts.push(a.assign(spread_node.expr, a.load_ident(dict_var.clone())));
     }
 
     stmts.extend(post_stmts);
 
-    Ok((stmts, a.ident(cursor_var)))
+    Ok((stmts, a.ident(cursor_var, PyNameCtx::Store)))
 }
 
 struct DestructureBindings<'a> {
@@ -394,21 +399,10 @@ fn destructure<'src, 'ast>(
     let mut post_stmts = PyBlock::new();
 
     let assign_to: SPyExpr<'src>;
+
     match &target.0 {
         Expr::Ident(..) | Expr::Attribute(..) | Expr::Subscript(..) => {
-            if decl_only {
-                match &target.0 {
-                    Expr::Ident(_) => {}
-                    _ => {
-                        return Err(TfErrBuilder::default()
-                            .message("Destructuring assignment target must be an identifier")
-                            .span(target.1)
-                            .build_errs());
-                    }
-                }
-            }
-
-            let target_node = target.transform(ctx)?;
+            let target_node = target.transform_with_py_ctx(ctx, PyNameCtx::Store)?;
             post_stmts.extend(target_node.pre_stmts);
 
             assign_to = target_node.expr;
@@ -584,7 +578,9 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                     (
                         PyExpr::Call(
-                            Box::new((PyExpr::Name(cond_name.into()), *span).into()),
+                            Box::new(
+                                (PyExpr::Ident(cond_name.into(), PyNameCtx::Load), *span).into(),
+                            ),
                             vec![],
                         ),
                         *span,
@@ -612,7 +608,11 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                         stmts.extend(expr.pre_stmts);
                         expr.expr
                     } else {
-                        (PyExpr::Name("BaseException".into()), *span).into()
+                        (
+                            PyExpr::Ident("BaseException".into(), PyNameCtx::Load),
+                            *span,
+                        )
+                            .into()
                     };
 
                     let ident_node = if let Some(ident) = &except.name {
@@ -725,13 +725,22 @@ fn transform_if_expr<'src, 'ast>(
     let mut aux_stmts = cond.pre_stmts;
 
     let ret_varname = ast.temp_var_name("ifexp", span.start);
-    let ret_var: SPyExpr = (PyExpr::Name(ret_varname.into()), *span).into();
+    let store_ret_var: SPyExpr = (
+        PyExpr::Ident(ret_varname.clone().into(), PyNameCtx::Store),
+        *span,
+    )
+        .into();
+    let load_ret_var: SPyExpr = (
+        PyExpr::Ident(ret_varname.clone().into(), PyNameCtx::Load),
+        *span,
+    )
+        .into();
 
     let PyBlockWithFinal { stmts, final_expr } = then_block.transform_with_final_expr(ast)?;
     let mut then_block_ast = stmts;
 
     if let Some(final_expr) = final_expr {
-        then_block_ast.push((PyStmt::Assign(ret_var.clone(), final_expr), *span).into());
+        then_block_ast.push((PyStmt::Assign(store_ret_var.clone(), final_expr), *span).into());
     } else {
         return Err(TfErrBuilder::default()
             .message("then block must have a final expression")
@@ -749,7 +758,7 @@ fn transform_if_expr<'src, 'ast>(
     let PyBlockWithFinal { stmts, final_expr } = else_block.transform_with_final_expr(ast)?;
     let mut else_block_ast = stmts;
     if let Some(final_expr) = final_expr {
-        else_block_ast.push((PyStmt::Assign(ret_var.clone(), final_expr), *span).into());
+        else_block_ast.push((PyStmt::Assign(store_ret_var, final_expr), *span).into());
     } else {
         return Err(TfErrBuilder::default()
             .message("else block must have a final expression")
@@ -766,7 +775,7 @@ fn transform_if_expr<'src, 'ast>(
     );
 
     Ok(PyExprWithPre {
-        expr: ret_var,
+        expr: load_ret_var,
         pre_stmts: aux_stmts,
     })
 }
@@ -808,7 +817,16 @@ fn transform_match_expr<'src, 'ast>(
     let mut aux_stmts = subject.pre_stmts;
 
     let ret_varname = ast.temp_var_name("matchexp", span.start);
-    let ret_var: SPyExpr = (PyExpr::Name(ret_varname.clone().into()), *span).into();
+    let load_ret_var: SPyExpr = (
+        PyExpr::Ident(ret_varname.clone().into(), PyNameCtx::Load),
+        *span,
+    )
+        .into();
+    let store_ret_var: SPyExpr = (
+        PyExpr::Ident(ret_varname.clone().into(), PyNameCtx::Store),
+        *span,
+    )
+        .into();
 
     let mut py_cases = vec![];
     for (pattern, block) in cases {
@@ -819,7 +837,7 @@ fn transform_match_expr<'src, 'ast>(
         let mut block_stmts = py_block.stmts;
 
         if let Some(final_expr) = py_block.final_expr {
-            block_stmts.push((PyStmt::Assign(ret_var.clone(), final_expr), block.1).into());
+            block_stmts.push((PyStmt::Assign(store_ret_var.clone(), final_expr), block.1).into());
         }
 
         py_cases.push(PyMatchCase {
@@ -831,7 +849,7 @@ fn transform_match_expr<'src, 'ast>(
     aux_stmts.push((PyStmt::Match(subject.expr, py_cases), *span).into());
 
     Ok(PyExprWithPre {
-        expr: ret_var,
+        expr: load_ret_var,
         pre_stmts: aux_stmts,
     })
 }
@@ -928,11 +946,36 @@ fn make_fndef_stmts<'src, 'ast>(
 
 trait SExprExt<'src> {
     fn transform<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyExprWithPre<'src>>;
+    fn transform_with_py_ctx<'ast>(
+        &'ast self,
+        ctx: &TfCtx<'src>,
+        py_ctx: PyNameCtx,
+    ) -> TfResult<PyExprWithPre<'src>>;
 }
 
 impl<'src> SExprExt<'src> for SExpr<'src> {
     fn transform<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyExprWithPre<'src>> {
+        self.transform_with_py_ctx(ctx, PyNameCtx::Load)
+    }
+
+    fn transform_with_py_ctx<'ast>(
+        &'ast self,
+        ctx: &TfCtx<'src>,
+        py_ctx: PyNameCtx,
+    ) -> TfResult<PyExprWithPre<'src>> {
         let (expr, span) = self;
+
+        match &expr {
+            Expr::Attribute(..) | Expr::Subscript(..) | Expr::Ident(..) => {}
+            _ => {
+                if py_ctx != PyNameCtx::Load {
+                    return Err(TfErrBuilder::default()
+                        .message("Expression context must be Load for this expression")
+                        .span(*span)
+                        .build_errs());
+                }
+            }
+        }
 
         match &expr {
             Expr::Fn(arglist, body) => {
@@ -946,7 +989,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 )?;
 
                 Ok(PyExprWithPre {
-                    expr: (PyExpr::Name(name.into()), *span).into(),
+                    expr: (PyExpr::Ident(name.into(), PyNameCtx::Load), *span).into(),
                     pre_stmts: aux_stmts,
                 })
             }
@@ -955,7 +998,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 let aux_stmts = make_classdef_stmts(ctx, name.clone(), bases, body, span)?;
 
                 Ok(PyExprWithPre {
-                    expr: (PyExpr::Name(name), *span).into(),
+                    expr: (PyExpr::Ident(name, PyNameCtx::Load), *span).into(),
                     pre_stmts: aux_stmts,
                 })
             }
@@ -975,7 +1018,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 })
             }
             Expr::Ident((ident, span)) => Ok(PyExprWithPre {
-                expr: (PyExpr::Name(Cow::Borrowed(ident)), *span).into(),
+                expr: (PyExpr::Ident(Cow::Borrowed(ident), py_ctx), *span).into(),
                 pre_stmts: PyBlock::new(),
             }),
             Expr::Attribute(obj, attr) => {
@@ -983,7 +1026,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                 Ok(PyExprWithPre {
                     expr: (
-                        PyExpr::Attribute(Box::new(obj.expr), (*attr.0).into()),
+                        PyExpr::Attribute(Box::new(obj.expr), (*attr.0).into(), py_ctx),
                         *span,
                     )
                         .into(),
@@ -1050,7 +1093,8 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     .into_iter()
                     .map(|index| match index {
                         ListItem::Spread(_expr) => {
-                            // For now, let's not support spread in subscripts since it's complex
+                            // TODO
+
                             Err(TfErrBuilder::default()
                                 .message("Spread in subscripts not yet supported")
                                 .span(*span)
@@ -1069,7 +1113,11 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 if indices.len() == 1 {
                     return Ok(PyExprWithPre {
                         expr: (
-                            PyExpr::Subscript(Box::new(obj.expr), Box::new(indices[0].clone())),
+                            PyExpr::Subscript(
+                                Box::new(obj.expr),
+                                Box::new(indices[0].clone()),
+                                py_ctx,
+                            ),
                             *span,
                         )
                             .into(),
@@ -1092,6 +1140,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                                     )
                                         .into(),
                                 ),
+                                py_ctx,
                             ),
                             *span,
                         )
@@ -1272,7 +1321,9 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 return Ok(PyExprWithPre {
                     expr: (
                         PyExpr::Call(
-                            Box::new((PyExpr::Name("slice".into()), *span).into()),
+                            Box::new(
+                                (PyExpr::Ident("slice".into(), PyNameCtx::Load), *span).into(),
+                            ),
                             vec![get(start_node), get(end_node), get(step_node)],
                         ),
                         *span,
