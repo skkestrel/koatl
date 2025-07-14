@@ -1,0 +1,45 @@
+{
+	"name": "quetzal",
+	"displayName": "quetzal",
+	"description": "",
+	"version": "0.0.1",
+	"engines": {
+		"vscode": "^1.102.0"
+	},
+	"scripts": {
+		"test": "cargo build --release && jest"
+	},
+	"categories": [
+		"Programming Languages"
+	],
+	"contributes": {
+		"languages": [
+			{
+				"id": "coatl",
+				"aliases": [
+					"coatl",
+					"tl"
+				],
+				"extensions": [
+					".tl"
+				],
+				"configuration": "./language-configuration.json"
+			}
+		],
+		"grammars": [
+			{
+				"language": "coatl",
+				"scopeName": "source.coatl",
+				"path": "./syntaxes/tl.tmLanguage.json"
+			}
+		]
+	},
+	"devDependencies": {
+		"@types/jest": "^30.0.0",
+		"jest": "^30.0.4",
+		"ts-jest": "^29.4.0",
+		"@babel/preset-env": "^7.28.0",
+		"@babel/preset-typescript": "^7.27.1",
+		"generator-code": "^1.11.10"
+	}
+}

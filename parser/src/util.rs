@@ -1,6 +1,4 @@
-use std::borrow::Cow;
-
-use parser::ast::*;
+use crate::ast::*;
 
 pub struct AstBuilder {
     pub span: Span,
@@ -16,7 +14,7 @@ impl AstBuilder {
         (Stmt::Expr(expr), self.span)
     }
 
-    pub fn ident<'src>(&self, name: impl Into<Cow<'src, str>>) -> SExpr<'src> {
+    pub fn ident<'src>(&self, name: &'src str) -> SExpr<'src> {
         (Expr::Ident((name.into(), self.span)), self.span)
     }
 
@@ -32,7 +30,7 @@ impl AstBuilder {
         (Stmt::Assert(expr, msg), self.span)
     }
 
-    pub fn global<'src>(&self, names: Vec<impl Into<Cow<'src, str>>>) -> SStmt<'src> {
+    pub fn global<'src>(&self, names: Vec<&'src str>) -> SStmt<'src> {
         let names = names
             .into_iter()
             .map(|name| (name.into(), self.span))
@@ -40,7 +38,7 @@ impl AstBuilder {
         (Stmt::Global(names), self.span)
     }
 
-    pub fn nonlocal<'src>(&self, names: Vec<impl Into<Cow<'src, str>>>) -> SStmt<'src> {
+    pub fn nonlocal<'src>(&self, names: Vec<&'src str>) -> SStmt<'src> {
         let names = names
             .into_iter()
             .map(|name| (name.into(), self.span))
@@ -151,11 +149,7 @@ impl AstBuilder {
         (Expr::Subscript(Box::new(value), slice), self.span)
     }
 
-    pub fn attribute<'src>(
-        &self,
-        value: SExpr<'src>,
-        attr: impl Into<Cow<'src, str>>,
-    ) -> SExpr<'src> {
+    pub fn attribute<'src>(&self, value: SExpr<'src>, attr: &'src str) -> SExpr<'src> {
         (
             Expr::Attribute(Box::new(value), (attr.into(), self.span)),
             self.span,
@@ -200,14 +194,14 @@ impl AstBuilder {
     }
 
     // Literal builders
-    pub fn num<'src>(&self, value: impl Into<Cow<'src, str>>) -> SExpr<'src> {
+    pub fn num<'src>(&self, value: &'src str) -> SExpr<'src> {
         (
             Expr::Literal((Literal::Num(value.into()), self.span)),
             self.span,
         )
     }
 
-    pub fn str<'src>(&self, value: impl Into<Cow<'src, str>>) -> SExpr<'src> {
+    pub fn str<'src>(&self, value: &'src str) -> SExpr<'src> {
         (
             Expr::Literal((Literal::Str(value.into()), self.span)),
             self.span,
@@ -236,11 +230,7 @@ impl AstBuilder {
         (CallItem::Arg(expr), self.span)
     }
 
-    pub fn call_kwarg<'src>(
-        &self,
-        name: impl Into<Cow<'src, str>>,
-        value: SExpr<'src>,
-    ) -> SCallItem<'src> {
+    pub fn call_kwarg<'src>(&self, name: &'src str, value: SExpr<'src>) -> SCallItem<'src> {
         (CallItem::Kwarg((name.into(), self.span), value), self.span)
     }
 
@@ -253,26 +243,22 @@ impl AstBuilder {
     }
 
     // Argument item builders
-    pub fn arg<'src>(&self, name: impl Into<Cow<'src, str>>) -> SArgItem<'src> {
+    pub fn arg<'src>(&self, name: &'src str) -> SArgItem<'src> {
         (ArgItem::Arg((name.into(), self.span)), self.span)
     }
 
-    pub fn default_arg<'src>(
-        &self,
-        name: impl Into<Cow<'src, str>>,
-        default: SExpr<'src>,
-    ) -> SArgItem<'src> {
+    pub fn default_arg<'src>(&self, name: &'src str, default: SExpr<'src>) -> SArgItem<'src> {
         (
             ArgItem::DefaultArg((name.into(), self.span), default),
             self.span,
         )
     }
 
-    pub fn arg_spread<'src>(&self, name: impl Into<Cow<'src, str>>) -> SArgItem<'src> {
+    pub fn arg_spread<'src>(&self, name: &'src str) -> SArgItem<'src> {
         (ArgItem::ArgSpread((name.into(), self.span)), self.span)
     }
 
-    pub fn kwarg_spread<'src>(&self, name: impl Into<Cow<'src, str>>) -> SArgItem<'src> {
+    pub fn kwarg_spread<'src>(&self, name: &'src str) -> SArgItem<'src> {
         (ArgItem::KwargSpread((name.into(), self.span)), self.span)
     }
 
@@ -285,7 +271,7 @@ impl AstBuilder {
     pub fn except_handler<'src>(
         &self,
         typ: Option<SExpr<'src>>,
-        name: Option<impl Into<Cow<'src, str>>>,
+        name: Option<&'src str>,
         body: SBlock<'src>,
     ) -> ExceptHandler<'src> {
         ExceptHandler {
@@ -296,10 +282,10 @@ impl AstBuilder {
     }
 
     // Import statement builder
-    pub fn import_stmt<'src>(
+    pub fn import_<'src>(
         &self,
-        trunk: Vec<impl Into<Cow<'src, str>>>,
-        leaves: Vec<(impl Into<Cow<'src, str>>, Option<impl Into<Cow<'src, str>>>)>,
+        trunk: Vec<&'src str>,
+        leaves: Vec<(&'src str, Option<&'src str>)>,
         star: bool,
     ) -> ImportStmt<'src> {
         ImportStmt {

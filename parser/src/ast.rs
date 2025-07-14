@@ -32,7 +32,7 @@ pub enum UnaryOp {
     Await,
 }
 
-pub type Ident<'a> = Cow<'a, str>;
+pub type Ident<'a> = &'a str;
 pub type SIdent<'a> = Spanned<Ident<'a>>;
 
 #[derive(Debug, Clone)]

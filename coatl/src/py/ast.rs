@@ -14,13 +14,20 @@ pub struct PyImportAlias<'a> {
 pub struct PyExceptHandler<'a> {
     pub typ: Option<SPyExpr<'a>>,
     pub name: Option<PyIdent<'a>>,
-    pub body: Vec<PyStmt<'a>>,
+    pub body: Vec<SPyStmt<'a>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PyMatchCase<'a> {
+    pub pattern: SPyExpr<'a>,
+    pub body: Vec<SPyStmt<'a>>,
 }
 
 #[derive(Debug, Clone)]
 pub enum PyStmt<'a> {
     Expr(SPyExpr<'a>),
     If(SPyExpr<'a>, SPyStmts<'a>, Option<SPyStmts<'a>>),
+    Match(SPyExpr<'a>, Vec<PyMatchCase<'a>>),
     Assign(SPyExpr<'a>, SPyExpr<'a>),
     Return(SPyExpr<'a>),
     Raise(SPyExpr<'a>),
@@ -32,7 +39,7 @@ pub enum PyStmt<'a> {
     FnDef(PyIdent<'a>, Vec<PyArgDefItem<'a>>, SPyStmts<'a>),
     ClassDef(PyIdent<'a>, Vec<PyCallItem<'a>>, SPyStmts<'a>),
     While(SPyExpr<'a>, SPyStmts<'a>),
-    For(SPyExpr<'a>, SPyExpr<'a>, SPyStmts<'a>),
+    For(PyIdent<'a>, SPyExpr<'a>, SPyStmts<'a>),
     Try(SPyStmts<'a>, Vec<PyExceptHandler<'a>>, Option<SPyStmts<'a>>),
     Break,
     Continue,
@@ -93,7 +100,27 @@ pub enum PyArgDefItem<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub enum PyTupleItem<'a> {
+    Item(SPyExpr<'a>),
+    Spread(SPyExpr<'a>),
+}
+
+#[derive(Debug, Clone)]
+pub enum PyDictItem<'a> {
+    Item(SPyExpr<'a>, SPyExpr<'a>),
+    Spread(SPyExpr<'a>),
+}
+
+#[derive(Debug, Clone)]
+pub enum PyFstrPart<'a> {
+    Str(PyIdent<'a>),
+    Expr(SPyExpr<'a>, PyIdent<'a>),
+}
+
+#[derive(Debug, Clone)]
 pub enum PyExpr<'a> {
+    Literal(PyLiteral<'a>),
+    Fstr(Vec<PyFstrPart<'a>>),
     Name(PyIdent<'a>),
 
     Binary(PyBinaryOp, Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
@@ -101,8 +128,17 @@ pub enum PyExpr<'a> {
     Call(Box<SPyExpr<'a>>, Vec<PyCallItem<'a>>),
     Attribute(Box<SPyExpr<'a>>, PyIdent<'a>),
     Subscript(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
-    Tuple(Vec<SPyExpr<'a>>),
-    Dict(Vec<(SPyExpr<'a>, SPyExpr<'a>)>),
+
+    Tuple(Vec<PyTupleItem<'a>>),
+    Dict(Vec<PyDictItem<'a>>),
+    Slice(
+        Option<Box<SPyExpr<'a>>>,
+        Option<Box<SPyExpr<'a>>>,
+        Option<Box<SPyExpr<'a>>>,
+    ),
+
+    Yield(Box<SPyExpr<'a>>),
+    YieldFrom(Box<SPyExpr<'a>>),
 }
 
 pub type SPyExpr<'a> = PySpanned<PyExpr<'a>>;
@@ -141,4 +177,12 @@ impl<T> From<(T, Span)> for PySpanned<T> {
             py_span: None,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum PyLiteral<'a> {
+    Num(PyIdent<'a>),
+    Str(PyIdent<'a>),
+    Bool(bool),
+    None,
 }

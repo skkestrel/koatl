@@ -1,13 +1,13 @@
-use crate::{py::TlResult, py_ast::*};
+use crate::{py::ast::*, transform::TlResult};
 
 const LOW_PREC: f32 = -1.0;
 const HIGH_PREC: f32 = 100.0;
 
-pub struct GenCtx {
-    indentation: usize,
+pub struct EmitCtx {
+    pub indentation: usize,
 }
 
-impl GenCtx {
+impl EmitCtx {
     pub fn indent(&self, s: &str) -> String {
         format!("{}{}", "  ".repeat(self.indentation), s)
     }
@@ -121,26 +121,38 @@ impl SPyExpr<'_> {
         let mut precedence = HIGH_PREC;
 
         match &self.value {
-            PyExpr::Name(id, _) => {
+            PyExpr::Name(id) => {
                 result.push_str(&id);
             }
             PyExpr::Tuple(items) => {
                 let item_str: Vec<String> = items
                     .iter()
-                    .map(|item| item.to_source_lhs(LOW_PREC))
+                    .map(|item| match item {
+                        PyTupleItem::Item(expr) => expr.to_source_lhs(LOW_PREC),
+                        PyTupleItem::Spread(expr) => {
+                            Ok(format!("*{}", expr.to_source_lhs(HIGH_PREC)?))
+                        }
+                    })
                     .collect::<TlResult<_>>()?;
 
-                result.push_str(&format!("({})", item_str.join(", ")));
+                if item_str.len() == 1 {
+                    result.push_str(&format!("({},)", item_str[0]));
+                } else {
+                    result.push_str(&format!("({})", item_str.join(", ")));
+                }
             }
             PyExpr::Dict(items) => {
                 let item_str: Vec<String> = items
                     .iter()
-                    .map(|(key, value)| {
-                        Ok(format!(
+                    .map(|item| match item {
+                        PyDictItem::Item(key, value) => Ok(format!(
                             "{}: {}",
                             key.to_source_lhs(HIGH_PREC)?,
                             value.to_source_rhs(LOW_PREC)?
-                        ))
+                        )),
+                        PyDictItem::Spread(expr) => {
+                            Ok(format!("**{}", expr.to_source_lhs(HIGH_PREC)?))
+                        }
                     })
                     .collect::<TlResult<_>>()?;
 
@@ -176,7 +188,7 @@ impl SPyExpr<'_> {
                 result.push_str(&format!(
                     "{}({})",
                     func.to_source_lhs(precedence)?,
-                    arg_str.join(","),
+                    arg_str.join(", "),
                 ));
             }
             PyExpr::Attribute(obj, attr) => {
@@ -192,6 +204,59 @@ impl SPyExpr<'_> {
                     obj.to_source_lhs(precedence)?,
                     index.to_source_rhs(LOW_PREC)?,
                 ));
+            }
+            PyExpr::Yield(expr) => {
+                result.push_str("yield ");
+                result.push_str(&expr.to_source_rhs(precedence)?);
+            }
+            PyExpr::YieldFrom(expr) => {
+                result.push_str("yield from ");
+                result.push_str(&expr.to_source_rhs(precedence)?);
+            }
+            PyExpr::Literal(literal) => match literal {
+                PyLiteral::Num(num) => {
+                    precedence = 15.; // lower than attribute
+                    result.push_str(&num.to_string())
+                }
+                PyLiteral::Str(s) => {
+                    result.push('"');
+                    result.push_str(s.as_ref());
+                    result.push('"');
+                }
+                PyLiteral::Bool(b) => result.push_str(if *b { "True" } else { "False" }),
+                PyLiteral::None => result.push_str("None"),
+            },
+            PyExpr::Fstr(fstr_parts) => {
+                result.push_str("f\"");
+                for part in fstr_parts {
+                    match part {
+                        PyFstrPart::Str(s) => result.push_str(s),
+                        PyFstrPart::Expr(expr, ident) => {
+                            result.push('{');
+                            result.push_str(&expr.to_source_lhs(HIGH_PREC)?);
+                            result.push('}');
+                        }
+                    }
+                }
+                result.push('"');
+            }
+            PyExpr::Slice(start, stop, step) => {
+                let start_str = if let Some(start) = start {
+                    start.to_source_lhs(LOW_PREC)?
+                } else {
+                    String::new()
+                };
+                let stop_str = if let Some(stop) = stop {
+                    stop.to_source_lhs(LOW_PREC)?
+                } else {
+                    String::new()
+                };
+                let step_str = if let Some(step) = step {
+                    format!(":{}", step.to_source_lhs(LOW_PREC)?)
+                } else {
+                    String::new()
+                };
+                result.push_str(&format!("{}:{}{}", start_str, stop_str, step_str));
             }
         }
 
@@ -218,8 +283,8 @@ impl SPyExpr<'_> {
 }
 
 pub fn block_to_source(
-    block: &[PyStmt],
-    ctx: &mut GenCtx,
+    block: &[SPyStmt],
+    ctx: &mut EmitCtx,
     delta_indentation: i32,
 ) -> TlResult<String> {
     let old_indentation = ctx.indentation;
@@ -234,9 +299,9 @@ pub fn block_to_source(
     Ok(result)
 }
 
-impl PyStmt<'_> {
-    pub fn to_source(&self, ctx: &mut GenCtx) -> TlResult<String> {
-        let res = match &self {
+impl SPyStmt<'_> {
+    pub fn to_source(&self, ctx: &mut EmitCtx) -> TlResult<String> {
+        let res = match &self.value {
             PyStmt::Expr(expr) => ctx.indent_endl(&expr.to_source_lhs(LOW_PREC)?),
             PyStmt::Assign(target, value) => {
                 let value_str = value.to_source_lhs(LOW_PREC)?;
@@ -331,7 +396,7 @@ impl PyStmt<'_> {
                 let mut s = String::new();
                 s.push_str(&ctx.indent_endl(&format!(
                     "for {} in {}:",
-                    target.to_source_lhs(LOW_PREC)?,
+                    target,
                     iter.to_source_lhs(LOW_PREC)?
                 )));
                 s.push_str(&block_to_source(body, ctx, 1)?);
@@ -356,6 +421,24 @@ impl PyStmt<'_> {
             }
             PyStmt::Break => ctx.indent_endl("break"),
             PyStmt::Continue => ctx.indent_endl("continue"),
+            PyStmt::Match(py_spanned, py_match_cases) => {
+                let mut s = String::new();
+                s.push_str(
+                    &ctx.indent_endl(&format!("match {}:", py_spanned.to_source_lhs(LOW_PREC)?)),
+                );
+
+                for case in py_match_cases {
+                    s.push_str(
+                        &ctx.indent_endl(&format!(
+                            "case {}:",
+                            case.pattern.to_source_lhs(LOW_PREC)?
+                        )),
+                    );
+                    s.push_str(&block_to_source(&case.body, ctx, 1)?);
+                }
+
+                s
+            }
         };
 
         Ok(res)
@@ -379,17 +462,13 @@ mod tests {
         let expr: SPyExpr = (
             PyExpr::Binary(
                 PyBinaryOp::Mult,
-                Box::new((PyExpr::Name("x".into(), PyNameCtx::Load), DUMMY_SPAN).into()),
+                Box::new((PyExpr::Name("x".into()), DUMMY_SPAN).into()),
                 Box::new(
                     (
                         PyExpr::Binary(
                             PyBinaryOp::Add,
-                            Box::new(
-                                (PyExpr::Name("y".into(), PyNameCtx::Load), DUMMY_SPAN).into(),
-                            ),
-                            Box::new(
-                                (PyExpr::Name("z".into(), PyNameCtx::Load), DUMMY_SPAN).into(),
-                            ),
+                            Box::new((PyExpr::Name("y".into()), DUMMY_SPAN).into()),
+                            Box::new((PyExpr::Name("z".into()), DUMMY_SPAN).into()),
                         ),
                         DUMMY_SPAN,
                     )

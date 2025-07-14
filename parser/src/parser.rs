@@ -117,7 +117,7 @@ where
     .boxed();
 
     let ident = select! {
-        Token::Ident(s) => Cow::Borrowed(s),
+        Token::Ident(s) => s,
     }
     .spanned()
     .labelled("identifier")

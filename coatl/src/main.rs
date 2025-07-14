@@ -1,14 +1,12 @@
 #![allow(unused_variables)]
 
-pub mod ast_util;
-pub mod py_ast;
-pub mod py_gen;
-pub mod trans_ast;
+pub mod py;
+pub mod transform;
 
 use ariadne::{Color, Label, Report, ReportKind, sources};
-use pyo3::types::PyTracebackMethods;
 
-use crate::trans_ast::{TlErrs, transpile};
+use crate::py::emit::EmitCtx;
+use crate::transform::{TlErrs, transform_ast};
 use parser::{parse_tokens, tokenize};
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -50,8 +48,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(ast) = ast {
             // println!("AST: {ast:?}");
 
-            match transpile(&src, &ast) {
-                Ok(code) => {
+            match transform_ast(&src, &ast) {
+                Ok(py_ast) => {
+                    let code =
+                        py::emit::block_to_source(&py_ast, &mut EmitCtx { indentation: 0 }, 0)
+                            .map_err(|e| {
+                                error = Some(format!("Code generation failed: {e:?}"));
+                                "Code generation failed"
+                            })?;
+
                     if cmd == "trans" {
                         println!("{}", code);
                     } else if cmd == "run" {
@@ -75,20 +80,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     for e in e {
                         let span = e.span.map(|x| x.into_range()).unwrap_or(0..0);
-                        let mut py_err_details: Option<(String, String)> = None;
 
-                        if let Some(py_err) = e.py_err {
-                            pyo3::Python::with_gil(|py| {
-                                let py_err_name = py_err.to_string();
-                                let py_err_tb = py_err
-                                    .traceback(py)
-                                    .map(|tb| tb.format().unwrap_or_default());
-
-                                py_err_details = Some((py_err_name, py_err_tb.unwrap_or_default()));
-                            });
-                        }
-
-                        let mut builder =
+                        let builder =
                             Report::build(ReportKind::Error, (filename.clone(), span.clone()))
                                 .with_config(
                                     ariadne::Config::new()
@@ -100,10 +93,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         .with_message(&e.message)
                                         .with_color(Color::Red),
                                 );
-
-                        if let Some((name, tb)) = py_err_details {
-                            builder = builder.with_note(format!("{name}\n{tb}"));
-                        }
 
                         builder
                             .finish()
@@ -154,7 +143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     if let Some(error) = error {
-        return Err(error);
+        return Err(error.into());
     }
 
     Ok(())

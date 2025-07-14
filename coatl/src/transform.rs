@@ -1,0 +1,1320 @@
+use std::borrow::Cow;
+
+use crate::py::{ast::*, util::PyAstBuilder};
+use parser::ast::*;
+
+#[derive(Debug)]
+pub struct TlErr {
+    pub message: String,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug)]
+pub struct TlErrs(pub Vec<TlErr>);
+
+impl TlErrs {
+    pub fn new() -> Self {
+        TlErrs(vec![])
+    }
+
+    pub fn extend(&mut self, other: TlErrs) {
+        self.0.extend(other.0);
+    }
+}
+
+#[derive(Default)]
+pub struct TlErrBuilder {
+    message: String,
+    span: Option<Span>,
+}
+
+impl TlErrBuilder {
+    pub fn span(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
+    }
+
+    pub fn message<S: Into<String>>(mut self, message: S) -> Self {
+        self.message = message.into();
+        self
+    }
+
+    pub fn build(self) -> TlErr {
+        TlErr {
+            message: self.message,
+            span: self.span,
+        }
+    }
+
+    pub fn build_errs(self) -> TlErrs {
+        TlErrs(vec![self.build()])
+    }
+}
+
+pub type TlResult<T> = Result<T, TlErrs>;
+
+struct TlCtx<'src> {
+    source: &'src str,
+}
+
+impl<'src> TlCtx<'src> {
+    fn new(source: &'src str) -> TlResult<Self> {
+        Ok(TlCtx { source })
+    }
+
+    fn linecol(&self, cursor: usize) -> (usize, usize) {
+        let line = self.source[..cursor].lines().count();
+        let col = self.source[..cursor]
+            .lines()
+            .last()
+            .map_or(0, |line| line.len());
+
+        (line, col)
+    }
+
+    fn temp_var_name(&self, typ: &str, cursor: usize) -> String {
+        let (line, col) = self.linecol(cursor);
+        format!("__tl_{}_l{}c{}", typ, line, col)
+    }
+}
+
+struct PyBlockWithFinal<'src> {
+    stmts: SPyStmts<'src>,
+    final_expr: Option<SPyExpr<'src>>,
+}
+
+struct PyExprWithPre<'src> {
+    pre_stmts: SPyStmts<'src>,
+    expr: SPyExpr<'src>,
+}
+
+trait SBlockExt<'src> {
+    fn transform_with_final_stmt<'ast>(&'ast self, ctx: &TlCtx<'src>) -> TlResult<SPyStmts<'src>>;
+
+    fn transform_with_final_expr<'ast>(
+        &'ast self,
+        ctx: &TlCtx<'src>,
+    ) -> TlResult<PyBlockWithFinal<'src>>;
+}
+
+impl<'src> SBlockExt<'src> for SBlock<'src> {
+    fn transform_with_final_stmt<'ast>(&'ast self, ctx: &TlCtx<'src>) -> TlResult<SPyStmts<'src>> {
+        let (block, span) = self;
+
+        match block {
+            Block::Stmts(stmts) => {
+                let mut errs = vec![];
+                let mut t_stmts = vec![];
+
+                let mut ok = true;
+
+                for stmt in stmts {
+                    match stmt.transform(ctx) {
+                        Ok(transformed) => {
+                            t_stmts.extend(transformed);
+                        }
+                        Err(e) => {
+                            errs.extend(e.0);
+                            ok = false;
+                        }
+                    }
+                }
+
+                if ok {
+                    return Ok(t_stmts);
+                } else {
+                    return Err(TlErrs(errs));
+                }
+            }
+            Block::Expr(sexpr) => {
+                let t = sexpr.transform(ctx)?;
+
+                let mut stmts = t.pre_stmts;
+                stmts.push((PyStmt::Expr(t.expr), *span).into());
+
+                Ok(stmts)
+            }
+        }
+    }
+
+    fn transform_with_final_expr<'ast>(
+        &'ast self,
+        ctx: &TlCtx<'src>,
+    ) -> TlResult<PyBlockWithFinal<'src>> {
+        let (block, span) = self;
+
+        match block {
+            Block::Stmts(stmts) => {
+                if stmts.is_empty() {
+                    return Ok(PyBlockWithFinal {
+                        stmts: vec![],
+                        final_expr: None,
+                    });
+                }
+
+                let mut t_stmts = Vec::new();
+                let mut errs = Vec::new();
+                let mut ok = true;
+
+                let mut final_expr = None;
+                let mut iter = stmts.iter();
+
+                for stmt in iter.by_ref().take(stmts.len() - 1) {
+                    match stmt.transform(ctx) {
+                        Ok(transformed) => {
+                            t_stmts.extend(transformed);
+                        }
+                        Err(e) => {
+                            errs.extend(e.0);
+                            ok = false;
+                        }
+                    }
+                }
+
+                let final_stmt = iter.next().unwrap();
+
+                match &final_stmt.0 {
+                    Stmt::Expr(expr) => match expr.transform(ctx) {
+                        Ok(expr_with_aux) => {
+                            t_stmts.extend(expr_with_aux.pre_stmts);
+                            final_expr = Some(expr_with_aux.expr);
+                        }
+                        Err(e) => {
+                            errs.extend(e.0);
+                            ok = false;
+                        }
+                    },
+                    _ => match final_stmt.transform(ctx) {
+                        Ok(transformd) => {
+                            t_stmts.extend(transformd);
+                        }
+                        Err(e) => {
+                            errs.extend(e.0);
+                            ok = false;
+                        }
+                    },
+                }
+
+                if ok {
+                    Ok(PyBlockWithFinal {
+                        stmts: t_stmts,
+                        final_expr: final_expr,
+                    })
+                } else {
+                    Err(TlErrs(errs))
+                }
+            }
+            Block::Expr(sexpr) => {
+                let t = sexpr.transform(ctx)?;
+
+                Ok(PyBlockWithFinal {
+                    stmts: t.pre_stmts,
+                    final_expr: Some(t.expr),
+                })
+            }
+        }
+    }
+}
+
+fn generate_list_destructure_ast<'src, 'ast>(
+    ctx: &TlCtx<'src>,
+    target: &'ast SExpr<'src>,
+    items: &'ast [ListItem<'src>],
+    decl_only: bool,
+) -> TlResult<(SPyStmts<'src>, SPyExpr<'src>)> {
+    let cursor_var = ctx.temp_var_name("des_curs", target.1.start);
+    let list_var = ctx.temp_var_name("des_list", target.1.start);
+    let len_var = ctx.temp_var_name("des_len", target.1.start);
+
+    // list_var = list(cursor_var)
+    // len_var = len(list_var)
+
+    let a = PyAstBuilder::new(target.1);
+
+    let mut stmts = vec![
+        a.assign(
+            a.ident(list_var.clone()),
+            a.call(
+                a.ident("tuple"),
+                vec![a.call_arg(a.ident(cursor_var.clone()))],
+            ),
+        ),
+        a.assign(
+            a.ident(len_var.clone()),
+            a.call(a.ident("len"), vec![a.call_arg(a.ident(list_var.clone()))]),
+        ),
+    ];
+
+    let mut post_stmts = vec![];
+
+    // a = list_var[0]
+    // b = list_var[1]
+    // c = list_var[i:len_var-n_single_spreads]
+
+    let mut seen_spread = false;
+    let mut i = 0;
+
+    for item in items.iter() {
+        match item {
+            ListItem::Item(expr) => {
+                let item_bindings = make_destructure_bindings(ctx, expr, decl_only)?;
+                post_stmts.extend(item_bindings.post_stmts);
+
+                stmts.push(
+                    a.assign(
+                        item_bindings.assign_to,
+                        a.subscript(
+                            a.ident(list_var.clone()),
+                            a.num(
+                                (if seen_spread {
+                                    -((items.len() - i - 1) as i32)
+                                } else {
+                                    i as i32
+                                })
+                                .to_string(),
+                            ),
+                        ),
+                    ),
+                );
+                i += 1;
+            }
+            ListItem::Spread(expr) => {
+                if seen_spread {
+                    return Err(TlErrBuilder::default()
+                        .message("Destructuring assignment with multiple spreads is not allowed")
+                        .span(target.1)
+                        .build_errs());
+                }
+                seen_spread = true;
+
+                let item_bindings = make_destructure_bindings(ctx, expr, decl_only)?;
+                post_stmts.extend(item_bindings.post_stmts);
+
+                stmts.push(a.assign(
+                    item_bindings.assign_to,
+                    a.subscript(
+                        a.ident(list_var.clone()),
+                        a.slice(
+                            Some(a.num(i.to_string())),
+                            Some(a.binary(
+                                PyBinaryOp::Sub,
+                                a.ident(len_var.clone()),
+                                a.num((items.len() - 2).to_string()),
+                            )),
+                            None,
+                        ),
+                    ),
+                ));
+            }
+        }
+    }
+
+    stmts.extend(post_stmts);
+
+    Ok((stmts, a.ident(cursor_var).clone()))
+}
+
+fn generate_mapping_destructure_ast<'src, 'ast>(
+    ctx: &TlCtx<'src>,
+    target: &'ast SExpr<'src>,
+    items: &'ast [MappingItem<'src>],
+    decl_only: bool,
+) -> TlResult<(SPyStmts<'src>, SPyExpr<'src>)> {
+    let cursor_var = ctx.temp_var_name("des_curs", target.1.start);
+    let dict_var = ctx.temp_var_name("des_dict", target.1.start);
+
+    // dict_var = dict(cursor_var)
+    let a = PyAstBuilder::new(target.1);
+    let mut stmts = vec![a.assign(
+        a.ident(dict_var.clone()),
+        a.call(
+            a.ident("dict"),
+            vec![a.call_arg(a.ident(cursor_var.clone()))],
+        ),
+    )];
+
+    let mut post_stmts = vec![];
+
+    // a = dict_var.pop(a_key)
+    // b = dict_var.pop(b_key)
+    // c = dict_var
+
+    let mut spread_var = None;
+    for item in items.iter() {
+        match item {
+            MappingItem::Item(key, expr) => {
+                let item_bindings = make_destructure_bindings(ctx, expr, decl_only)?;
+                let key_node = key.transform(ctx)?;
+                post_stmts.extend(key_node.pre_stmts);
+                post_stmts.extend(item_bindings.post_stmts);
+
+                stmts.push(a.assign(
+                    item_bindings.assign_to,
+                    a.call(
+                        a.attribute(a.ident(dict_var.clone()), "pop"),
+                        vec![a.call_arg(key_node.expr)],
+                    ),
+                ));
+            }
+            MappingItem::Spread(expr) => {
+                if spread_var.is_some() {
+                    return Err(TlErrBuilder::default()
+                        .message("Destructuring assignment with multiple spreads is not allowed")
+                        .span(target.1)
+                        .build_errs());
+                }
+
+                spread_var = Some(expr);
+            }
+        }
+    }
+
+    if let Some(spread_var) = spread_var {
+        let spread_node = spread_var.transform(ctx)?;
+        post_stmts.extend(spread_node.pre_stmts);
+
+        stmts.push(a.assign(spread_node.expr, a.ident(dict_var.clone())));
+    }
+
+    stmts.extend(post_stmts);
+
+    Ok((stmts, a.ident(cursor_var)))
+}
+
+struct DestructureBindings<'a> {
+    assign_to: SPyExpr<'a>,
+    post_stmts: SPyStmts<'a>,
+}
+
+fn make_destructure_bindings<'src, 'ast>(
+    ctx: &TlCtx<'src>,
+    target: &'ast SExpr<'src>,
+    decl_only: bool,
+) -> TlResult<DestructureBindings<'src>> {
+    let mut post_stmts = vec![];
+
+    let assign_to: SPyExpr<'src>;
+    match &target.0 {
+        Expr::Ident(..) | Expr::Attribute(..) | Expr::Subscript(..) => {
+            if decl_only {
+                match &target.0 {
+                    Expr::Ident(_) => {}
+                    _ => {
+                        return Err(TlErrBuilder::default()
+                            .message("Destructuring assignment target must be an identifier")
+                            .span(target.1)
+                            .build_errs());
+                    }
+                }
+            }
+
+            let target_node = target.transform(ctx)?;
+            post_stmts.extend(target_node.pre_stmts);
+
+            assign_to = target_node.expr;
+        }
+        Expr::List(items) => {
+            let (block, cursor) = generate_list_destructure_ast(ctx, target, items, decl_only)?;
+
+            post_stmts.extend(block);
+            assign_to = cursor;
+        }
+        Expr::Mapping(items) => {
+            let (block, cursor) = generate_mapping_destructure_ast(ctx, target, items, decl_only)?;
+
+            post_stmts.extend(block);
+            assign_to = cursor;
+        }
+        _ => {
+            return Err(TlErrBuilder::default()
+                .message("Destructuring assignment target is not allowed")
+                .span(target.1)
+                .build_errs());
+        }
+    };
+
+    Ok(DestructureBindings {
+        post_stmts,
+        assign_to,
+    })
+}
+
+trait SStmtExt<'src> {
+    fn transform<'ast>(&'ast self, ctx: &TlCtx<'src>) -> TlResult<SPyStmts<'src>>;
+}
+
+impl<'src> SStmtExt<'src> for SStmt<'src> {
+    fn transform<'ast>(&'ast self, ctx: &TlCtx<'src>) -> TlResult<SPyStmts<'src>> {
+        let (stmt, span) = self;
+
+        match &stmt {
+            Stmt::Expr(expr) => match &expr.0 {
+                Expr::If(cond, then_block, else_block) => {
+                    transform_if_stmt(ctx, cond, then_block, else_block, span)
+                }
+                Expr::Match(subject, cases) => transform_match_stmt(ctx, subject, cases, span),
+                _ => {
+                    let expr = expr.transform(ctx)?;
+                    let mut stmts = expr.pre_stmts;
+                    stmts.push((PyStmt::Expr(expr.expr), *span).into());
+
+                    Ok(stmts)
+                }
+            },
+            Stmt::Assert(expr, msg) => {
+                let expr_node = expr.transform(ctx)?;
+                let msg = msg.as_ref().map(|x| x.transform(ctx)).transpose()?;
+
+                let mut stmts = expr_node.pre_stmts;
+                let mut msg_node = None;
+                if let Some(msg) = msg {
+                    stmts.extend(msg.pre_stmts);
+                    msg_node = Some(msg.expr);
+                }
+
+                stmts.push((PyStmt::Assert(expr_node.expr, msg_node), *span).into());
+
+                Ok(stmts)
+            }
+            Stmt::Return(expr) => {
+                let value = expr.transform(ctx)?;
+                let mut stmts = value.pre_stmts;
+
+                stmts.push((PyStmt::Return(value.expr), *span).into());
+
+                Ok(stmts)
+            }
+            Stmt::Assign(target, value) => {
+                if let (Expr::Ident((ident, ident_span)), Expr::Fn(arglist, body)) =
+                    (&target.0, &value.0)
+                {
+                    return make_fndef_stmts(
+                        ctx,
+                        (*ident).into(),
+                        arglist,
+                        FnDefBody::Block(body),
+                        span,
+                    );
+                }
+
+                if let (Expr::Ident((ident, ident_span)), Expr::Class(bases, body)) =
+                    (&target.0, &value.0)
+                {
+                    return make_classdef_stmts(ctx, (*ident).into(), &bases, &body, span);
+                }
+
+                let value_node = value.transform(ctx)?;
+                let mut stmts = value_node.pre_stmts;
+                let destructure = make_destructure_bindings(ctx, target, false)?;
+                stmts.push(
+                    (
+                        PyStmt::Assign(destructure.assign_to, value_node.expr),
+                        target.1,
+                    )
+                        .into(),
+                );
+                stmts.extend(destructure.post_stmts);
+
+                Ok(stmts)
+            }
+            Stmt::Global(names) => {
+                let names: Vec<_> = names.iter().map(|name| name.0.into()).collect();
+
+                Ok(vec![(PyStmt::Global(names), *span).into()])
+            }
+            Stmt::Nonlocal(names) => {
+                let names: Vec<_> = names.iter().map(|name| name.0.into()).collect();
+
+                Ok(vec![(PyStmt::Nonlocal(names), *span).into()])
+            }
+            Stmt::Raise(expr) => {
+                let expr_node = expr.transform(ctx)?;
+                let mut stmts = expr_node.pre_stmts;
+
+                stmts.push((PyStmt::Raise(expr_node.expr), *span).into());
+
+                Ok(stmts)
+            }
+            Stmt::For(target, iter, body) => {
+                let target: &SExpr<'src> = target;
+
+                if let Expr::Ident((ident, _)) = &target.0 {
+                    let iter_node: PyExprWithPre<'src> = iter.transform(ctx)?;
+                    let aux_stmts = iter_node.pre_stmts;
+
+                    let body_block: Vec<SPyStmt<'src>> = body.transform_with_final_stmt(ctx)?;
+
+                    Ok(vec![
+                        (
+                            PyStmt::For((*ident).into(), iter_node.expr, body_block),
+                            *span,
+                        )
+                            .into(),
+                    ])
+                } else {
+                    Err(TlErrBuilder::default()
+                        .message("for loop target must be an identifier".to_owned())
+                        .span(*span)
+                        .build_errs())
+                }
+            }
+            Stmt::While(cond, body) => {
+                let cond_node = cond.transform(ctx)?;
+                let body_block = body.transform_with_final_stmt(ctx)?;
+
+                let mut stmts = vec![];
+
+                let cond: SPyExpr<'src> = if cond_node.pre_stmts.is_empty() {
+                    cond_node.expr
+                } else {
+                    let cond_name = ctx.temp_var_name("whilecond", span.start);
+                    let aux_fn: Vec<SPyStmt<'src>> = make_fndef_stmts(
+                        ctx,
+                        cond_name.clone().into(),
+                        &vec![],
+                        FnDefBody::PyStmts(cond_node.pre_stmts),
+                        span,
+                    )?;
+
+                    stmts.extend(aux_fn);
+
+                    (
+                        PyExpr::Call(
+                            Box::new((PyExpr::Name(cond_name.into()), *span).into()),
+                            vec![],
+                        ),
+                        *span,
+                    )
+                        .into()
+                };
+
+                stmts.push((PyStmt::While(cond, body_block), *span).into());
+
+                Ok(stmts)
+            }
+            Stmt::Try(body, excepts, finally) => {
+                let body_block = body.transform_with_final_stmt(ctx)?;
+                let finally_block = finally
+                    .as_ref()
+                    .map(|f| f.transform_with_final_stmt(ctx))
+                    .transpose()?;
+
+                let mut stmts = vec![];
+                let mut excepts_ast = vec![];
+
+                for except in excepts {
+                    let type_node = if let Some(typ) = &except.typ {
+                        let expr = typ.transform(ctx)?;
+                        stmts.extend(expr.pre_stmts);
+                        expr.expr
+                    } else {
+                        (PyExpr::Name("BaseException".into()), *span).into()
+                    };
+
+                    let ident_node = if let Some(ident) = &except.name {
+                        Some(ident.0.into())
+                    } else {
+                        None
+                    };
+
+                    let body_block = body.transform_with_final_stmt(ctx)?;
+
+                    let except_ast = PyExceptHandler {
+                        typ: Some(type_node),
+                        name: ident_node,
+                        body: body_block,
+                    };
+
+                    excepts_ast.push(except_ast);
+                }
+
+                stmts.push((PyStmt::Try(body_block, excepts_ast, finally_block), *span).into());
+
+                Ok(stmts)
+            }
+            Stmt::Break => Ok(vec![(PyStmt::Break, *span).into()]),
+            Stmt::Continue => Ok(vec![(PyStmt::Continue, *span).into()]),
+            Stmt::Import(import_stmt) => {
+                let mut aliases = vec![];
+                let mut base_module = None;
+
+                if !import_stmt.trunk.is_empty() {
+                    base_module = Some(
+                        import_stmt
+                            .trunk
+                            .iter()
+                            .map(|ident| ident.0.as_ref())
+                            .collect::<Vec<_>>()
+                            .join("."),
+                    );
+                }
+
+                if import_stmt.star {
+                    aliases.push(PyImportAlias {
+                        name: "*".into(),
+                        as_name: None,
+                    });
+                } else {
+                    for (ident, alias) in &import_stmt.leaves {
+                        aliases.push(PyImportAlias {
+                            name: ident.0.into(),
+                            as_name: alias.as_ref().map(|a| a.0.into()),
+                        });
+                    }
+                }
+
+                if let Some(base_module) = base_module {
+                    Ok(vec![
+                        (PyStmt::ImportFrom(base_module.into(), aliases), *span).into(),
+                    ])
+                } else {
+                    // For simple imports, we need to convert to Import statements
+                    let mut stmts = vec![];
+                    for alias in aliases {
+                        stmts.push((PyStmt::Import(alias), *span).into());
+                    }
+                    Ok(stmts)
+                }
+            }
+            Stmt::Err => Err(TlErrBuilder::default()
+                .message("unexpected statement error (should have been caught in lexer)".to_owned())
+                .span(*span)
+                .build_errs()),
+        }
+    }
+}
+
+fn transform_if_stmt<'src, 'ast>(
+    ctx: &TlCtx<'src>,
+    cond: &'ast SExpr<'src>,
+    then_block: &'ast SBlock<'src>,
+    else_block: &'ast Option<Box<SBlock<'src>>>,
+    span: &Span,
+) -> TlResult<SPyStmts<'src>> {
+    let mut stmts = vec![];
+
+    let cond = cond.transform(ctx)?;
+    stmts.extend(cond.pre_stmts.into_iter());
+
+    let then_block = then_block.transform_with_final_stmt(ctx)?;
+    let then_block_ast = then_block;
+
+    let mut else_block_ast = None;
+    if let Some(else_block) = else_block {
+        let else_block = else_block.transform_with_final_stmt(ctx)?;
+
+        else_block_ast = Some(else_block);
+    }
+
+    Ok(vec![
+        (PyStmt::If(cond.expr, then_block_ast, else_block_ast), *span).into(),
+    ])
+}
+
+fn transform_if_expr<'src, 'ast>(
+    ast: &TlCtx<'src>,
+    cond: &'ast SExpr<'src>,
+    then_block: &'ast SBlock<'src>,
+    else_block: &'ast Option<Box<SBlock<'src>>>,
+    span: &Span,
+) -> TlResult<PyExprWithPre<'src>> {
+    let cond = cond.transform(ast)?;
+    let mut aux_stmts = cond.pre_stmts;
+
+    let ret_varname = ast.temp_var_name("ifexp", span.start);
+    let ret_var: SPyExpr = (PyExpr::Name(ret_varname.into()), *span).into();
+
+    let PyBlockWithFinal { stmts, final_expr } = then_block.transform_with_final_expr(ast)?;
+    let mut then_block_ast = stmts;
+
+    if let Some(final_expr) = final_expr {
+        then_block_ast.push((PyStmt::Assign(ret_var.clone(), final_expr), *span).into());
+    } else {
+        return Err(TlErrBuilder::default()
+            .message("then block must have a final expression")
+            .span(then_block.1)
+            .build_errs());
+    }
+
+    let else_block = else_block.as_ref().ok_or_else(|| {
+        TlErrBuilder::default()
+            .message("else block is required in an if-expr")
+            .span(*span)
+            .build_errs()
+    })?;
+
+    let PyBlockWithFinal { stmts, final_expr } = else_block.transform_with_final_expr(ast)?;
+    let mut else_block_ast = stmts;
+    if let Some(final_expr) = final_expr {
+        else_block_ast.push((PyStmt::Assign(ret_var.clone(), final_expr), *span).into());
+    } else {
+        return Err(TlErrBuilder::default()
+            .message("else block must have a final expression")
+            .span(else_block.1)
+            .build_errs());
+    }
+
+    aux_stmts.push(
+        (
+            PyStmt::If(cond.expr, then_block_ast, Some(else_block_ast)),
+            *span,
+        )
+            .into(),
+    );
+
+    Ok(PyExprWithPre {
+        expr: ret_var,
+        pre_stmts: aux_stmts,
+    })
+}
+
+fn transform_match_stmt<'src, 'ast>(
+    ast: &TlCtx<'src>,
+    subject: &'ast SExpr<'src>,
+    cases: &'ast [(SExpr<'src>, Box<SBlock<'src>>)],
+    span: &Span,
+) -> TlResult<SPyStmts<'src>> {
+    let subject = subject.transform(ast)?;
+    let mut aux_stmts = subject.pre_stmts;
+
+    let mut py_cases = vec![];
+    for (pattern, block) in cases {
+        let pattern = pattern.transform(ast)?;
+        aux_stmts.extend(pattern.pre_stmts);
+
+        let py_block = block.transform_with_final_stmt(ast)?;
+
+        py_cases.push(PyMatchCase {
+            pattern: pattern.expr,
+            body: py_block,
+        });
+    }
+
+    aux_stmts.push((PyStmt::Match(subject.expr, py_cases), *span).into());
+
+    Ok(aux_stmts)
+}
+
+fn transform_match_expr<'src, 'ast>(
+    ast: &TlCtx<'src>,
+    subject: &'ast SExpr<'src>,
+    cases: &'ast [(SExpr<'src>, Box<SBlock<'src>>)],
+    span: &Span,
+) -> TlResult<PyExprWithPre<'src>> {
+    let subject = subject.transform(ast)?;
+    let mut aux_stmts = subject.pre_stmts;
+
+    let ret_varname = ast.temp_var_name("matchexp", span.start);
+    let ret_var: SPyExpr = (PyExpr::Name(ret_varname.clone().into()), *span).into();
+
+    let mut py_cases = vec![];
+    for (pattern, block) in cases {
+        let pattern = pattern.transform(ast)?;
+        aux_stmts.extend(pattern.pre_stmts);
+
+        let py_block = block.transform_with_final_expr(ast)?;
+        let mut block_stmts = py_block.stmts;
+
+        if let Some(final_expr) = py_block.final_expr {
+            block_stmts.push((PyStmt::Assign(ret_var.clone(), final_expr), block.1).into());
+        }
+
+        py_cases.push(PyMatchCase {
+            pattern: pattern.expr,
+            body: block_stmts,
+        });
+    }
+
+    aux_stmts.push((PyStmt::Match(subject.expr, py_cases), *span).into());
+
+    Ok(PyExprWithPre {
+        expr: ret_var,
+        pre_stmts: aux_stmts,
+    })
+}
+
+fn make_classdef_stmts<'src, 'ast>(
+    ast: &TlCtx<'src>,
+    name: Cow<'src, str>,
+    bases: &'ast Vec<SCallItem<'src>>,
+    body: &'ast Box<SBlock<'src>>,
+    span: &Span,
+) -> TlResult<SPyStmts<'src>> {
+    let mut stmts: Vec<SPyStmt<'src>> = vec![];
+    let mut bases_nodes: Vec<PyCallItem<'src>> = vec![];
+
+    let block = body.transform_with_final_stmt(ast)?;
+
+    for base in bases {
+        let call_item: PyCallItem<'src> = match &base.0 {
+            CallItem::Arg(expr) => {
+                let base_node = expr.transform(ast)?;
+                stmts.extend(base_node.pre_stmts);
+                PyCallItem::Arg(base_node.expr)
+            }
+            CallItem::Kwarg(name, expr) => {
+                let expr_node = expr.transform(ast)?;
+                stmts.extend(expr_node.pre_stmts);
+                PyCallItem::Kwarg(name.0.into(), expr_node.expr)
+            }
+            _ => {
+                return Err(TlErrBuilder::default()
+                    .message("spread args are not allowed in class bases")
+                    .span(*span)
+                    .build_errs());
+            }
+        };
+
+        bases_nodes.push(call_item);
+    }
+
+    stmts.push((PyStmt::ClassDef(name.into(), bases_nodes, block), *span).into());
+
+    Ok(stmts)
+}
+
+enum FnDefBody<'src, 'ast> {
+    PyStmts(SPyStmts<'src>),
+    Block(&'ast SBlock<'src>),
+}
+
+fn make_fndef_stmts<'src, 'ast>(
+    ctx: &TlCtx<'src>,
+    name: Cow<'src, str>,
+    arglist: &'ast [ArgItem<'src>],
+    body: FnDefBody<'src, 'ast>,
+    span: &Span,
+) -> TlResult<SPyStmts<'src>> {
+    let mut args = vec![];
+    let mut aux_stmts = vec![];
+
+    for arg in arglist {
+        let new_arg = match arg {
+            ArgItem::Arg(name) => PyArgDefItem::Arg(name.0.into(), None),
+            ArgItem::DefaultArg(name, default) => {
+                let expr = default.transform(ctx)?;
+                aux_stmts.extend(expr.pre_stmts);
+                PyArgDefItem::Arg(name.0.into(), Some(expr.expr))
+            }
+            ArgItem::ArgSpread(name) => PyArgDefItem::ArgSpread(name.0.into()),
+            ArgItem::KwargSpread(name) => PyArgDefItem::KwargSpread(name.0.into()),
+        };
+
+        args.push(new_arg);
+    }
+
+    let body_stmts = match body {
+        FnDefBody::PyStmts(stmts) => stmts,
+        FnDefBody::Block(block) => {
+            let block = block.transform_with_final_expr(ctx)?;
+            let mut stmts = block.stmts;
+
+            if let Some(final_expr) = block.final_expr {
+                stmts.push((PyStmt::Return(final_expr), *span).into());
+            }
+
+            stmts
+        }
+    };
+
+    let mut stmts = aux_stmts;
+    stmts.push((PyStmt::FnDef(name.into(), args, body_stmts), *span).into());
+
+    Ok(stmts)
+}
+
+trait SExprExt<'src> {
+    fn transform<'ast>(&'ast self, ctx: &TlCtx<'src>) -> TlResult<PyExprWithPre<'src>>;
+}
+
+impl<'src> SExprExt<'src> for SExpr<'src> {
+    fn transform<'ast>(&'ast self, ctx: &TlCtx<'src>) -> TlResult<PyExprWithPre<'src>> {
+        let (expr, span) = self;
+
+        match &expr {
+            Expr::Fn(arglist, body) => {
+                let name = ctx.temp_var_name("fnexp", span.start);
+                let aux_stmts = make_fndef_stmts(
+                    ctx,
+                    name.clone().into(),
+                    arglist,
+                    FnDefBody::Block(body),
+                    span,
+                )?;
+
+                Ok(PyExprWithPre {
+                    expr: (PyExpr::Name(name.into()), *span).into(),
+                    pre_stmts: aux_stmts,
+                })
+            }
+            Expr::Class(bases, body) => {
+                let name = Cow::<'src, str>::Owned(ctx.temp_var_name("classexp", span.start));
+                let aux_stmts = make_classdef_stmts(ctx, name.clone(), bases, body, span)?;
+
+                Ok(PyExprWithPre {
+                    expr: (PyExpr::Name(name), *span).into(),
+                    pre_stmts: aux_stmts,
+                })
+            }
+            Expr::Literal((lit, span)) => {
+                let value = match lit {
+                    Literal::Num(num) => {
+                        (PyExpr::Literal(PyLiteral::Num(num.to_owned())), *span).into()
+                    }
+                    Literal::Str(s) => {
+                        (PyExpr::Literal(PyLiteral::Str(s.to_owned())), *span).into()
+                    }
+                };
+
+                Ok(PyExprWithPre {
+                    expr: value,
+                    pre_stmts: vec![],
+                })
+            }
+            Expr::Ident((ident, span)) => Ok(PyExprWithPre {
+                expr: (PyExpr::Name(Cow::Borrowed(ident)), *span).into(),
+                pre_stmts: vec![],
+            }),
+            Expr::Attribute(obj, attr) => {
+                let obj = obj.transform(ctx)?;
+
+                Ok(PyExprWithPre {
+                    expr: (
+                        PyExpr::Attribute(Box::new(obj.expr), (*attr.0).into()),
+                        *span,
+                    )
+                        .into(),
+                    pre_stmts: obj.pre_stmts,
+                })
+            }
+            Expr::Call(obj, args) => {
+                let obj = obj.transform(ctx)?;
+                let mut aux_stmts = obj.pre_stmts;
+
+                let mut call_items = vec![];
+
+                for arg in args {
+                    match &arg.0 {
+                        CallItem::Arg(expr) => {
+                            let e = expr.transform(ctx)?;
+                            aux_stmts.extend(e.pre_stmts);
+                            call_items.push(PyCallItem::Arg(e.expr));
+                        }
+                        CallItem::Kwarg((name, name_span), expr) => {
+                            let e = expr.transform(ctx)?;
+                            aux_stmts.extend(e.pre_stmts);
+                            call_items.push(PyCallItem::Kwarg((*name).into(), e.expr));
+                        }
+                        CallItem::ArgSpread(expr) => {
+                            let e = expr.transform(ctx)?;
+                            aux_stmts.extend(e.pre_stmts);
+                            call_items.push(PyCallItem::ArgSpread(e.expr));
+                        }
+                        CallItem::KwargSpread(expr) => {
+                            let e = expr.transform(ctx)?;
+                            aux_stmts.extend(e.pre_stmts);
+                            call_items.push(PyCallItem::KwargSpread(e.expr));
+                        }
+                    };
+                }
+
+                Ok(PyExprWithPre {
+                    expr: (PyExpr::Call(Box::new(obj.expr), call_items), *span).into(),
+                    pre_stmts: aux_stmts,
+                })
+            }
+            Expr::Pipe(lhs, rhs) => {
+                let lhs = lhs.transform(ctx)?;
+                let mut rhs = rhs.transform(ctx)?;
+
+                let mut aux_stmts = lhs.pre_stmts;
+                aux_stmts.append(&mut rhs.pre_stmts);
+
+                Ok(PyExprWithPre {
+                    expr: (
+                        PyExpr::Call(Box::new(rhs.expr), vec![PyCallItem::Arg(lhs.expr)]),
+                        *span,
+                    )
+                        .into(),
+                    pre_stmts: aux_stmts,
+                })
+            }
+            Expr::Subscript(obj, indices) => {
+                let obj = obj.transform(ctx)?;
+                let mut aux_stmts = obj.pre_stmts;
+
+                let processed_indices: TlResult<Vec<_>> = indices
+                    .into_iter()
+                    .map(|index| match index {
+                        ListItem::Spread(_expr) => {
+                            // For now, let's not support spread in subscripts since it's complex
+                            Err(TlErrBuilder::default()
+                                .message("Spread in subscripts not yet supported")
+                                .span(*span)
+                                .build_errs())
+                        }
+                        ListItem::Item(expr) => {
+                            let e = expr.transform(ctx)?;
+                            aux_stmts.extend(e.pre_stmts);
+                            Ok(e.expr)
+                        }
+                    })
+                    .collect();
+
+                let indices = processed_indices?;
+
+                if indices.len() == 1 {
+                    return Ok(PyExprWithPre {
+                        expr: (
+                            PyExpr::Subscript(Box::new(obj.expr), Box::new(indices[0].clone())),
+                            *span,
+                        )
+                            .into(),
+                        pre_stmts: aux_stmts,
+                    });
+                } else {
+                    Ok(PyExprWithPre {
+                        expr: (
+                            PyExpr::Subscript(
+                                Box::new(obj.expr),
+                                Box::new(
+                                    (
+                                        PyExpr::Tuple(
+                                            indices
+                                                .into_iter()
+                                                .map(|i| PyTupleItem::Item(i).into())
+                                                .collect(),
+                                        ),
+                                        *span,
+                                    )
+                                        .into(),
+                                ),
+                            ),
+                            *span,
+                        )
+                            .into(),
+                        pre_stmts: aux_stmts,
+                    })
+                }
+            }
+            Expr::If(cond, then_block, else_block) => {
+                transform_if_expr(ctx, cond, then_block, else_block, span)
+            }
+            Expr::Block(block) => {
+                let PyBlockWithFinal { stmts, final_expr } =
+                    block.transform_with_final_expr(ctx)?;
+
+                Ok(PyExprWithPre {
+                    expr: final_expr.ok_or_else(|| {
+                        TlErrBuilder::default()
+                            .message("block-expression must have a final expression")
+                            .span(block.1)
+                            .build_errs()
+                    })?,
+                    pre_stmts: stmts,
+                })
+            }
+            Expr::Match(subject, cases) => transform_match_expr(ctx, subject, cases, span),
+            Expr::Yield(expr) => {
+                let value = expr.transform(ctx)?;
+
+                Ok(PyExprWithPre {
+                    expr: (PyExpr::Yield(Box::new(value.expr)), *span).into(),
+                    pre_stmts: value.pre_stmts,
+                })
+            }
+            Expr::YieldFrom(expr) => {
+                let value = expr.transform(ctx)?;
+
+                Ok(PyExprWithPre {
+                    expr: (PyExpr::YieldFrom(Box::new(value.expr)), *span).into(),
+                    pre_stmts: value.pre_stmts,
+                })
+            }
+            Expr::Binary(op, lhs, rhs) => {
+                let lhs = lhs.transform(ctx)?;
+                let mut rhs = rhs.transform(ctx)?;
+
+                let mut aux_stmts = lhs.pre_stmts;
+                aux_stmts.append(&mut rhs.pre_stmts);
+
+                let py_op = match op {
+                    BinaryOp::Add => Some(PyBinaryOp::Add),
+                    BinaryOp::Sub => Some(PyBinaryOp::Sub),
+                    BinaryOp::Mul => Some(PyBinaryOp::Mult),
+                    BinaryOp::Div => Some(PyBinaryOp::Div),
+                    BinaryOp::Mod => Some(PyBinaryOp::Mod),
+                    BinaryOp::Exp => Some(PyBinaryOp::Pow),
+
+                    BinaryOp::Lt => Some(PyBinaryOp::Lt),
+                    BinaryOp::Gt => Some(PyBinaryOp::Gt),
+                    BinaryOp::Leq => Some(PyBinaryOp::Leq),
+                    BinaryOp::Geq => Some(PyBinaryOp::Geq),
+                    BinaryOp::Eq => Some(PyBinaryOp::Eq),
+                    BinaryOp::Neq => Some(PyBinaryOp::Neq),
+                    BinaryOp::Is => Some(PyBinaryOp::Is),
+                    BinaryOp::Nis => Some(PyBinaryOp::Nis),
+                    _ => None,
+                };
+
+                if let Some(py_op) = py_op {
+                    return Ok(PyExprWithPre {
+                        expr: (
+                            PyExpr::Binary(py_op, Box::new(lhs.expr), Box::new(rhs.expr)),
+                            *span,
+                        )
+                            .into(),
+                        pre_stmts: aux_stmts,
+                    });
+                } else {
+                    return Err(TlErrBuilder::default()
+                        .message(format!("Unsupported binary operator: {:?}", op))
+                        .span(*span)
+                        .build_errs());
+                }
+            }
+            Expr::Unary(op, expr) => {
+                let expr = expr.transform(ctx)?;
+                let aux_stmts = expr.pre_stmts;
+
+                let py_op = match op {
+                    UnaryOp::Neg => PyUnaryOp::Neg,
+                    UnaryOp::Pos => PyUnaryOp::Pos,
+                    UnaryOp::Inv => PyUnaryOp::Inv,
+                    UnaryOp::Await => todo!(),
+                };
+
+                return Ok(PyExprWithPre {
+                    expr: (PyExpr::Unary(py_op, Box::new(expr.expr)), *span).into(),
+                    pre_stmts: aux_stmts,
+                });
+            }
+            Expr::List(exprs) => {
+                let mut aux_stmts = vec![];
+                let mut items = vec![];
+
+                for expr in exprs {
+                    let e = match expr {
+                        ListItem::Spread(expr) => expr.transform(ctx)?,
+                        ListItem::Item(expr) => expr.transform(ctx)?,
+                    };
+                    aux_stmts.extend(e.pre_stmts);
+                    items.push(match expr {
+                        ListItem::Spread(_) => PyTupleItem::Spread(e.expr),
+                        ListItem::Item(_) => PyTupleItem::Item(e.expr),
+                    });
+                }
+
+                return Ok(PyExprWithPre {
+                    expr: (PyExpr::Tuple(items), *span).into(),
+                    pre_stmts: aux_stmts,
+                });
+            }
+            Expr::Mapping(items) => {
+                let mut aux_stmts = vec![];
+                let mut dict_items = vec![];
+
+                for item in items {
+                    match item {
+                        MappingItem::Item(key, value) => {
+                            let key = key.transform(ctx)?;
+                            let value = value.transform(ctx)?;
+
+                            aux_stmts.extend(key.pre_stmts);
+                            aux_stmts.extend(value.pre_stmts);
+
+                            dict_items.push(PyDictItem::Item(key.expr, value.expr));
+                        }
+                        MappingItem::Spread(expr) => {
+                            let e = expr.transform(ctx)?;
+                            aux_stmts.extend(e.pre_stmts);
+
+                            dict_items.push(PyDictItem::Spread(e.expr));
+                        }
+                    }
+                }
+
+                return Ok(PyExprWithPre {
+                    expr: (PyExpr::Dict(dict_items), *span).into(),
+                    pre_stmts: aux_stmts,
+                });
+            }
+            Expr::Slice(start, end, step) => {
+                let start_node = start
+                    .as_ref()
+                    .map(|e| e.as_ref().transform(ctx))
+                    .transpose()?;
+                let end_node = end
+                    .as_ref()
+                    .map(|e| e.as_ref().transform(ctx))
+                    .transpose()?;
+                let step_node = step
+                    .as_ref()
+                    .map(|e| e.as_ref().transform(ctx))
+                    .transpose()?;
+
+                let mut aux_stmts = vec![];
+
+                let mut get = |x: Option<PyExprWithPre<'src>>| {
+                    let expr = if let Some(x) = x {
+                        aux_stmts.extend(x.pre_stmts);
+                        x.expr
+                    } else {
+                        (PyExpr::Literal(PyLiteral::None), *span).into()
+                    };
+
+                    PyCallItem::Arg(expr)
+                };
+
+                return Ok(PyExprWithPre {
+                    expr: (
+                        PyExpr::Call(
+                            Box::new((PyExpr::Name("slice".into()), *span).into()),
+                            vec![get(start_node), get(end_node), get(step_node)],
+                        ),
+                        *span,
+                    )
+                        .into(),
+                    pre_stmts: aux_stmts,
+                });
+            }
+            Expr::Fstr(begin, parts) => {
+                let mut aux_stmts = Vec::new();
+                let mut nodes = Vec::new();
+
+                nodes.push(PyFstrPart::Str(begin.0.clone().into()));
+
+                for (fmt_expr, str_part) in parts {
+                    // TODO format specifiers?
+                    let block_node = fmt_expr.0.block.transform_with_final_expr(ctx)?;
+                    aux_stmts.extend(block_node.stmts);
+
+                    let expr_node = block_node.final_expr.ok_or_else(|| {
+                        TlErrBuilder::default()
+                            .message("f-string expression must have a final expression")
+                            .span(fmt_expr.1)
+                            .build_errs()
+                    })?;
+
+                    nodes.push(PyFstrPart::Expr(expr_node, "".into()));
+                    nodes.push(PyFstrPart::Str(str_part.0.clone().into()));
+                }
+
+                let expr = (PyExpr::Fstr(nodes), *span).into();
+                return Ok(PyExprWithPre {
+                    expr,
+                    pre_stmts: aux_stmts,
+                });
+            }
+        }
+    }
+}
+
+pub fn transform_ast<'src, 'ast>(
+    source: &'src str,
+    block: &'ast SBlock<'src>,
+) -> TlResult<SPyStmts<'src>> {
+    let ctx = TlCtx::new(source)?;
+    let stmts = block.transform_with_final_stmt(&ctx)?;
+    Ok(stmts)
+}
