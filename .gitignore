@@ -1,3 +1,4 @@
 /target
 **/*.pyc
 **/node_modules/**/*
+quetzal/*.vsix

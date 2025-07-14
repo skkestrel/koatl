@@ -1,8 +1,9 @@
 {
 	"name": "quetzal",
 	"displayName": "quetzal",
-	"description": "",
+	"description": "Quetzal Language Server",
 	"version": "0.0.1",
+	"publisher": "Kouver Technologies",
 	"engines": {
 		"vscode": "^1.102.0"
 	},
