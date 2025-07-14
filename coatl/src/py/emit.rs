@@ -592,7 +592,7 @@ mod tests {
             source: String::new(),
         };
 
-        expr.emit_to(&mut ctx, LOW_PREC);
+        expr.emit_to(&mut ctx, LOW_PREC).unwrap();
         assert_eq!(ctx.source, "x * (y + z)");
     }
 }
