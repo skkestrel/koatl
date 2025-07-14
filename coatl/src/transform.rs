@@ -4,31 +4,31 @@ use crate::py::{ast::*, util::PyAstBuilder};
 use parser::ast::*;
 
 #[derive(Debug)]
-pub struct TlErr {
+pub struct TfErr {
     pub message: String,
     pub span: Option<Span>,
 }
 
 #[derive(Debug)]
-pub struct TlErrs(pub Vec<TlErr>);
+pub struct TfErrs(pub Vec<TfErr>);
 
-impl TlErrs {
+impl TfErrs {
     pub fn new() -> Self {
-        TlErrs(vec![])
+        TfErrs(vec![])
     }
 
-    pub fn extend(&mut self, other: TlErrs) {
+    pub fn extend(&mut self, other: TfErrs) {
         self.0.extend(other.0);
     }
 }
 
 #[derive(Default)]
-pub struct TlErrBuilder {
+pub struct TfErrBuilder {
     message: String,
     span: Option<Span>,
 }
 
-impl TlErrBuilder {
+impl TfErrBuilder {
     pub fn span(mut self, span: Span) -> Self {
         self.span = Some(span);
         self
@@ -39,27 +39,27 @@ impl TlErrBuilder {
         self
     }
 
-    pub fn build(self) -> TlErr {
-        TlErr {
+    pub fn build(self) -> TfErr {
+        TfErr {
             message: self.message,
             span: self.span,
         }
     }
 
-    pub fn build_errs(self) -> TlErrs {
-        TlErrs(vec![self.build()])
+    pub fn build_errs(self) -> TfErrs {
+        TfErrs(vec![self.build()])
     }
 }
 
-pub type TlResult<T> = Result<T, TlErrs>;
+pub type TfResult<T> = Result<T, TfErrs>;
 
-struct TlCtx<'src> {
+struct TfCtx<'src> {
     source: &'src str,
 }
 
-impl<'src> TlCtx<'src> {
-    fn new(source: &'src str) -> TlResult<Self> {
-        Ok(TlCtx { source })
+impl<'src> TfCtx<'src> {
+    fn new(source: &'src str) -> TfResult<Self> {
+        Ok(TfCtx { source })
     }
 
     fn linecol(&self, cursor: usize) -> (usize, usize) {
@@ -79,26 +79,26 @@ impl<'src> TlCtx<'src> {
 }
 
 struct PyBlockWithFinal<'src> {
-    stmts: SPyStmts<'src>,
+    stmts: PyBlock<'src>,
     final_expr: Option<SPyExpr<'src>>,
 }
 
 struct PyExprWithPre<'src> {
-    pre_stmts: SPyStmts<'src>,
+    pre_stmts: PyBlock<'src>,
     expr: SPyExpr<'src>,
 }
 
 trait SBlockExt<'src> {
-    fn transform_with_final_stmt<'ast>(&'ast self, ctx: &TlCtx<'src>) -> TlResult<SPyStmts<'src>>;
+    fn transform_with_final_stmt<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyBlock<'src>>;
 
     fn transform_with_final_expr<'ast>(
         &'ast self,
-        ctx: &TlCtx<'src>,
-    ) -> TlResult<PyBlockWithFinal<'src>>;
+        ctx: &TfCtx<'src>,
+    ) -> TfResult<PyBlockWithFinal<'src>>;
 }
 
 impl<'src> SBlockExt<'src> for SBlock<'src> {
-    fn transform_with_final_stmt<'ast>(&'ast self, ctx: &TlCtx<'src>) -> TlResult<SPyStmts<'src>> {
+    fn transform_with_final_stmt<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyBlock<'src>> {
         let (block, span) = self;
 
         match block {
@@ -121,9 +121,9 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
                 }
 
                 if ok {
-                    return Ok(t_stmts);
+                    return Ok(PyBlock(t_stmts));
                 } else {
-                    return Err(TlErrs(errs));
+                    return Err(TfErrs(errs));
                 }
             }
             Block::Expr(sexpr) => {
@@ -139,20 +139,20 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
 
     fn transform_with_final_expr<'ast>(
         &'ast self,
-        ctx: &TlCtx<'src>,
-    ) -> TlResult<PyBlockWithFinal<'src>> {
-        let (block, span) = self;
+        ctx: &TfCtx<'src>,
+    ) -> TfResult<PyBlockWithFinal<'src>> {
+        let (block, _span) = self;
 
         match block {
             Block::Stmts(stmts) => {
                 if stmts.is_empty() {
                     return Ok(PyBlockWithFinal {
-                        stmts: vec![],
+                        stmts: PyBlock::new(),
                         final_expr: None,
                     });
                 }
 
-                let mut t_stmts = Vec::new();
+                let mut t_stmts = PyBlock::new();
                 let mut errs = Vec::new();
                 let mut ok = true;
 
@@ -201,7 +201,7 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
                         final_expr: final_expr,
                     })
                 } else {
-                    Err(TlErrs(errs))
+                    Err(TfErrs(errs))
                 }
             }
             Block::Expr(sexpr) => {
@@ -216,12 +216,12 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
     }
 }
 
-fn generate_list_destructure_ast<'src, 'ast>(
-    ctx: &TlCtx<'src>,
+fn destructure_list<'src, 'ast>(
+    ctx: &TfCtx<'src>,
     target: &'ast SExpr<'src>,
     items: &'ast [ListItem<'src>],
     decl_only: bool,
-) -> TlResult<(SPyStmts<'src>, SPyExpr<'src>)> {
+) -> TfResult<(PyBlock<'src>, SPyExpr<'src>)> {
     let cursor_var = ctx.temp_var_name("des_curs", target.1.start);
     let list_var = ctx.temp_var_name("des_list", target.1.start);
     let len_var = ctx.temp_var_name("des_len", target.1.start);
@@ -231,7 +231,7 @@ fn generate_list_destructure_ast<'src, 'ast>(
 
     let a = PyAstBuilder::new(target.1);
 
-    let mut stmts = vec![
+    let mut stmts = PyBlock(vec![
         a.assign(
             a.ident(list_var.clone()),
             a.call(
@@ -243,7 +243,7 @@ fn generate_list_destructure_ast<'src, 'ast>(
             a.ident(len_var.clone()),
             a.call(a.ident("len"), vec![a.call_arg(a.ident(list_var.clone()))]),
         ),
-    ];
+    ]);
 
     let mut post_stmts = vec![];
 
@@ -257,7 +257,7 @@ fn generate_list_destructure_ast<'src, 'ast>(
     for item in items.iter() {
         match item {
             ListItem::Item(expr) => {
-                let item_bindings = make_destructure_bindings(ctx, expr, decl_only)?;
+                let item_bindings = destructure(ctx, expr, decl_only)?;
                 post_stmts.extend(item_bindings.post_stmts);
 
                 stmts.push(
@@ -280,14 +280,14 @@ fn generate_list_destructure_ast<'src, 'ast>(
             }
             ListItem::Spread(expr) => {
                 if seen_spread {
-                    return Err(TlErrBuilder::default()
+                    return Err(TfErrBuilder::default()
                         .message("Destructuring assignment with multiple spreads is not allowed")
                         .span(target.1)
                         .build_errs());
                 }
                 seen_spread = true;
 
-                let item_bindings = make_destructure_bindings(ctx, expr, decl_only)?;
+                let item_bindings = destructure(ctx, expr, decl_only)?;
                 post_stmts.extend(item_bindings.post_stmts);
 
                 stmts.push(a.assign(
@@ -314,24 +314,24 @@ fn generate_list_destructure_ast<'src, 'ast>(
     Ok((stmts, a.ident(cursor_var).clone()))
 }
 
-fn generate_mapping_destructure_ast<'src, 'ast>(
-    ctx: &TlCtx<'src>,
+fn destructure_mapping<'src, 'ast>(
+    ctx: &TfCtx<'src>,
     target: &'ast SExpr<'src>,
     items: &'ast [MappingItem<'src>],
     decl_only: bool,
-) -> TlResult<(SPyStmts<'src>, SPyExpr<'src>)> {
+) -> TfResult<(PyBlock<'src>, SPyExpr<'src>)> {
     let cursor_var = ctx.temp_var_name("des_curs", target.1.start);
     let dict_var = ctx.temp_var_name("des_dict", target.1.start);
 
     // dict_var = dict(cursor_var)
     let a = PyAstBuilder::new(target.1);
-    let mut stmts = vec![a.assign(
+    let mut stmts = PyBlock(vec![a.assign(
         a.ident(dict_var.clone()),
         a.call(
             a.ident("dict"),
             vec![a.call_arg(a.ident(cursor_var.clone()))],
         ),
-    )];
+    )]);
 
     let mut post_stmts = vec![];
 
@@ -343,7 +343,7 @@ fn generate_mapping_destructure_ast<'src, 'ast>(
     for item in items.iter() {
         match item {
             MappingItem::Item(key, expr) => {
-                let item_bindings = make_destructure_bindings(ctx, expr, decl_only)?;
+                let item_bindings = destructure(ctx, expr, decl_only)?;
                 let key_node = key.transform(ctx)?;
                 post_stmts.extend(key_node.pre_stmts);
                 post_stmts.extend(item_bindings.post_stmts);
@@ -358,7 +358,7 @@ fn generate_mapping_destructure_ast<'src, 'ast>(
             }
             MappingItem::Spread(expr) => {
                 if spread_var.is_some() {
-                    return Err(TlErrBuilder::default()
+                    return Err(TfErrBuilder::default()
                         .message("Destructuring assignment with multiple spreads is not allowed")
                         .span(target.1)
                         .build_errs());
@@ -383,15 +383,15 @@ fn generate_mapping_destructure_ast<'src, 'ast>(
 
 struct DestructureBindings<'a> {
     assign_to: SPyExpr<'a>,
-    post_stmts: SPyStmts<'a>,
+    post_stmts: PyBlock<'a>,
 }
 
-fn make_destructure_bindings<'src, 'ast>(
-    ctx: &TlCtx<'src>,
+fn destructure<'src, 'ast>(
+    ctx: &TfCtx<'src>,
     target: &'ast SExpr<'src>,
     decl_only: bool,
-) -> TlResult<DestructureBindings<'src>> {
-    let mut post_stmts = vec![];
+) -> TfResult<DestructureBindings<'src>> {
+    let mut post_stmts = PyBlock::new();
 
     let assign_to: SPyExpr<'src>;
     match &target.0 {
@@ -400,7 +400,7 @@ fn make_destructure_bindings<'src, 'ast>(
                 match &target.0 {
                     Expr::Ident(_) => {}
                     _ => {
-                        return Err(TlErrBuilder::default()
+                        return Err(TfErrBuilder::default()
                             .message("Destructuring assignment target must be an identifier")
                             .span(target.1)
                             .build_errs());
@@ -414,19 +414,19 @@ fn make_destructure_bindings<'src, 'ast>(
             assign_to = target_node.expr;
         }
         Expr::List(items) => {
-            let (block, cursor) = generate_list_destructure_ast(ctx, target, items, decl_only)?;
+            let (block, cursor) = destructure_list(ctx, target, items, decl_only)?;
 
             post_stmts.extend(block);
             assign_to = cursor;
         }
         Expr::Mapping(items) => {
-            let (block, cursor) = generate_mapping_destructure_ast(ctx, target, items, decl_only)?;
+            let (block, cursor) = destructure_mapping(ctx, target, items, decl_only)?;
 
             post_stmts.extend(block);
             assign_to = cursor;
         }
         _ => {
-            return Err(TlErrBuilder::default()
+            return Err(TfErrBuilder::default()
                 .message("Destructuring assignment target is not allowed")
                 .span(target.1)
                 .build_errs());
@@ -440,11 +440,11 @@ fn make_destructure_bindings<'src, 'ast>(
 }
 
 trait SStmtExt<'src> {
-    fn transform<'ast>(&'ast self, ctx: &TlCtx<'src>) -> TlResult<SPyStmts<'src>>;
+    fn transform<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyBlock<'src>>;
 }
 
 impl<'src> SStmtExt<'src> for SStmt<'src> {
-    fn transform<'ast>(&'ast self, ctx: &TlCtx<'src>) -> TlResult<SPyStmts<'src>> {
+    fn transform<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyBlock<'src>> {
         let (stmt, span) = self;
 
         match &stmt {
@@ -485,7 +485,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 Ok(stmts)
             }
             Stmt::Assign(target, value) => {
-                if let (Expr::Ident((ident, ident_span)), Expr::Fn(arglist, body)) =
+                if let (Expr::Ident((ident, _ident_span)), Expr::Fn(arglist, body)) =
                     (&target.0, &value.0)
                 {
                     return make_fndef_stmts(
@@ -497,7 +497,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     );
                 }
 
-                if let (Expr::Ident((ident, ident_span)), Expr::Class(bases, body)) =
+                if let (Expr::Ident((ident, _ident_span)), Expr::Class(bases, body)) =
                     (&target.0, &value.0)
                 {
                     return make_classdef_stmts(ctx, (*ident).into(), &bases, &body, span);
@@ -505,7 +505,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                 let value_node = value.transform(ctx)?;
                 let mut stmts = value_node.pre_stmts;
-                let destructure = make_destructure_bindings(ctx, target, false)?;
+                let destructure = destructure(ctx, target, false)?;
                 stmts.push(
                     (
                         PyStmt::Assign(destructure.assign_to, value_node.expr),
@@ -520,12 +520,12 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
             Stmt::Global(names) => {
                 let names: Vec<_> = names.iter().map(|name| name.0.into()).collect();
 
-                Ok(vec![(PyStmt::Global(names), *span).into()])
+                Ok(PyBlock(vec![(PyStmt::Global(names), *span).into()]))
             }
             Stmt::Nonlocal(names) => {
                 let names: Vec<_> = names.iter().map(|name| name.0.into()).collect();
 
-                Ok(vec![(PyStmt::Nonlocal(names), *span).into()])
+                Ok(PyBlock(vec![(PyStmt::Nonlocal(names), *span).into()]))
             }
             Stmt::Raise(expr) => {
                 let expr_node = expr.transform(ctx)?;
@@ -539,20 +539,24 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 let target: &SExpr<'src> = target;
 
                 if let Expr::Ident((ident, _)) = &target.0 {
+                    // TODO unpacking
+
                     let iter_node: PyExprWithPre<'src> = iter.transform(ctx)?;
                     let aux_stmts = iter_node.pre_stmts;
 
-                    let body_block: Vec<SPyStmt<'src>> = body.transform_with_final_stmt(ctx)?;
-
-                    Ok(vec![
+                    let body_block: PyBlock<'src> = body.transform_with_final_stmt(ctx)?;
+                    let mut block = aux_stmts;
+                    block.push(
                         (
                             PyStmt::For((*ident).into(), iter_node.expr, body_block),
                             *span,
                         )
                             .into(),
-                    ])
+                    );
+
+                    Ok(block)
                 } else {
-                    Err(TlErrBuilder::default()
+                    Err(TfErrBuilder::default()
                         .message("for loop target must be an identifier".to_owned())
                         .span(*span)
                         .build_errs())
@@ -562,13 +566,13 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 let cond_node = cond.transform(ctx)?;
                 let body_block = body.transform_with_final_stmt(ctx)?;
 
-                let mut stmts = vec![];
+                let mut stmts = PyBlock::new();
 
                 let cond: SPyExpr<'src> = if cond_node.pre_stmts.is_empty() {
                     cond_node.expr
                 } else {
                     let cond_name = ctx.temp_var_name("whilecond", span.start);
-                    let aux_fn: Vec<SPyStmt<'src>> = make_fndef_stmts(
+                    let aux_fn: PyBlock<'src> = make_fndef_stmts(
                         ctx,
                         cond_name.clone().into(),
                         &vec![],
@@ -599,7 +603,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     .map(|f| f.transform_with_final_stmt(ctx))
                     .transpose()?;
 
-                let mut stmts = vec![];
+                let mut stmts = PyBlock::new();
                 let mut excepts_ast = vec![];
 
                 for except in excepts {
@@ -632,8 +636,8 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                 Ok(stmts)
             }
-            Stmt::Break => Ok(vec![(PyStmt::Break, *span).into()]),
-            Stmt::Continue => Ok(vec![(PyStmt::Continue, *span).into()]),
+            Stmt::Break => Ok(PyBlock(vec![(PyStmt::Break, *span).into()])),
+            Stmt::Continue => Ok(PyBlock(vec![(PyStmt::Continue, *span).into()])),
             Stmt::Import(import_stmt) => {
                 let mut aliases = vec![];
                 let mut base_module = None;
@@ -664,19 +668,18 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 }
 
                 if let Some(base_module) = base_module {
-                    Ok(vec![
+                    Ok(PyBlock(vec![
                         (PyStmt::ImportFrom(base_module.into(), aliases), *span).into(),
-                    ])
+                    ]))
                 } else {
-                    // For simple imports, we need to convert to Import statements
-                    let mut stmts = vec![];
+                    let mut stmts = PyBlock::new();
                     for alias in aliases {
                         stmts.push((PyStmt::Import(alias), *span).into());
                     }
                     Ok(stmts)
                 }
             }
-            Stmt::Err => Err(TlErrBuilder::default()
+            Stmt::Err => Err(TfErrBuilder::default()
                 .message("unexpected statement error (should have been caught in lexer)".to_owned())
                 .span(*span)
                 .build_errs()),
@@ -685,12 +688,12 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 }
 
 fn transform_if_stmt<'src, 'ast>(
-    ctx: &TlCtx<'src>,
+    ctx: &TfCtx<'src>,
     cond: &'ast SExpr<'src>,
     then_block: &'ast SBlock<'src>,
     else_block: &'ast Option<Box<SBlock<'src>>>,
     span: &Span,
-) -> TlResult<SPyStmts<'src>> {
+) -> TfResult<PyBlock<'src>> {
     let mut stmts = vec![];
 
     let cond = cond.transform(ctx)?;
@@ -706,18 +709,18 @@ fn transform_if_stmt<'src, 'ast>(
         else_block_ast = Some(else_block);
     }
 
-    Ok(vec![
+    Ok(PyBlock(vec![
         (PyStmt::If(cond.expr, then_block_ast, else_block_ast), *span).into(),
-    ])
+    ]))
 }
 
 fn transform_if_expr<'src, 'ast>(
-    ast: &TlCtx<'src>,
+    ast: &TfCtx<'src>,
     cond: &'ast SExpr<'src>,
     then_block: &'ast SBlock<'src>,
     else_block: &'ast Option<Box<SBlock<'src>>>,
     span: &Span,
-) -> TlResult<PyExprWithPre<'src>> {
+) -> TfResult<PyExprWithPre<'src>> {
     let cond = cond.transform(ast)?;
     let mut aux_stmts = cond.pre_stmts;
 
@@ -730,14 +733,14 @@ fn transform_if_expr<'src, 'ast>(
     if let Some(final_expr) = final_expr {
         then_block_ast.push((PyStmt::Assign(ret_var.clone(), final_expr), *span).into());
     } else {
-        return Err(TlErrBuilder::default()
+        return Err(TfErrBuilder::default()
             .message("then block must have a final expression")
             .span(then_block.1)
             .build_errs());
     }
 
     let else_block = else_block.as_ref().ok_or_else(|| {
-        TlErrBuilder::default()
+        TfErrBuilder::default()
             .message("else block is required in an if-expr")
             .span(*span)
             .build_errs()
@@ -748,7 +751,7 @@ fn transform_if_expr<'src, 'ast>(
     if let Some(final_expr) = final_expr {
         else_block_ast.push((PyStmt::Assign(ret_var.clone(), final_expr), *span).into());
     } else {
-        return Err(TlErrBuilder::default()
+        return Err(TfErrBuilder::default()
             .message("else block must have a final expression")
             .span(else_block.1)
             .build_errs());
@@ -769,11 +772,11 @@ fn transform_if_expr<'src, 'ast>(
 }
 
 fn transform_match_stmt<'src, 'ast>(
-    ast: &TlCtx<'src>,
+    ast: &TfCtx<'src>,
     subject: &'ast SExpr<'src>,
     cases: &'ast [(SExpr<'src>, Box<SBlock<'src>>)],
     span: &Span,
-) -> TlResult<SPyStmts<'src>> {
+) -> TfResult<PyBlock<'src>> {
     let subject = subject.transform(ast)?;
     let mut aux_stmts = subject.pre_stmts;
 
@@ -796,11 +799,11 @@ fn transform_match_stmt<'src, 'ast>(
 }
 
 fn transform_match_expr<'src, 'ast>(
-    ast: &TlCtx<'src>,
+    ast: &TfCtx<'src>,
     subject: &'ast SExpr<'src>,
     cases: &'ast [(SExpr<'src>, Box<SBlock<'src>>)],
     span: &Span,
-) -> TlResult<PyExprWithPre<'src>> {
+) -> TfResult<PyExprWithPre<'src>> {
     let subject = subject.transform(ast)?;
     let mut aux_stmts = subject.pre_stmts;
 
@@ -834,13 +837,13 @@ fn transform_match_expr<'src, 'ast>(
 }
 
 fn make_classdef_stmts<'src, 'ast>(
-    ast: &TlCtx<'src>,
+    ast: &TfCtx<'src>,
     name: Cow<'src, str>,
     bases: &'ast Vec<SCallItem<'src>>,
     body: &'ast Box<SBlock<'src>>,
     span: &Span,
-) -> TlResult<SPyStmts<'src>> {
-    let mut stmts: Vec<SPyStmt<'src>> = vec![];
+) -> TfResult<PyBlock<'src>> {
+    let mut stmts = PyBlock::new();
     let mut bases_nodes: Vec<PyCallItem<'src>> = vec![];
 
     let block = body.transform_with_final_stmt(ast)?;
@@ -858,7 +861,7 @@ fn make_classdef_stmts<'src, 'ast>(
                 PyCallItem::Kwarg(name.0.into(), expr_node.expr)
             }
             _ => {
-                return Err(TlErrBuilder::default()
+                return Err(TfErrBuilder::default()
                     .message("spread args are not allowed in class bases")
                     .span(*span)
                     .build_errs());
@@ -874,19 +877,19 @@ fn make_classdef_stmts<'src, 'ast>(
 }
 
 enum FnDefBody<'src, 'ast> {
-    PyStmts(SPyStmts<'src>),
+    PyStmts(PyBlock<'src>),
     Block(&'ast SBlock<'src>),
 }
 
 fn make_fndef_stmts<'src, 'ast>(
-    ctx: &TlCtx<'src>,
+    ctx: &TfCtx<'src>,
     name: Cow<'src, str>,
     arglist: &'ast [ArgItem<'src>],
     body: FnDefBody<'src, 'ast>,
     span: &Span,
-) -> TlResult<SPyStmts<'src>> {
+) -> TfResult<PyBlock<'src>> {
     let mut args = vec![];
-    let mut aux_stmts = vec![];
+    let mut aux_stmts = PyBlock::new();
 
     for arg in arglist {
         let new_arg = match arg {
@@ -924,11 +927,11 @@ fn make_fndef_stmts<'src, 'ast>(
 }
 
 trait SExprExt<'src> {
-    fn transform<'ast>(&'ast self, ctx: &TlCtx<'src>) -> TlResult<PyExprWithPre<'src>>;
+    fn transform<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyExprWithPre<'src>>;
 }
 
 impl<'src> SExprExt<'src> for SExpr<'src> {
-    fn transform<'ast>(&'ast self, ctx: &TlCtx<'src>) -> TlResult<PyExprWithPre<'src>> {
+    fn transform<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyExprWithPre<'src>> {
         let (expr, span) = self;
 
         match &expr {
@@ -968,12 +971,12 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                 Ok(PyExprWithPre {
                     expr: value,
-                    pre_stmts: vec![],
+                    pre_stmts: PyBlock::new(),
                 })
             }
             Expr::Ident((ident, span)) => Ok(PyExprWithPre {
                 expr: (PyExpr::Name(Cow::Borrowed(ident)), *span).into(),
-                pre_stmts: vec![],
+                pre_stmts: PyBlock::new(),
             }),
             Expr::Attribute(obj, attr) => {
                 let obj = obj.transform(ctx)?;
@@ -1000,7 +1003,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                             aux_stmts.extend(e.pre_stmts);
                             call_items.push(PyCallItem::Arg(e.expr));
                         }
-                        CallItem::Kwarg((name, name_span), expr) => {
+                        CallItem::Kwarg((name, _name_span), expr) => {
                             let e = expr.transform(ctx)?;
                             aux_stmts.extend(e.pre_stmts);
                             call_items.push(PyCallItem::Kwarg((*name).into(), e.expr));
@@ -1025,10 +1028,10 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             }
             Expr::Pipe(lhs, rhs) => {
                 let lhs = lhs.transform(ctx)?;
-                let mut rhs = rhs.transform(ctx)?;
+                let rhs = rhs.transform(ctx)?;
 
                 let mut aux_stmts = lhs.pre_stmts;
-                aux_stmts.append(&mut rhs.pre_stmts);
+                aux_stmts.extend(rhs.pre_stmts);
 
                 Ok(PyExprWithPre {
                     expr: (
@@ -1043,12 +1046,12 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 let obj = obj.transform(ctx)?;
                 let mut aux_stmts = obj.pre_stmts;
 
-                let processed_indices: TlResult<Vec<_>> = indices
+                let processed_indices: TfResult<Vec<_>> = indices
                     .into_iter()
                     .map(|index| match index {
                         ListItem::Spread(_expr) => {
                             // For now, let's not support spread in subscripts since it's complex
-                            Err(TlErrBuilder::default()
+                            Err(TfErrBuilder::default()
                                 .message("Spread in subscripts not yet supported")
                                 .span(*span)
                                 .build_errs())
@@ -1106,7 +1109,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                 Ok(PyExprWithPre {
                     expr: final_expr.ok_or_else(|| {
-                        TlErrBuilder::default()
+                        TfErrBuilder::default()
                             .message("block-expression must have a final expression")
                             .span(block.1)
                             .build_errs()
@@ -1133,10 +1136,10 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             }
             Expr::Binary(op, lhs, rhs) => {
                 let lhs = lhs.transform(ctx)?;
-                let mut rhs = rhs.transform(ctx)?;
+                let rhs = rhs.transform(ctx)?;
 
                 let mut aux_stmts = lhs.pre_stmts;
-                aux_stmts.append(&mut rhs.pre_stmts);
+                aux_stmts.extend(rhs.pre_stmts);
 
                 let py_op = match op {
                     BinaryOp::Add => Some(PyBinaryOp::Add),
@@ -1167,7 +1170,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                         pre_stmts: aux_stmts,
                     });
                 } else {
-                    return Err(TlErrBuilder::default()
+                    return Err(TfErrBuilder::default()
                         .message(format!("Unsupported binary operator: {:?}", op))
                         .span(*span)
                         .build_errs());
@@ -1190,7 +1193,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 });
             }
             Expr::List(exprs) => {
-                let mut aux_stmts = vec![];
+                let mut aux_stmts = PyBlock::new();
                 let mut items = vec![];
 
                 for expr in exprs {
@@ -1211,7 +1214,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 });
             }
             Expr::Mapping(items) => {
-                let mut aux_stmts = vec![];
+                let mut aux_stmts = PyBlock::new();
                 let mut dict_items = vec![];
 
                 for item in items {
@@ -1253,7 +1256,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     .map(|e| e.as_ref().transform(ctx))
                     .transpose()?;
 
-                let mut aux_stmts = vec![];
+                let mut aux_stmts = PyBlock::new();
 
                 let mut get = |x: Option<PyExprWithPre<'src>>| {
                     let expr = if let Some(x) = x {
@@ -1279,7 +1282,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 });
             }
             Expr::Fstr(begin, parts) => {
-                let mut aux_stmts = Vec::new();
+                let mut aux_stmts = PyBlock::new();
                 let mut nodes = Vec::new();
 
                 nodes.push(PyFstrPart::Str(begin.0.clone().into()));
@@ -1290,7 +1293,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     aux_stmts.extend(block_node.stmts);
 
                     let expr_node = block_node.final_expr.ok_or_else(|| {
-                        TlErrBuilder::default()
+                        TfErrBuilder::default()
                             .message("f-string expression must have a final expression")
                             .span(fmt_expr.1)
                             .build_errs()
@@ -1313,8 +1316,8 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 pub fn transform_ast<'src, 'ast>(
     source: &'src str,
     block: &'ast SBlock<'src>,
-) -> TlResult<SPyStmts<'src>> {
-    let ctx = TlCtx::new(source)?;
+) -> TfResult<PyBlock<'src>> {
+    let ctx = TfCtx::new(source)?;
     let stmts = block.transform_with_final_stmt(&ctx)?;
     Ok(stmts)
 }

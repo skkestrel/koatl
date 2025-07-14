@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(unused_variables, dead_code)]
 
 use chumsky::{
     input::{Cursor, InputRef, StrInput},
@@ -327,7 +327,7 @@ where
 
         self.parse_block_comment_begin()?;
 
-        while let Some(c) = self.peek() {
+        while let Some(_) = self.peek() {
             if self.try_parse(|x| x.parse_block_comment_end()).is_ok() {
                 return Ok(());
             }
@@ -764,10 +764,6 @@ where
                     })?;
 
                     tokens.extend(new_block.0);
-                    let end_span = Span::new(
-                        new_block_span.context,
-                        new_block_span.end..new_block_span.end,
-                    );
                 }
             }
 

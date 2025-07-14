@@ -14,19 +14,19 @@ pub struct PyImportAlias<'a> {
 pub struct PyExceptHandler<'a> {
     pub typ: Option<SPyExpr<'a>>,
     pub name: Option<PyIdent<'a>>,
-    pub body: Vec<SPyStmt<'a>>,
+    pub body: PyBlock<'a>,
 }
 
 #[derive(Debug, Clone)]
 pub struct PyMatchCase<'a> {
     pub pattern: SPyExpr<'a>,
-    pub body: Vec<SPyStmt<'a>>,
+    pub body: PyBlock<'a>,
 }
 
 #[derive(Debug, Clone)]
 pub enum PyStmt<'a> {
     Expr(SPyExpr<'a>),
-    If(SPyExpr<'a>, SPyStmts<'a>, Option<SPyStmts<'a>>),
+    If(SPyExpr<'a>, PyBlock<'a>, Option<PyBlock<'a>>),
     Match(SPyExpr<'a>, Vec<PyMatchCase<'a>>),
     Assign(SPyExpr<'a>, SPyExpr<'a>),
     Return(SPyExpr<'a>),
@@ -36,17 +36,67 @@ pub enum PyStmt<'a> {
     Nonlocal(Vec<PyIdent<'a>>),
     Import(PyImportAlias<'a>),
     ImportFrom(PyIdent<'a>, Vec<PyImportAlias<'a>>),
-    FnDef(PyIdent<'a>, Vec<PyArgDefItem<'a>>, SPyStmts<'a>),
-    ClassDef(PyIdent<'a>, Vec<PyCallItem<'a>>, SPyStmts<'a>),
-    While(SPyExpr<'a>, SPyStmts<'a>),
-    For(PyIdent<'a>, SPyExpr<'a>, SPyStmts<'a>),
-    Try(SPyStmts<'a>, Vec<PyExceptHandler<'a>>, Option<SPyStmts<'a>>),
+    FnDef(PyIdent<'a>, Vec<PyArgDefItem<'a>>, PyBlock<'a>),
+    ClassDef(PyIdent<'a>, Vec<PyCallItem<'a>>, PyBlock<'a>),
+    While(SPyExpr<'a>, PyBlock<'a>),
+    For(PyIdent<'a>, SPyExpr<'a>, PyBlock<'a>),
+    Try(PyBlock<'a>, Vec<PyExceptHandler<'a>>, Option<PyBlock<'a>>),
     Break,
     Continue,
 }
 
 pub type SPyStmt<'a> = PySpanned<PyStmt<'a>>;
-pub type SPyStmts<'a> = Vec<SPyStmt<'a>>;
+
+#[derive(Debug, Clone)]
+pub struct PyBlock<'a>(pub Vec<SPyStmt<'a>>);
+
+impl<'a> PyBlock<'a> {
+    pub fn new() -> Self {
+        PyBlock(Vec::new())
+    }
+
+    pub fn push(&mut self, stmt: SPyStmt<'a>) {
+        self.0.push(stmt);
+    }
+
+    pub fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = SPyStmt<'a>>,
+    {
+        self.0.extend(iter);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl<'a> From<PyBlock<'a>> for Vec<SPyStmt<'a>> {
+    fn from(block: PyBlock<'a>) -> Self {
+        block.0
+    }
+}
+
+impl<'a> IntoIterator for PyBlock<'a> {
+    type Item = SPyStmt<'a>;
+    type IntoIter = std::vec::IntoIter<SPyStmt<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> PyBlock<'a> {
+    pub fn iter(&self) -> std::slice::Iter<SPyStmt<'a>> {
+        self.0.iter()
+    }
+}
+
+impl<'a> std::iter::FromIterator<SPyStmt<'a>> for PyBlock<'a> {
+    fn from_iter<I: IntoIterator<Item = SPyStmt<'a>>>(iter: I) -> Self {
+        PyBlock(iter.into_iter().collect())
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum PyBinaryOp {
@@ -76,12 +126,6 @@ pub enum PyUnaryOp {
     Neg,
     Pos,
     Inv,
-}
-
-#[derive(Debug, Clone)]
-pub enum PyNameCtx {
-    Load,
-    Store,
 }
 
 #[derive(Debug, Clone)]
@@ -150,24 +194,7 @@ pub struct PySpanned<T> {
     pub py_span: Option<PySpan>,
 }
 
-#[derive(Debug, Clone)]
-pub struct PySpan {
-    pub start_line: usize,
-    pub start_col: usize,
-    pub end_line: usize,
-    pub end_col: usize,
-}
-
-impl PySpan {
-    pub fn inline(start_col: usize, end_col: usize) -> Self {
-        Self {
-            start_line: 0,
-            start_col,
-            end_line: 0,
-            end_col,
-        }
-    }
-}
+pub type PySpan = Span;
 
 impl<T> From<(T, Span)> for PySpanned<T> {
     fn from((value, tl_span): (T, Span)) -> Self {

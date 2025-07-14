@@ -1,3 +1,5 @@
+#![allow(unused_variables, dead_code)]
+
 use crate::py::ast::*;
 use parser::ast::Span;
 
@@ -57,7 +59,7 @@ impl PyAstBuilder {
         &self,
         name: impl Into<PyIdent<'src>>,
         args: Vec<PyArgDefItem<'src>>,
-        body: SPyStmts<'src>,
+        body: PyBlock<'src>,
     ) -> SPyStmt<'src> {
         (PyStmt::FnDef(name.into(), args, body), self.span).into()
     }
@@ -66,12 +68,12 @@ impl PyAstBuilder {
         &self,
         name: impl Into<PyIdent<'src>>,
         bases: Vec<PyCallItem<'src>>,
-        body: SPyStmts<'src>,
+        body: PyBlock<'src>,
     ) -> SPyStmt<'src> {
         (PyStmt::ClassDef(name.into(), bases, body), self.span).into()
     }
 
-    pub fn while_<'src>(&self, test: SPyExpr<'src>, body: SPyStmts<'src>) -> SPyStmt<'src> {
+    pub fn while_<'src>(&self, test: SPyExpr<'src>, body: PyBlock<'src>) -> SPyStmt<'src> {
         (PyStmt::While(test, body), self.span).into()
     }
 
@@ -79,7 +81,7 @@ impl PyAstBuilder {
         &self,
         target: impl Into<PyIdent<'src>>,
         iter: SPyExpr<'src>,
-        body: SPyStmts<'src>,
+        body: PyBlock<'src>,
     ) -> SPyStmt<'src> {
         (PyStmt::For(target.into(), iter, body), self.span).into()
     }
@@ -87,8 +89,8 @@ impl PyAstBuilder {
     pub fn if_<'src>(
         &self,
         test: SPyExpr<'src>,
-        body: SPyStmts<'src>,
-        orelse: Option<SPyStmts<'src>>,
+        body: PyBlock<'src>,
+        orelse: Option<PyBlock<'src>>,
     ) -> SPyStmt<'src> {
         (PyStmt::If(test, body, orelse), self.span).into()
     }
@@ -103,9 +105,9 @@ impl PyAstBuilder {
 
     pub fn try_<'src>(
         &self,
-        body: SPyStmts<'src>,
+        body: PyBlock<'src>,
         handlers: Vec<PyExceptHandler<'src>>,
-        finally: Option<SPyStmts<'src>>,
+        finally: Option<PyBlock<'src>>,
     ) -> SPyStmt<'src> {
         (PyStmt::Try(body, handlers, finally), self.span).into()
     }
@@ -299,7 +301,7 @@ impl PyAstBuilder {
         &self,
         typ: Option<SPyExpr<'src>>,
         name: Option<impl Into<PyIdent<'src>>>,
-        body: SPyStmts<'src>,
+        body: PyBlock<'src>,
     ) -> PyExceptHandler<'src> {
         PyExceptHandler {
             typ,
@@ -312,7 +314,7 @@ impl PyAstBuilder {
     pub fn match_case<'src>(
         &self,
         pattern: SPyExpr<'src>,
-        body: SPyStmts<'src>,
+        body: PyBlock<'src>,
     ) -> PyMatchCase<'src> {
         PyMatchCase { pattern, body }
     }

@@ -1,5 +1,3 @@
-#![allow(unused_variables)]
-
 pub mod ast;
 mod lexer;
 mod parser;
