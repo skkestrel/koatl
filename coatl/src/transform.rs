@@ -1010,6 +1010,8 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     Literal::Str(s) => {
                         (PyExpr::Literal(PyLiteral::Str(s.to_owned())), *span).into()
                     }
+                    Literal::Bool(b) => (PyExpr::Literal(PyLiteral::Bool(*b)), *span).into(),
+                    Literal::None => (PyExpr::Literal(PyLiteral::None), *span).into(),
                 };
 
                 Ok(PyExprWithPre {

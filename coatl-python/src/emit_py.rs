@@ -1,0 +1,558 @@
+use coatl::py::ast::*;
+use parser::ast::*;
+
+use pyo3::{
+    call::PyCallArgs,
+    prelude::*,
+    types::{PyDict, PyList},
+};
+
+#[derive(Debug)]
+pub struct PyTlErr {
+    pub message: String,
+    pub py_err: Option<PyErr>,
+    pub span: Option<Span>,
+}
+
+impl From<PyErr> for PyTlErr {
+    fn from(err: PyErr) -> Self {
+        PyTlErr {
+            message: err.to_string(),
+            py_err: Some(err),
+            span: None,
+        }
+    }
+}
+
+pub type PyTlResult<T> = Result<T, PyTlErr>;
+
+struct PyCtx<'py, 'src> {
+    py: Python<'py>,
+    source: &'src str,
+    ast_module: Bound<'py, PyModule>,
+}
+
+impl<'py, 'src> PyCtx<'py, 'src> {
+    fn new(py: Python<'py>, source: &'src str) -> PyTlResult<Self> {
+        let ast_module = py.import("ast")?;
+
+        Ok(PyCtx {
+            py,
+            source,
+            ast_module,
+        })
+    }
+
+    fn linecol(&self, cursor: usize) -> (usize, usize) {
+        let line = self.source[..cursor].lines().count();
+        let col = self.source[..cursor]
+            .lines()
+            .last()
+            .map_or(0, |line| line.len());
+
+        (line, col)
+    }
+
+    fn ast_cls<A>(&self, name: &str, args: A) -> PyTlResult<PyObject>
+    where
+        A: PyCallArgs<'py>,
+    {
+        let node = self.ast_module.call_method1(name, args)?;
+
+        Ok(node.unbind())
+    }
+
+    fn ast_node<A>(&self, name: &str, args: A, span: &Span) -> PyTlResult<PyObject>
+    where
+        A: PyCallArgs<'py>,
+    {
+        let node = self
+            .ast_module
+            .call_method1(name, args)
+            .map_err(|e| PyTlErr {
+                message: format!("Failed to create AST node {}: {}", name, e),
+                py_err: Some(e),
+                span: Some(*span),
+            })?;
+
+        let (line, col) = self.linecol(span.start);
+        node.setattr("lineno", line)?;
+        node.setattr("col_offset", col)?;
+        let (line, col) = self.linecol(span.end);
+        node.setattr("end_lineno", line)?;
+        node.setattr("end_col_offset", col)?;
+
+        Ok(node.unbind())
+    }
+
+    fn ast_node_unspanned<A>(&self, name: &str, args: A) -> PyTlResult<PyObject>
+    where
+        A: PyCallArgs<'py>,
+    {
+        let node = self.ast_module.call_method1(name, args)?;
+
+        Ok(node.unbind())
+    }
+}
+
+trait PyBlockExt<'src> {
+    fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<Py<PyList>>;
+}
+
+impl<'src> PyBlockExt<'src> for PyBlock<'src> {
+    fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<Py<PyList>> {
+        let stmts: Vec<_> = self
+            .0
+            .iter()
+            .map(|stmt| stmt.emit_py(ctx))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(PyList::new(ctx.py, stmts)?.unbind())
+    }
+}
+
+trait PyStmtExt<'src> {
+    fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject>;
+}
+
+impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
+    fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject> {
+        match &self.value {
+            PyStmt::Expr(expr) => ctx.ast_node("Expr", (expr.emit_py(ctx)?,), &self.tl_span),
+            PyStmt::If(cond, then_block, else_block) => {
+                let cond_ast = cond.emit_py(ctx)?;
+                let then_ast = then_block.emit_py(ctx)?;
+                let else_ast = else_block
+                    .as_ref()
+                    .map(|b| b.emit_py(ctx))
+                    .transpose()?
+                    .unwrap_or_else(|| PyList::empty(ctx.py).unbind());
+                ctx.ast_node("If", (cond_ast, then_ast, else_ast), &self.tl_span)
+            }
+            PyStmt::Match(subject, cases) => {
+                let subject_ast = subject.emit_py(ctx)?;
+                let cases_ast: Result<Vec<_>, _> = cases
+                    .iter()
+                    .map(|case| {
+                        let pattern_ast = case.pattern.emit_py(ctx)?;
+                        let body_ast = case.body.emit_py(ctx)?;
+                        ctx.ast_cls("match_case", (pattern_ast, ctx.py.None(), body_ast))
+                    })
+                    .collect();
+                ctx.ast_node("Match", (subject_ast, cases_ast?), &self.tl_span)
+            }
+            PyStmt::Assign(target, value) => {
+                let target_ast = target.emit_py(ctx)?;
+                let value_ast = value.emit_py(ctx)?;
+                ctx.ast_node("Assign", ([target_ast], value_ast), &self.tl_span)
+            }
+            PyStmt::Return(expr) => {
+                let expr_ast = expr.emit_py(ctx)?;
+                ctx.ast_node("Return", (expr_ast,), &self.tl_span)
+            }
+            PyStmt::Raise(expr) => {
+                let expr_ast = expr.emit_py(ctx)?;
+                ctx.ast_node("Raise", (expr_ast,), &self.tl_span)
+            }
+            PyStmt::Assert(test, msg) => {
+                let test_ast = test.emit_py(ctx)?;
+                let msg_ast = msg.as_ref().map(|m| m.emit_py(ctx)).transpose()?;
+                ctx.ast_node("Assert", (test_ast, msg_ast), &self.tl_span)
+            }
+            PyStmt::Global(names) => {
+                let names_list: Vec<&str> = names.iter().map(|n| n.as_ref()).collect();
+                ctx.ast_node("Global", (names_list,), &self.tl_span)
+            }
+            PyStmt::Nonlocal(names) => {
+                let names_list: Vec<&str> = names.iter().map(|n| n.as_ref()).collect();
+                ctx.ast_node("Nonlocal", (names_list,), &self.tl_span)
+            }
+            PyStmt::Import(alias) => {
+                let alias_ast = ctx.ast_cls("alias", (&alias.name, alias.as_name.as_deref()))?;
+                ctx.ast_node("Import", ([alias_ast],), &self.tl_span)
+            }
+            PyStmt::ImportFrom(module, items) => {
+                let aliases_ast: Result<Vec<_>, _> = items
+                    .iter()
+                    .map(|item| ctx.ast_cls("alias", (&item.name, item.as_name.as_deref())))
+                    .collect();
+                ctx.ast_node(
+                    "ImportFrom",
+                    (module.as_ref(), aliases_ast?, 0),
+                    &self.tl_span,
+                )
+            }
+            PyStmt::FnDef(name, args, body) => {
+                let mut py_args = Vec::new();
+                let mut py_defaults = Vec::new();
+                let mut vararg = None;
+                let mut kwarg = None;
+
+                for arg in args {
+                    match arg {
+                        PyArgDefItem::Arg(arg_name, default) => {
+                            let arg_ast = ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?;
+                            py_args.push(arg_ast);
+                            if let Some(default_expr) = default {
+                                py_defaults.push(default_expr.emit_py(ctx)?);
+                            }
+                        }
+                        PyArgDefItem::ArgSpread(arg_name) => {
+                            vararg = Some(ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?);
+                        }
+                        PyArgDefItem::KwargSpread(arg_name) => {
+                            kwarg = Some(ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?);
+                        }
+                    }
+                }
+
+                let arguments = ctx.ast_cls(
+                    "arguments",
+                    (
+                        Vec::<PyObject>::new(), // posonlyargs
+                        py_args,                // args
+                        vararg,                 // vararg
+                        Vec::<PyObject>::new(), // kwonlyargs
+                        Vec::<PyObject>::new(), // kw_defaults
+                        kwarg,                  // kwarg
+                        py_defaults,            // defaults
+                    ),
+                )?;
+
+                let body_ast = body.emit_py(ctx)?;
+                let decorators = Vec::<PyObject>::new();
+                ctx.ast_node(
+                    "FunctionDef",
+                    (name.as_ref(), arguments, body_ast, decorators),
+                    &self.tl_span,
+                )
+            }
+            PyStmt::ClassDef(name, bases, body) => {
+                let mut bases_ast = Vec::new();
+                let mut keywords_ast = Vec::new();
+
+                for base in bases {
+                    match base {
+                        PyCallItem::Arg(expr) => {
+                            bases_ast.push(expr.emit_py(ctx)?);
+                        }
+                        PyCallItem::Kwarg(kw_name, expr) => {
+                            let keyword =
+                                ctx.ast_cls("keyword", (kw_name.as_ref(), expr.emit_py(ctx)?))?;
+                            keywords_ast.push(keyword);
+                        }
+                        _ => {
+                            return Err(PyTlErr {
+                                message: "Unsupported call item in class definition".to_string(),
+                                py_err: None,
+                                span: Some(self.tl_span),
+                            });
+                        }
+                    }
+                }
+
+                let body_ast = body.emit_py(ctx)?;
+                let decorators = Vec::<PyObject>::new();
+                ctx.ast_node(
+                    "ClassDef",
+                    (name.as_ref(), bases_ast, keywords_ast, body_ast, decorators),
+                    &self.tl_span,
+                )
+            }
+            PyStmt::While(cond, body) => {
+                let cond_ast = cond.emit_py(ctx)?;
+                let body_ast = body.emit_py(ctx)?;
+                let orelse = Vec::<PyObject>::new();
+                ctx.ast_node("While", (cond_ast, body_ast, orelse), &self.tl_span)
+            }
+            PyStmt::For(target, iter, body) => {
+                let target_ast = ctx.ast_node(
+                    "Name",
+                    (target.as_ref(), ctx.ast_cls("Store", ())?),
+                    &self.tl_span,
+                )?;
+                let iter_ast = iter.emit_py(ctx)?;
+                let body_ast = body.emit_py(ctx)?;
+                let orelse = Vec::<PyObject>::new();
+                ctx.ast_node(
+                    "For",
+                    (target_ast, iter_ast, body_ast, orelse),
+                    &self.tl_span,
+                )
+            }
+            PyStmt::Try(body, handlers, finally_block) => {
+                let body_ast = body.emit_py(ctx)?;
+                let handlers_ast: Result<Vec<_>, _> = handlers
+                    .iter()
+                    .map(|handler| {
+                        let typ_ast = handler.typ.as_ref().map(|t| t.emit_py(ctx)).transpose()?;
+                        let name_ast: Option<String> = handler.name.as_deref().map(Into::into);
+                        let handler_body_ast = handler.body.emit_py(ctx)?;
+                        ctx.ast_cls("ExceptHandler", (typ_ast, name_ast, handler_body_ast))
+                    })
+                    .collect();
+                let finally_ast = finally_block.as_ref().map(|f| f.emit_py(ctx)).transpose()?;
+                ctx.ast_node("Try", (body_ast, handlers_ast?, finally_ast), &self.tl_span)
+            }
+            PyStmt::Break => ctx.ast_node("Break", (), &self.tl_span),
+            PyStmt::Continue => ctx.ast_node("Continue", (), &self.tl_span),
+        }
+    }
+}
+
+trait PyNameCtxExt {
+    fn emit_py(&self, ctx: &PyCtx<'_, '_>) -> PyTlResult<PyObject>;
+}
+
+impl PyNameCtxExt for PyNameCtx {
+    fn emit_py(&self, ctx: &PyCtx<'_, '_>) -> PyTlResult<PyObject> {
+        Ok(ctx.ast_cls(
+            match self {
+                PyNameCtx::Load => "Load",
+                PyNameCtx::Store => "Store",
+                PyNameCtx::Del => "Del",
+            },
+            (),
+        )?)
+    }
+}
+
+trait PyExprExt<'src> {
+    fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject>;
+}
+
+impl<'src> PyExprExt<'src> for SPyExpr<'src> {
+    fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject> {
+        Ok(match &self.value {
+            PyExpr::Literal(lit) => match lit {
+                PyLiteral::Num(num) => match num.parse::<i128>() {
+                    Ok(i) => ctx.ast_node("Constant", (i,), &self.tl_span)?,
+                    Err(_) => match num.parse::<f64>() {
+                        Ok(f) => ctx.ast_node("Constant", (f,), &self.tl_span)?,
+                        Err(_) => {
+                            return Err(PyTlErr {
+                                message: format!("Invalid number literal: {}", num),
+                                py_err: None,
+                                span: Some(self.tl_span),
+                            })
+                        }
+                    },
+                },
+                PyLiteral::Bool(b) => ctx.ast_node("Constant", (b,), &self.tl_span)?,
+                PyLiteral::Str(s) => ctx.ast_node("Constant", (s,), &self.tl_span)?,
+                PyLiteral::None => ctx.ast_node("Constant", (ctx.py.None(),), &self.tl_span)?,
+            },
+            PyExpr::Ident(ident, c) => {
+                ctx.ast_node("Name", (ident, c.emit_py(ctx)?), &self.tl_span)?
+            }
+            PyExpr::Binary(op, left, right) => {
+                let py_op_str = match op {
+                    PyBinaryOp::Add => Some("Add"),
+                    PyBinaryOp::Sub => Some("Sub"),
+                    PyBinaryOp::Mult => Some("Mult"),
+                    PyBinaryOp::Div => Some("Div"),
+                    PyBinaryOp::Mod => Some("Mod"),
+                    PyBinaryOp::Pow => Some("Pow"),
+                    _ => None,
+                };
+
+                if let Some(py_op_str) = py_op_str {
+                    return ctx.ast_node(
+                        "BinOp",
+                        (
+                            left.emit_py(ctx)?,
+                            ctx.ast_cls(py_op_str, ())?,
+                            right.emit_py(ctx)?,
+                        ),
+                        &self.tl_span,
+                    );
+                }
+
+                let py_cmp_op = match op {
+                    PyBinaryOp::Lt => Some("Lt"),
+                    PyBinaryOp::Gt => Some("Gt"),
+                    PyBinaryOp::Leq => Some("LtE"),
+                    PyBinaryOp::Geq => Some("GtE"),
+                    PyBinaryOp::Eq => Some("Eq"),
+                    PyBinaryOp::Neq => Some("NotEq"),
+                    PyBinaryOp::Is => Some("Is"),
+                    PyBinaryOp::Nis => Some("IsNot"),
+                    _ => None,
+                };
+
+                if let Some(py_cmp_op) = py_cmp_op {
+                    return Ok(ctx.ast_node(
+                        "Compare",
+                        (
+                            left.emit_py(ctx)?,
+                            [ctx.ast_cls(py_cmp_op, ())?],
+                            [right.emit_py(ctx)?],
+                        ),
+                        &self.tl_span,
+                    )?);
+                }
+
+                return Err(PyTlErr {
+                    message: format!("Unsupported binary operator: {:?}", op),
+                    py_err: None,
+                    span: Some(self.tl_span),
+                });
+            }
+            PyExpr::Fstr(parts) => {
+                let mut values = Vec::new();
+                for part in parts {
+                    match part {
+                        PyFstrPart::Str(s) => {
+                            values.push(ctx.ast_node("Constant", (s.as_ref(),), &self.tl_span)?);
+                        }
+                        PyFstrPart::Expr(expr, _format_spec) => {
+                            let expr_ast = expr.emit_py(ctx)?;
+                            values.push(ctx.ast_node(
+                                "FormattedValue",
+                                (expr_ast, -1, ctx.py.None()),
+                                &self.tl_span,
+                            )?);
+                        }
+                    }
+                }
+                ctx.ast_node("JoinedStr", (values,), &self.tl_span)?
+            }
+            PyExpr::Unary(op, expr) => {
+                let expr_ast = expr.emit_py(ctx)?;
+                let op_str = match op {
+                    PyUnaryOp::Not => "Not",
+                    PyUnaryOp::Neg => "USub",
+                    PyUnaryOp::Pos => "UAdd",
+                    PyUnaryOp::Inv => "Invert",
+                };
+                ctx.ast_node(
+                    "UnaryOp",
+                    (ctx.ast_cls(op_str, ())?, expr_ast),
+                    &self.tl_span,
+                )?
+            }
+            PyExpr::Call(func, args) => {
+                let func_ast = func.emit_py(ctx)?;
+                let mut py_args = Vec::new();
+                let mut py_keywords = Vec::new();
+
+                for arg in args {
+                    match arg {
+                        PyCallItem::Arg(expr) => {
+                            py_args.push(expr.emit_py(ctx)?);
+                        }
+                        PyCallItem::Kwarg(name, expr) => {
+                            let keyword =
+                                ctx.ast_cls("keyword", (name.as_ref(), expr.emit_py(ctx)?))?;
+                            py_keywords.push(keyword);
+                        }
+                        PyCallItem::ArgSpread(expr) => {
+                            let starred = ctx.ast_node(
+                                "Starred",
+                                (expr.emit_py(ctx)?, ctx.ast_cls("Load", ())?),
+                                &self.tl_span,
+                            )?;
+                            py_args.push(starred);
+                        }
+                        PyCallItem::KwargSpread(expr) => {
+                            let keyword =
+                                ctx.ast_cls("keyword", (ctx.py.None(), expr.emit_py(ctx)?))?;
+                            py_keywords.push(keyword);
+                        }
+                    }
+                }
+
+                ctx.ast_node("Call", (func_ast, py_args, py_keywords), &self.tl_span)?
+            }
+            PyExpr::Attribute(obj, attr, ctx_) => {
+                let obj_ast = obj.emit_py(ctx)?;
+                ctx.ast_node(
+                    "Attribute",
+                    (obj_ast, attr.as_ref(), ctx_.emit_py(ctx)?),
+                    &self.tl_span,
+                )?
+            }
+            PyExpr::Subscript(obj, index, ctx_) => {
+                let obj_ast = obj.emit_py(ctx)?;
+                let index_ast = index.emit_py(ctx)?;
+                ctx.ast_node(
+                    "Subscript",
+                    (obj_ast, index_ast, ctx_.emit_py(ctx)?),
+                    &self.tl_span,
+                )?
+            }
+            PyExpr::Tuple(items) => {
+                let mut elts = Vec::new();
+                for item in items {
+                    match item {
+                        PyTupleItem::Item(expr) => {
+                            elts.push(expr.emit_py(ctx)?);
+                        }
+                        PyTupleItem::Spread(expr) => {
+                            let starred = ctx.ast_node(
+                                "Starred",
+                                (expr.emit_py(ctx)?, ctx.ast_cls("Load", ())?),
+                                &self.tl_span,
+                            )?;
+                            elts.push(starred);
+                        }
+                    }
+                }
+                ctx.ast_node("Tuple", (elts, ctx.ast_cls("Load", ())?), &self.tl_span)?
+            }
+            PyExpr::Dict(items) => {
+                let mut keys = Vec::new();
+                let mut values = Vec::new();
+                for item in items {
+                    match item {
+                        PyDictItem::Item(key, value) => {
+                            keys.push(key.emit_py(ctx)?);
+                            values.push(value.emit_py(ctx)?);
+                        }
+                        PyDictItem::Spread(expr) => {
+                            keys.push(ctx.py.None().into());
+                            values.push(expr.emit_py(ctx)?);
+                        }
+                    }
+                }
+                ctx.ast_node("Dict", (keys, values), &self.tl_span)?
+            }
+            PyExpr::Slice(start, stop, step) => {
+                let start_ast = start.as_ref().map(|e| e.emit_py(ctx)).transpose()?;
+                let stop_ast = stop.as_ref().map(|e| e.emit_py(ctx)).transpose()?;
+                let step_ast = step.as_ref().map(|e| e.emit_py(ctx)).transpose()?;
+                ctx.ast_node("Slice", (start_ast, stop_ast, step_ast), &self.tl_span)?
+            }
+            PyExpr::Yield(expr) => {
+                let expr_ast = expr.emit_py(ctx)?;
+                ctx.ast_node("Yield", (expr_ast,), &self.tl_span)?
+            }
+            PyExpr::YieldFrom(expr) => {
+                let expr_ast = expr.emit_py(ctx)?;
+                ctx.ast_node("YieldFrom", (expr_ast,), &self.tl_span)?
+            }
+        })
+    }
+}
+
+pub fn emit_py(block: &PyBlock, source: &str) -> PyTlResult<PyObject> {
+    Python::with_gil(move |py| {
+        let ctx = PyCtx::new(py, source)?;
+        let stmts = block.emit_py(&ctx)?;
+
+        let root_node = ctx.ast_node_unspanned("Module", (stmts, PyList::empty(py)))?;
+
+        ctx.ast_module
+            .call_method1("fix_missing_locations", (&root_node,))?;
+
+        let dump_args = PyDict::new(ctx.py);
+        dump_args.set_item("indent", 4)?;
+
+        // let dump = ctx
+        //     .ast_module
+        //     .call_method("dump", (&root_node,), Some(&dump_args))?
+        //     .extract::<String>()?;
+
+        Ok(root_node)
+    })
+}

@@ -583,8 +583,8 @@ mod tests {
 
         let mut expr: SPyExpr = a.binary(
             PyBinaryOp::Mult,
-            a.ident("x"),
-            a.binary(PyBinaryOp::Add, a.ident("y"), a.ident("z")),
+            a.load_ident("x"),
+            a.binary(PyBinaryOp::Add, a.load_ident("y"), a.load_ident("z")),
         );
 
         let mut ctx = EmitCtx {

@@ -1,8 +1,10 @@
 import sys
 import os
-import subprocess
+import linecache
 from importlib.abc import MetaPathFinder, Loader
 from importlib.util import spec_from_loader
+
+from coatl._rs import transpile
 
 class TlFinder(MetaPathFinder):
     def find_spec(self, fullname, path, target=None):
@@ -26,17 +28,23 @@ class TlLoader(Loader):
         return None  # Use default module creation
 
     def exec_module(self, module):
-        try:
-            result = subprocess.run(
-                ["coatl", "trans", self.filepath],
-                capture_output=True,
-                text=True,
-                check=True
-            )
+        module.__file__ = self.filepath
 
-            exec(result.stdout, module.__dict__)
-        except Exception as e:
-            raise e from None
+        with open(self.filepath, 'r') as f:
+            source_code = f.read()
+
+        linecache.cache[self.filepath] = (
+            len(source_code),
+            None,
+            [line + '\n' for line in source_code.splitlines()],
+            self.filepath,
+        )
+
+        transpiled_code = transpile(source_code)
+        code = compile(transpiled_code, self.filepath, "exec")
+
+        exec(code, module.__dict__)
+
 
 def install_hook():
     sys.meta_path.insert(0, TlFinder())

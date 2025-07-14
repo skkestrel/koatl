@@ -74,6 +74,8 @@ pub type SStmt<'a> = Spanned<Stmt<'a>>;
 pub enum Literal<'a> {
     Num(Cow<'a, str>),
     Str(Cow<'a, str>),
+    Bool(bool),
+    None,
 }
 
 pub type SLiteral<'a> = Spanned<Literal<'a>>;

@@ -11,6 +11,7 @@ use crate::ast::{Span, Spanned};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token<'src> {
     Ident(&'src str),
+    None,
     Bool(bool),
     Str(String),
     FstrBegin(String),
@@ -29,6 +30,7 @@ pub struct TokenList<'src>(pub Vec<Spanned<Token<'src>>>);
 impl fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            Token::None => write!(f, "<none>"),
             Token::Bool(x) => write!(f, "<literal {x}>"),
             Token::Num(n) => write!(f, "<literal {n}>"),
             Token::Str(s) => write!(f, "<literal {s}>"),
@@ -204,6 +206,14 @@ where
         let ident = self.slice_since(&start);
         if self.keywords.contains(ident) {
             return Ok((Token::Kw(ident), self.span_since(&start)));
+        }
+
+        if ident == "True" {
+            return Ok((Token::Bool(true), self.span_since(&start)));
+        } else if ident == "False" {
+            return Ok((Token::Bool(false), self.span_since(&start)));
+        } else if ident == "None" {
+            return Ok((Token::None, self.span_since(&start)));
         }
 
         Ok((

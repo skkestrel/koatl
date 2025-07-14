@@ -109,6 +109,8 @@ where
     let literal = select! {
         Token::Num(s) => Literal::Num(Cow::Borrowed(s)),
         Token::Str(s) => Literal::Str(Cow::Owned(s)),
+        Token::Bool(s) => Literal::Bool(s),
+        Token::None => Literal::None
     }
     .spanned()
     .map(Expr::Literal)

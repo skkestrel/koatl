@@ -1,4 +1,4 @@
-pub mod emit;
+pub mod emit_py;
 
 use pyo3::prelude::*;
 
@@ -14,7 +14,7 @@ fn transpile(src: &str) -> PyResult<PyObject> {
         ))
     })?;
 
-    let py_ast_obj = emit::emit_py(&py_ast, src).map_err(|e| {
+    let py_ast_obj = emit_py::emit_py(&py_ast, src).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyException, _>(format!("Emission error: {}", e.message))
     })?;
 
