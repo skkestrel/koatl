@@ -10,5 +10,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = "0.25.0"
-parser = { path = "../parser" }
 coatl = { path = "../coatl" }

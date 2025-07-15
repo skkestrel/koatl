@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 ariadne = "0.5.1"
-parser = { path = "../parser" }
+parser = { path = "parser" }
 
 [dependencies.pyo3]
 version = "0.25.0"

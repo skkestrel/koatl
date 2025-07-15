@@ -76,7 +76,6 @@ name = "coatl-python"
 version = "0.1.0"
 dependencies = [
  "coatl",
- "parser",
  "pyo3",
 ]
 

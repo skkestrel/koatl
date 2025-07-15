@@ -3,7 +3,7 @@
 	"displayName": "quetzal",
 	"description": "Quetzal Language Server",
 	"version": "0.0.1",
-	"publisher": "Kouver Technologies",
+	"publisher": "coatl",
 	"engines": {
 		"vscode": "^1.102.0"
 	},
