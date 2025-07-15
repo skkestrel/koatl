@@ -4,6 +4,7 @@ pub mod transform;
 
 use parser::ast::{Block, Span};
 
+use crate::py::ast::{PyImportAlias, PyStmt};
 use crate::py::{ast::PyBlock, emit::EmitCtx};
 use crate::transform::transform_ast;
 use parser::{TokenList, parse_tokens, tokenize};
@@ -23,10 +24,10 @@ pub struct TlErr {
 
 pub type TlResult<T> = Result<T, Vec<TlErr>>;
 
-pub fn transpile_to_py_ast<'src>(src: &'src str) -> TlResult<PyBlock<'src>> {
+pub fn transpile_to_py_ast<'src>(src: &'src str, inject_prelude: bool) -> TlResult<PyBlock<'src>> {
     let tl_ast = parse_tl(src)?;
 
-    let py_ast: PyBlock<'src> = transform_ast(&src, &tl_ast).map_err(|e| {
+    let mut py_ast: PyBlock<'src> = transform_ast(&src, &tl_ast).map_err(|e| {
         e.0.into_iter()
             .map(|e| TlErr {
                 kind: TlErrKind::Transform,
@@ -37,11 +38,32 @@ pub fn transpile_to_py_ast<'src>(src: &'src str) -> TlResult<PyBlock<'src>> {
             .collect::<Vec<_>>()
     })?;
 
+    if inject_prelude {
+        py_ast.0.insert(
+            0,
+            (
+                PyStmt::ImportFrom(
+                    "coatl.prelude".into(),
+                    vec![PyImportAlias {
+                        name: "*".into(),
+                        as_name: None,
+                    }],
+                ),
+                Span {
+                    start: 0,
+                    end: 0,
+                    context: (),
+                },
+            )
+                .into(),
+        );
+    }
+
     Ok(py_ast)
 }
 
-pub fn transpile(src: &str) -> TlResult<String> {
-    let mut py_ast = transpile_to_py_ast(src)?;
+pub fn transpile(src: &str, inject_prelude: bool) -> TlResult<String> {
+    let mut py_ast = transpile_to_py_ast(src, inject_prelude)?;
 
     let mut ctx = EmitCtx {
         indentation: 0,

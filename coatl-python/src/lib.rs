@@ -2,9 +2,9 @@ pub mod emit_py;
 
 use pyo3::prelude::*;
 
-#[pyfunction]
-fn transpile(src: &str) -> PyResult<PyObject> {
-    let py_ast = coatl::transpile_to_py_ast(src).map_err(|e| {
+#[pyfunction(signature=(src, inject_prelude=true))]
+fn transpile(src: &str, inject_prelude: bool) -> PyResult<PyObject> {
+    let py_ast = coatl::transpile_to_py_ast(src, inject_prelude).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyException, _>(format!(
             "Transpilation error: {}",
             e.iter()

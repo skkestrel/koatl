@@ -1,1 +1,2 @@
-from ..iteration import *
+def id(x):
+    x

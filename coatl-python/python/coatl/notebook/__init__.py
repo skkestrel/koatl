@@ -7,12 +7,13 @@ import ast
 
 def source_code_transformer(lines):
     source = "".join(lines)
-    transformed_source = ast.unparse(transpile(source))
+    transformed_source = ast.unparse(transpile(source, inject_prelude=False))
 
     return [line + '\n' for line in transformed_source.splitlines()]
 
 
 def load_ipython_extension(ipython):
+    exec("from coatl.prelude import *", ipython.user_ns)
     print("coatl enabled")
     ttm = ipython.input_transformer_manager
     
