@@ -1,10 +1,30 @@
 pub mod emit_py;
 
+use coatl::TranspileOptions;
 use pyo3::prelude::*;
 
-#[pyfunction(signature=(src, inject_prelude=true))]
-fn transpile(src: &str, inject_prelude: bool) -> PyResult<PyObject> {
-    let py_ast = coatl::transpile_to_py_ast(src, inject_prelude).map_err(|e| {
+#[pyfunction(signature=(src))]
+fn transpile_interactive(src: &str) -> PyResult<PyObject> {
+    let py_ast = coatl::transpile_to_py_ast(src, TranspileOptions::interactive()).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyException, _>(format!(
+            "Transpilation error: {}",
+            e.iter()
+                .map(|err| err.message.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    })?;
+
+    let py_ast_obj = emit_py::emit_py(&py_ast, src).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyException, _>(format!("Emission error: {}", e.message))
+    })?;
+
+    Ok(py_ast_obj)
+}
+
+#[pyfunction(signature=(src))]
+fn transpile(src: &str) -> PyResult<PyObject> {
+    let py_ast = coatl::transpile_to_py_ast(src, TranspileOptions::default()).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyException, _>(format!(
             "Transpilation error: {}",
             e.iter()
@@ -24,5 +44,6 @@ fn transpile(src: &str, inject_prelude: bool) -> PyResult<PyObject> {
 #[pymodule(name = "_rs")]
 fn py_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(transpile, m)?)?;
+    m.add_function(wrap_pyfunction!(transpile_interactive, m)?)?;
     Ok(())
 }

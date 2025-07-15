@@ -54,6 +54,8 @@ pub struct ImportStmt<'a> {
 
     // number of dots prepending the trunk
     pub level: usize,
+
+    pub reexport: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +75,7 @@ pub enum AssignModifier {
 // TODO should these be cows
 #[derive(Debug, Clone)]
 pub enum Stmt<'a> {
+    Module,
     Assign(SExpr<'a>, SExpr<'a>, Vec<AssignModifier>),
     Return(SExpr<'a>),
     Expr(SExpr<'a>),

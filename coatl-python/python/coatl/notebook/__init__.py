@@ -1,13 +1,13 @@
 from IPython.core.magic import register_line_magic
 
-from coatl._rs import transpile
+from coatl._rs import transpile_interactive
 from .magic import coatl_cell_magic, CoatlSystemAssign, CoatlMagicAssign, CoatlEscapedCommand
 
 import ast
 
 def source_code_transformer(lines):
     source = "".join(lines)
-    transformed_source = ast.unparse(transpile(source, inject_prelude=False))
+    transformed_source = ast.unparse(transpile_interactive(source))
 
     return [line + '\n' for line in transformed_source.splitlines()]
 

@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::py::{ast::*, util::PyAstBuilder};
+use crate::py::{ast::*, emit::EmitCtx, util::PyAstBuilder};
 use parser::ast::*;
 
 #[derive(Debug)]
@@ -89,57 +89,48 @@ struct PyExprWithPre<'src> {
 }
 
 trait SBlockExt<'src> {
-    fn transform_with_final_stmt<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyBlock<'src>>;
+    fn transform_with_final_stmt<'ast>(
+        &'ast self,
+        ctx: &mut TfCtx<'src>,
+    ) -> TfResult<PyBlock<'src>>;
 
     fn transform_with_final_expr<'ast>(
         &'ast self,
-        ctx: &TfCtx<'src>,
+        ctx: &mut TfCtx<'src>,
+    ) -> TfResult<PyBlockWithFinal<'src>>;
+
+    fn transform<'ast>(
+        &'ast self,
+        ctx: &mut TfCtx<'src>,
+        treat_final_as_expr: bool,
     ) -> TfResult<PyBlockWithFinal<'src>>;
 }
 
 impl<'src> SBlockExt<'src> for SBlock<'src> {
-    fn transform_with_final_stmt<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyBlock<'src>> {
-        let (block, span) = self;
+    fn transform_with_final_stmt<'ast>(
+        &'ast self,
+        ctx: &mut TfCtx<'src>,
+    ) -> TfResult<PyBlock<'src>> {
+        let tr = self.transform(ctx, false)?;
 
-        match block {
-            Block::Stmts(stmts) => {
-                let mut errs = vec![];
-                let mut t_stmts = vec![];
-
-                let mut ok = true;
-
-                for stmt in stmts {
-                    match stmt.transform(ctx) {
-                        Ok(transformed) => {
-                            t_stmts.extend(transformed);
-                        }
-                        Err(e) => {
-                            errs.extend(e.0);
-                            ok = false;
-                        }
-                    }
-                }
-
-                if ok {
-                    return Ok(PyBlock(t_stmts));
-                } else {
-                    return Err(TfErrs(errs));
-                }
-            }
-            Block::Expr(sexpr) => {
-                let t = sexpr.transform(ctx)?;
-
-                let mut stmts = t.pre_stmts;
-                stmts.push((PyStmt::Expr(t.expr), *span).into());
-
-                Ok(stmts)
-            }
+        if tr.final_expr.is_some() {
+            panic!("there shouldn't be a final expr");
         }
+
+        Ok(tr.stmts)
     }
 
     fn transform_with_final_expr<'ast>(
         &'ast self,
-        ctx: &TfCtx<'src>,
+        ctx: &mut TfCtx<'src>,
+    ) -> TfResult<PyBlockWithFinal<'src>> {
+        Ok(self.transform(ctx, true)?)
+    }
+
+    fn transform<'ast>(
+        &'ast self,
+        ctx: &mut TfCtx<'src>,
+        treat_final_as_expr: bool,
     ) -> TfResult<PyBlockWithFinal<'src>> {
         let (block, _span) = self;
 
@@ -152,52 +143,54 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
                     });
                 }
 
-                let mut t_stmts = PyBlock::new();
+                let mut py_stmts = PyBlock::new();
                 let mut errs = Vec::new();
                 let mut ok = true;
+
+                let mut handle_stmt = |stmt: &SStmt<'src>| {
+                    match stmt.transform(ctx) {
+                        Ok(transformed) => {
+                            py_stmts.extend(transformed);
+                        }
+                        Err(e) => {
+                            errs.extend(e.0);
+                            ok = false;
+                        }
+                    };
+                };
 
                 let mut final_expr = None;
                 let mut iter = stmts.iter();
 
                 for stmt in iter.by_ref().take(stmts.len() - 1) {
-                    match stmt.transform(ctx) {
-                        Ok(transformed) => {
-                            t_stmts.extend(transformed);
-                        }
-                        Err(e) => {
-                            errs.extend(e.0);
-                            ok = false;
-                        }
-                    }
+                    handle_stmt(stmt);
                 }
 
                 let final_stmt = iter.next().unwrap();
 
-                match &final_stmt.0 {
-                    Stmt::Expr(expr) => match expr.transform(ctx) {
-                        Ok(expr_with_aux) => {
-                            t_stmts.extend(expr_with_aux.pre_stmts);
-                            final_expr = Some(expr_with_aux.expr);
+                if treat_final_as_expr {
+                    match &final_stmt.0 {
+                        Stmt::Expr(expr) => match expr.transform(ctx) {
+                            Ok(expr_with_aux) => {
+                                py_stmts.extend(expr_with_aux.pre_stmts);
+                                final_expr = Some(expr_with_aux.expr);
+                            }
+                            Err(e) => {
+                                errs.extend(e.0);
+                                ok = false;
+                            }
+                        },
+                        _ => {
+                            handle_stmt(final_stmt);
                         }
-                        Err(e) => {
-                            errs.extend(e.0);
-                            ok = false;
-                        }
-                    },
-                    _ => match final_stmt.transform(ctx) {
-                        Ok(transformd) => {
-                            t_stmts.extend(transformd);
-                        }
-                        Err(e) => {
-                            errs.extend(e.0);
-                            ok = false;
-                        }
-                    },
+                    }
+                } else {
+                    handle_stmt(final_stmt);
                 }
 
                 if ok {
                     Ok(PyBlockWithFinal {
-                        stmts: t_stmts,
+                        stmts: py_stmts,
                         final_expr: final_expr,
                     })
                 } else {
@@ -205,19 +198,30 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
                 }
             }
             Block::Expr(sexpr) => {
-                let t = sexpr.transform(ctx)?;
+                if treat_final_as_expr {
+                    let t = sexpr.transform(ctx)?;
 
-                Ok(PyBlockWithFinal {
-                    stmts: t.pre_stmts,
-                    final_expr: Some(t.expr),
-                })
+                    Ok(PyBlockWithFinal {
+                        stmts: t.pre_stmts,
+                        final_expr: Some(t.expr),
+                    })
+                } else {
+                    // TODO this clone is bad
+                    let f = (Stmt::Expr(sexpr.clone()), sexpr.1);
+                    let stmts = f.transform(ctx)?;
+
+                    Ok(PyBlockWithFinal {
+                        stmts,
+                        final_expr: None,
+                    })
+                }
             }
         }
     }
 }
 
 fn destructure_list<'src, 'ast>(
-    ctx: &TfCtx<'src>,
+    ctx: &mut TfCtx<'src>,
     target: &'ast SExpr<'src>,
     items: &'ast [ListItem<'src>],
     decl_only: bool,
@@ -327,7 +331,7 @@ fn destructure_list<'src, 'ast>(
 }
 
 fn destructure_mapping<'src, 'ast>(
-    ctx: &TfCtx<'src>,
+    ctx: &mut TfCtx<'src>,
     target: &'ast SExpr<'src>,
     items: &'ast [MappingItem<'src>],
     decl_only: bool,
@@ -408,7 +412,7 @@ struct DestructureBindings<'a> {
 }
 
 fn destructure<'src, 'ast>(
-    ctx: &TfCtx<'src>,
+    ctx: &mut TfCtx<'src>,
     target: &'ast SExpr<'src>,
     decl_only: bool,
 ) -> TfResult<DestructureBindings<'src>> {
@@ -471,11 +475,11 @@ fn destructure<'src, 'ast>(
 }
 
 trait SStmtExt<'src> {
-    fn transform<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyBlock<'src>>;
+    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlock<'src>>;
 }
 
 impl<'src> SStmtExt<'src> for SStmt<'src> {
-    fn transform<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyBlock<'src>> {
+    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlock<'src>> {
         let (stmt, span) = self;
 
         match &stmt {
@@ -736,24 +740,55 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     }
                 }
 
+                let mut stmts = PyBlock::new();
+                let a = PyAstBuilder::new(*span);
+
                 if let Some(base_module) = base_module {
-                    Ok(PyBlock(vec![
+                    stmts.push(
                         (
                             PyStmt::ImportFrom(base_module.into(), aliases, import_stmt.level),
                             *span,
                         )
                             .into(),
-                    ]))
+                    );
                 } else {
-                    let mut stmts = PyBlock::new();
                     for alias in aliases {
                         stmts.push((PyStmt::Import(alias), *span).into());
                     }
-                    Ok(stmts)
                 }
+
+                if import_stmt.reexport {
+                    let mut dummy_ctx = EmitCtx {
+                        indentation: 0,
+                        source: String::new(),
+                    };
+
+                    for stmt in stmts.0.iter_mut().collect::<Vec<_>>() {
+                        stmt.emit_to(&mut dummy_ctx).map_err(|e| {
+                            TfErrBuilder::default()
+                                .message(format!("Error emitting re-export exec: {:?}", e))
+                                .span(*span)
+                                .build_errs()
+                        })?;
+                    }
+
+                    stmts.push(a.expr(a.call(
+                        a.load_ident("exec"),
+                        vec![
+                            a.call_arg(a.literal(PyLiteral::Str(dummy_ctx.source.into()))),
+                            a.call_arg(a.call(a.load_ident("globals"), vec![])),
+                        ],
+                    )));
+                }
+
+                Ok(stmts)
             }
             Stmt::Err => Err(TfErrBuilder::default()
                 .message("unexpected statement error (should have been caught in lexer)".to_owned())
+                .span(*span)
+                .build_errs()),
+            Stmt::Module => Err(TfErrBuilder::default()
+                .message("Module statements are not allowed in the transform phase".to_owned())
                 .span(*span)
                 .build_errs()),
         }
@@ -761,7 +796,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 }
 
 fn transform_if_stmt<'src, 'ast>(
-    ctx: &TfCtx<'src>,
+    ctx: &mut TfCtx<'src>,
     cond: &'ast SExpr<'src>,
     then_block: &'ast SBlock<'src>,
     else_block: &'ast Option<Box<SBlock<'src>>>,
@@ -788,7 +823,7 @@ fn transform_if_stmt<'src, 'ast>(
 }
 
 fn transform_if_expr<'src, 'ast>(
-    ast: &TfCtx<'src>,
+    ast: &mut TfCtx<'src>,
     cond: &'ast SExpr<'src>,
     then_block: &'ast SBlock<'src>,
     else_block: &'ast Option<Box<SBlock<'src>>>,
@@ -854,7 +889,7 @@ fn transform_if_expr<'src, 'ast>(
 }
 
 fn transform_match_stmt<'src, 'ast>(
-    ast: &TfCtx<'src>,
+    ast: &mut TfCtx<'src>,
     subject: &'ast SExpr<'src>,
     cases: &'ast [(SExpr<'src>, Box<SBlock<'src>>)],
     span: &Span,
@@ -881,7 +916,7 @@ fn transform_match_stmt<'src, 'ast>(
 }
 
 fn transform_match_expr<'src, 'ast>(
-    ast: &TfCtx<'src>,
+    ast: &mut TfCtx<'src>,
     subject: &'ast SExpr<'src>,
     cases: &'ast [(SExpr<'src>, Box<SBlock<'src>>)],
     span: &Span,
@@ -928,7 +963,7 @@ fn transform_match_expr<'src, 'ast>(
 }
 
 fn make_classdef_stmts<'src, 'ast>(
-    ast: &TfCtx<'src>,
+    ast: &mut TfCtx<'src>,
     name: Cow<'src, str>,
     bases: &'ast Vec<SCallItem<'src>>,
     body: &'ast Box<SBlock<'src>>,
@@ -973,7 +1008,7 @@ enum FnDefBody<'src, 'ast> {
 }
 
 fn make_fndef_stmts<'src, 'ast>(
-    ctx: &TfCtx<'src>,
+    ctx: &mut TfCtx<'src>,
     name: Cow<'src, str>,
     arglist: &'ast [ArgItem<'src>],
     body: FnDefBody<'src, 'ast>,
@@ -1018,22 +1053,22 @@ fn make_fndef_stmts<'src, 'ast>(
 }
 
 trait SExprExt<'src> {
-    fn transform<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyExprWithPre<'src>>;
+    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyExprWithPre<'src>>;
     fn transform_with_py_ctx<'ast>(
         &'ast self,
-        ctx: &TfCtx<'src>,
+        ctx: &mut TfCtx<'src>,
         py_ctx: PyNameCtx,
     ) -> TfResult<PyExprWithPre<'src>>;
 }
 
 impl<'src> SExprExt<'src> for SExpr<'src> {
-    fn transform<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyExprWithPre<'src>> {
+    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyExprWithPre<'src>> {
         self.transform_with_py_ctx(ctx, PyNameCtx::Load)
     }
 
     fn transform_with_py_ctx<'ast>(
         &'ast self,
-        ctx: &TfCtx<'src>,
+        ctx: &mut TfCtx<'src>,
         py_ctx: PyNameCtx,
     ) -> TfResult<PyExprWithPre<'src>> {
         let (expr, span) = self;
@@ -1112,26 +1147,43 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 let obj = obj.transform(ctx)?;
                 let mut aux_stmts = obj.pre_stmts;
 
+                let mut started_kwargs = false;
                 let mut call_items = vec![];
 
                 for arg in args {
                     match &arg.0 {
                         CallItem::Arg(expr) => {
+                            if started_kwargs {
+                                return Err(TfErrBuilder::default()
+                                    .message("Cannot have args after kwargs")
+                                    .span(*span)
+                                    .build_errs());
+                            }
+
                             let e = expr.transform(ctx)?;
                             aux_stmts.extend(e.pre_stmts);
                             call_items.push(PyCallItem::Arg(e.expr));
                         }
                         CallItem::Kwarg((name, _name_span), expr) => {
+                            started_kwargs = true;
                             let e = expr.transform(ctx)?;
                             aux_stmts.extend(e.pre_stmts);
                             call_items.push(PyCallItem::Kwarg((*name).into(), e.expr));
                         }
                         CallItem::ArgSpread(expr) => {
+                            if started_kwargs {
+                                return Err(TfErrBuilder::default()
+                                    .message("Cannot have arg spread after kwargs")
+                                    .span(*span)
+                                    .build_errs());
+                            }
+
                             let e = expr.transform(ctx)?;
                             aux_stmts.extend(e.pre_stmts);
                             call_items.push(PyCallItem::ArgSpread(e.expr));
                         }
                         CallItem::KwargSpread(expr) => {
+                            started_kwargs = true;
                             let e = expr.transform(ctx)?;
                             aux_stmts.extend(e.pre_stmts);
                             call_items.push(PyCallItem::KwargSpread(e.expr));
@@ -1458,7 +1510,22 @@ pub fn transform_ast<'src, 'ast>(
     source: &'src str,
     block: &'ast SBlock<'src>,
 ) -> TfResult<PyBlock<'src>> {
-    let ctx = TfCtx::new(source)?;
-    let stmts = block.transform_with_final_stmt(&ctx)?;
+    let mut ctx = TfCtx::new(source)?;
+    let stmts = block.transform_with_final_stmt(&mut ctx)?;
     Ok(stmts)
+}
+
+pub fn transform_ast_interactive<'src, 'ast>(
+    source: &'src str,
+    block: &'ast SBlock<'src>,
+) -> TfResult<PyBlock<'src>> {
+    let mut ctx = TfCtx::new(source)?;
+    let mut stmts = block.transform_with_final_expr(&mut ctx)?;
+
+    if let Some(final_expr) = stmts.final_expr {
+        let span = final_expr.tl_span;
+        stmts.stmts.push((PyStmt::Expr(final_expr), span).into());
+    }
+
+    Ok(stmts.stmts)
 }

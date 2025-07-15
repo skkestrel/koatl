@@ -271,6 +271,7 @@ impl AstBuilder {
             trunk: trunk.into_iter().map(|t| (t.into(), self.span)).collect(),
             imports: ImportList::Star,
             level,
+            reexport: false,
         }
     }
 
@@ -294,6 +295,7 @@ impl AstBuilder {
                     .collect(),
             ),
             level,
+            reexport: false,
         }
     }
 }

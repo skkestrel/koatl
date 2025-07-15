@@ -6,7 +6,7 @@ use parser::ast::{Block, Span};
 
 use crate::py::ast::{PyImportAlias, PyStmt};
 use crate::py::{ast::PyBlock, emit::EmitCtx};
-use crate::transform::transform_ast;
+use crate::transform::{transform_ast, transform_ast_interactive};
 use parser::{TokenList, parse_tokens, tokenize};
 
 pub enum TlErrKind {
@@ -24,10 +24,39 @@ pub struct TlErr {
 
 pub type TlResult<T> = Result<T, Vec<TlErr>>;
 
-pub fn transpile_to_py_ast<'src>(src: &'src str, inject_prelude: bool) -> TlResult<PyBlock<'src>> {
+pub struct TranspileOptions {
+    pub treat_final_as_expr: bool,
+    pub inject_prelude: bool,
+}
+
+impl TranspileOptions {
+    pub fn interactive() -> Self {
+        TranspileOptions {
+            treat_final_as_expr: true,
+            inject_prelude: false,
+        }
+    }
+
+    pub fn default() -> Self {
+        TranspileOptions {
+            treat_final_as_expr: false,
+            inject_prelude: true,
+        }
+    }
+}
+
+pub fn transpile_to_py_ast<'src>(
+    src: &'src str,
+    options: TranspileOptions,
+) -> TlResult<PyBlock<'src>> {
     let tl_ast = parse_tl(src)?;
 
-    let mut py_ast: PyBlock<'src> = transform_ast(&src, &tl_ast).map_err(|e| {
+    let mut py_ast: PyBlock<'src> = (if options.treat_final_as_expr {
+        transform_ast_interactive(&src, &tl_ast)
+    } else {
+        transform_ast(&src, &tl_ast)
+    })
+    .map_err(|e| {
         e.0.into_iter()
             .map(|e| TlErr {
                 kind: TlErrKind::Transform,
@@ -38,7 +67,7 @@ pub fn transpile_to_py_ast<'src>(src: &'src str, inject_prelude: bool) -> TlResu
             .collect::<Vec<_>>()
     })?;
 
-    if inject_prelude {
+    if options.inject_prelude {
         py_ast.0.insert(
             0,
             (
@@ -63,8 +92,8 @@ pub fn transpile_to_py_ast<'src>(src: &'src str, inject_prelude: bool) -> TlResu
     Ok(py_ast)
 }
 
-pub fn transpile(src: &str, inject_prelude: bool) -> TlResult<String> {
-    let mut py_ast = transpile_to_py_ast(src, inject_prelude)?;
+pub fn transpile(src: &str, options: TranspileOptions) -> TlResult<String> {
+    let mut py_ast = transpile_to_py_ast(src, options)?;
 
     let mut ctx = EmitCtx {
         indentation: 0,

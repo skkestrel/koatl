@@ -6,14 +6,14 @@ use std::{
 };
 
 use ariadne::{Color, Label, Report, ReportKind, sources};
-use coatl::transpile;
+use coatl::{TranspileOptions, transpile};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cmd = std::env::args().nth(1).ok_or("Missing command argument")?;
     let filename = std::env::args().nth(2).ok_or("Missing filename argument")?;
     let src = std::fs::read_to_string(&filename).unwrap();
 
-    match transpile(&src, true) {
+    match transpile(&src, TranspileOptions::default()) {
         Ok(code) => match cmd.as_str() {
             "trans" => {
                 println!("{}", code);

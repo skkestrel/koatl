@@ -630,8 +630,11 @@ where
         Star,
     }
 
-    let import_stmt = just(Token::Kw("import"))
-        .ignore_then(group((
+    let import_stmt = just(Token::Kw("export"))
+        .to(())
+        .or_not()
+        .then_ignore(just(Token::Kw("import")))
+        .then(group((
             just_symbol(".").repeated().count(),
             ident
                 .clone()
@@ -660,12 +663,17 @@ where
             .or_not(),
         )))
         .map(
-            |(level, mut trunk, leaves): (usize, Vec<SIdent>, Option<ImportLeaves>)| -> Stmt {
+            |(reexport, (level, mut trunk, leaves)): (
+                Option<()>,
+                (usize, Vec<SIdent>, Option<ImportLeaves>),
+            )|
+             -> Stmt {
                 match leaves {
                     Some(ImportLeaves::Multiple(leaves)) => Stmt::Import(ImportStmt {
                         trunk,
                         imports: ImportList::Leaves(leaves),
                         level,
+                        reexport: reexport.is_some(),
                     }),
                     Some(ImportLeaves::SingleAlias(alias)) => {
                         if let Some(leaf) = trunk.pop() {
@@ -673,6 +681,7 @@ where
                                 trunk,
                                 imports: ImportList::Leaves(vec![(leaf, Some(alias))]),
                                 level,
+                                reexport: reexport.is_some(),
                             })
                         } else {
                             panic!("trunk should not be empty here")
@@ -682,6 +691,7 @@ where
                         trunk,
                         imports: ImportList::Star,
                         level,
+                        reexport: reexport.is_some(),
                     }),
                     None => {
                         if let Some(leaf) = trunk.pop() {
@@ -689,6 +699,7 @@ where
                                 trunk,
                                 imports: ImportList::Leaves(vec![(leaf, None)]),
                                 level,
+                                reexport: reexport.is_some(),
                             })
                         } else {
                             panic!("trunk should not be empty here")
@@ -701,8 +712,13 @@ where
         .labelled("import statement")
         .boxed();
 
+    let module_stmt = just(Token::Kw("module"))
+        .then_ignore(just(Token::Eol))
+        .map(|_| Stmt::Module);
+
     stmt.define(
         choice((
+            module_stmt,
             expr_stmt,
             assign_stmt,
             while_stmt,
