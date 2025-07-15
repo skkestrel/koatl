@@ -649,6 +649,9 @@ where
     ) -> TResult<'src, Spanned<TokenList<'src>>> {
         let mut tokens = vec![];
 
+        // TODO should parse_empty_line be part of parse_indentation
+        while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
+
         let (indent_level, indent_span) =
             self.try_parse(|x| x.parse_indentation()).map_err(|_| {
                 Rich::custom(
