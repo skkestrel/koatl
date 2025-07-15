@@ -1,6 +1,10 @@
-from ipykernel.kernelbase import Kernel
+from ipykernel.ipkernel import IPythonKernel
+import ast
+from coatl.notebook import source_code_transformer
+from coatl.notebook.magic import coatl_cell_magic, CoatlSystemAssign, CoatlMagicAssign, CoatlEscapedCommand
 
-class CoatlKernel(Kernel):
+
+class CoatlKernel(IPythonKernel):
     implementation = 'Coatl'
     implementation_version = '1.0'
     language = 'coatl'
@@ -10,17 +14,18 @@ class CoatlKernel(Kernel):
         'mimetype': 'text/x-coatl',
         'file_extension': '.tl',
     }
-    banner = "Coatl Kernel - Echo Mode"
 
-    def do_execute(self, code, silent, store_history=True, user_expressions=None,
-                   allow_stdin=False):
-        if not silent:
-            stream_content = {'name': 'stdout', 'text': code}
-            self.send_response(self.iopub_socket, 'stream', stream_content)
+    @property
+    def banner(self):
+        if self.shell:
+            return self.shell.banner
+        return None
 
-        return {'status': 'ok',
-                # The base class increments the execution count
-                'execution_count': self.execution_count,
-                'payload': [],
-                'user_expressions': {},
-               }
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        self.shell.input_transformers_post.append(source_code_transformer)
+        self.shell.input_transformer_manager.line_transforms.insert(0, coatl_cell_magic)
+        self.shell.input_transformer_manager.token_transformers.insert(0, CoatlMagicAssign)
+        self.shell.input_transformer_manager.token_transformers.insert(1, CoatlEscapedCommand)
+        self.shell.input_transformer_manager.token_transformers.insert(2, CoatlSystemAssign)
