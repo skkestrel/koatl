@@ -96,9 +96,9 @@ where
 {
     fn new(input: &'input mut InputRef<'src, 'parse, TInput, TExtra<'src>>) -> Self {
         static KEYWORDS: &[&str] = &[
-            "if", "then", "else", "match", "import", "as", "class", "while", "for", "in", "break",
-            "continue", "with", "yield", "global", "nonlocal", "return", "raise", "try", "except",
-            "finally", "and", "or", "not", "assert",
+            "if", "then", "else", "match", "import", "export", "as", "class", "while", "for", "in",
+            "break", "continue", "with", "yield", "global", "nonlocal", "return", "raise", "try",
+            "except", "finally", "and", "or", "not", "assert",
         ];
 
         let keywords = HashSet::<String>::from_iter(KEYWORDS.iter().map(|s| s.to_string()));

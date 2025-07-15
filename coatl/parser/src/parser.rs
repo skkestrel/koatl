@@ -509,14 +509,22 @@ where
         .labelled("expression statement")
         .boxed();
 
-    let assign_stmt = sexpr
-        .clone()
-        .then_ignore(just_symbol("="))
-        .then(sexpr.clone())
-        .map(|(lhs, rhs)| Stmt::Assign(lhs, rhs))
-        .then_ignore(just(Token::Eol))
-        .labelled("assignment statement")
-        .boxed();
+    let assign_stmt = group((
+        choice((
+            just(Token::Kw("export")).to(AssignModifier::Export),
+            just(Token::Kw("global")).to(AssignModifier::Global),
+            just(Token::Kw("nonlocal")).to(AssignModifier::Nonlocal),
+        ))
+        .repeated()
+        .collect()
+        .boxed(),
+        sexpr.clone().then_ignore(just_symbol("=")),
+        sexpr.clone(),
+    ))
+    .map(|(modifiers, lhs, rhs)| Stmt::Assign(lhs, rhs, modifiers))
+    .then_ignore(just(Token::Eol))
+    .labelled("assignment statement")
+    .boxed();
 
     let while_stmt = just(Token::Kw("while"))
         .ignore_then(sexpr.clone())

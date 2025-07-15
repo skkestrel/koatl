@@ -63,12 +63,17 @@ pub struct ExceptHandler<'a> {
     pub body: SBlock<'a>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum AssignModifier {
+    Export,
+    Global,
+    Nonlocal,
+}
+
 // TODO should these be cows
 #[derive(Debug, Clone)]
 pub enum Stmt<'a> {
-    Global(Vec<SIdent<'a>>),
-    Nonlocal(Vec<SIdent<'a>>),
-    Assign(SExpr<'a>, SExpr<'a>),
+    Assign(SExpr<'a>, SExpr<'a>, Vec<AssignModifier>),
     Return(SExpr<'a>),
     Expr(SExpr<'a>),
     While(SExpr<'a>, SBlock<'a>),

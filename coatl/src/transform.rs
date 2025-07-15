@@ -221,7 +221,7 @@ fn destructure_list<'src, 'ast>(
     target: &'ast SExpr<'src>,
     items: &'ast [ListItem<'src>],
     decl_only: bool,
-) -> TfResult<(PyBlock<'src>, SPyExpr<'src>)> {
+) -> TfResult<DestructureBindings<'src>> {
     let cursor_var = ctx.temp_var_name("des_curs", target.1.start);
     let list_var = ctx.temp_var_name("des_list", target.1.start);
     let len_var = ctx.temp_var_name("des_len", target.1.start);
@@ -249,6 +249,7 @@ fn destructure_list<'src, 'ast>(
     ]);
 
     let mut post_stmts = vec![];
+    let mut decls = vec![];
 
     // a = list_var[0]
     // b = list_var[1]
@@ -262,6 +263,7 @@ fn destructure_list<'src, 'ast>(
             ListItem::Item(expr) => {
                 let item_bindings = destructure(ctx, expr, decl_only)?;
                 post_stmts.extend(item_bindings.post_stmts);
+                decls.extend(item_bindings.declarations);
 
                 stmts.push(
                     a.assign(
@@ -293,6 +295,7 @@ fn destructure_list<'src, 'ast>(
 
                 let item_bindings = destructure(ctx, expr, decl_only)?;
                 post_stmts.extend(item_bindings.post_stmts);
+                decls.extend(item_bindings.declarations);
 
                 stmts.push(a.assign(
                     item_bindings.assign_to,
@@ -316,7 +319,11 @@ fn destructure_list<'src, 'ast>(
 
     stmts.extend(post_stmts);
 
-    Ok((stmts, a.ident(cursor_var, PyNameCtx::Store).clone()))
+    Ok(DestructureBindings {
+        post_stmts: stmts,
+        assign_to: a.ident(cursor_var, PyNameCtx::Store),
+        declarations: decls,
+    })
 }
 
 fn destructure_mapping<'src, 'ast>(
@@ -324,7 +331,7 @@ fn destructure_mapping<'src, 'ast>(
     target: &'ast SExpr<'src>,
     items: &'ast [MappingItem<'src>],
     decl_only: bool,
-) -> TfResult<(PyBlock<'src>, SPyExpr<'src>)> {
+) -> TfResult<DestructureBindings<'src>> {
     let cursor_var = ctx.temp_var_name("des_curs", target.1.start);
     let dict_var = ctx.temp_var_name("des_dict", target.1.start);
 
@@ -339,6 +346,7 @@ fn destructure_mapping<'src, 'ast>(
     )]);
 
     let mut post_stmts = vec![];
+    let mut decls = vec![];
 
     // a = dict_var.pop(a_key)
     // b = dict_var.pop(b_key)
@@ -352,6 +360,7 @@ fn destructure_mapping<'src, 'ast>(
                 let key_node = key.transform(ctx)?;
                 post_stmts.extend(key_node.pre_stmts);
                 post_stmts.extend(item_bindings.post_stmts);
+                decls.extend(item_bindings.declarations);
 
                 stmts.push(a.assign(
                     item_bindings.assign_to,
@@ -375,20 +384,27 @@ fn destructure_mapping<'src, 'ast>(
     }
 
     if let Some(spread_var) = spread_var {
-        let spread_node = spread_var.transform(ctx)?;
-        post_stmts.extend(spread_node.pre_stmts);
+        let item_bindings = destructure(ctx, spread_var, decl_only)?;
 
-        stmts.push(a.assign(spread_node.expr, a.load_ident(dict_var.clone())));
+        post_stmts.extend(item_bindings.post_stmts);
+        decls.extend(item_bindings.declarations);
+
+        stmts.push(a.assign(item_bindings.assign_to, a.load_ident(dict_var.clone())));
     }
 
     stmts.extend(post_stmts);
 
-    Ok((stmts, a.ident(cursor_var, PyNameCtx::Store)))
+    Ok(DestructureBindings {
+        post_stmts: stmts,
+        assign_to: a.ident(cursor_var, PyNameCtx::Store),
+        declarations: decls,
+    })
 }
 
 struct DestructureBindings<'a> {
     assign_to: SPyExpr<'a>,
     post_stmts: PyBlock<'a>,
+    declarations: Vec<PyIdent<'a>>,
 }
 
 fn destructure<'src, 'ast>(
@@ -397,27 +413,47 @@ fn destructure<'src, 'ast>(
     decl_only: bool,
 ) -> TfResult<DestructureBindings<'src>> {
     let mut post_stmts = PyBlock::new();
+    let mut decls = Vec::<PyIdent<'src>>::new();
 
     let assign_to: SPyExpr<'src>;
 
     match &target.0 {
         Expr::Ident(..) | Expr::Attribute(..) | Expr::Subscript(..) => {
+            match &target.0 {
+                Expr::Ident(id) => {
+                    decls.push(id.0.to_owned().into());
+                }
+                Expr::Attribute(..) | Expr::Subscript(..) => {
+                    if decl_only {
+                        return Err(TfErrBuilder::default()
+                            .message("Only identifiers allowed in this destructuring")
+                            .span(target.1)
+                            .build_errs());
+                    }
+                }
+                _ => {
+                    panic!();
+                }
+            }
+
             let target_node = target.transform_with_py_ctx(ctx, PyNameCtx::Store)?;
             post_stmts.extend(target_node.pre_stmts);
 
             assign_to = target_node.expr;
         }
         Expr::List(items) => {
-            let (block, cursor) = destructure_list(ctx, target, items, decl_only)?;
+            let bindings = destructure_list(ctx, target, items, decl_only)?;
 
-            post_stmts.extend(block);
-            assign_to = cursor;
+            post_stmts.extend(bindings.post_stmts);
+            decls.extend(bindings.declarations);
+            assign_to = bindings.assign_to;
         }
         Expr::Mapping(items) => {
-            let (block, cursor) = destructure_mapping(ctx, target, items, decl_only)?;
+            let bindings = destructure_mapping(ctx, target, items, decl_only)?;
 
-            post_stmts.extend(block);
-            assign_to = cursor;
+            post_stmts.extend(bindings.post_stmts);
+            decls.extend(bindings.declarations);
+            assign_to = bindings.assign_to;
         }
         _ => {
             return Err(TfErrBuilder::default()
@@ -430,6 +466,7 @@ fn destructure<'src, 'ast>(
     Ok(DestructureBindings {
         post_stmts,
         assign_to,
+        declarations: decls,
     })
 }
 
@@ -478,7 +515,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                 Ok(stmts)
             }
-            Stmt::Assign(target, value) => {
+            Stmt::Assign(target, value, modifiers) => {
                 if let (Expr::Ident((ident, _ident_span)), Expr::Fn(arglist, body)) =
                     (&target.0, &value.0)
                 {
@@ -497,9 +534,48 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     return make_classdef_stmts(ctx, (*ident).into(), &bases, &body, span);
                 }
 
+                let scope_modifier = modifiers
+                    .iter()
+                    .filter(|m| {
+                        matches!(
+                            m,
+                            AssignModifier::Export
+                                | AssignModifier::Global
+                                | AssignModifier::Nonlocal
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                if scope_modifier.len() > 1 {
+                    return Err(TfErrBuilder::default()
+                        .message("Only one scope modifier is allowed in an assignment")
+                        .span(*span)
+                        .build_errs());
+                }
+
+                let scope_modifier = scope_modifier.first();
+
                 let value_node = value.transform(ctx)?;
                 let mut stmts = value_node.pre_stmts;
-                let destructure = destructure(ctx, target, false)?;
+                let decl_only = scope_modifier.is_some();
+                let destructure = destructure(ctx, target, decl_only)?;
+
+                if let Some(scope_modifier) = scope_modifier {
+                    match scope_modifier {
+                        AssignModifier::Export | AssignModifier::Global => {
+                            // exports are implemented by lifting into global scope
+
+                            stmts.push((PyStmt::Global(destructure.declarations), target.1).into());
+                        }
+
+                        AssignModifier::Nonlocal => {
+                            stmts.push(
+                                (PyStmt::Nonlocal(destructure.declarations), target.1).into(),
+                            );
+                        }
+                    }
+                }
+
                 stmts.push(
                     (
                         PyStmt::Assign(destructure.assign_to, value_node.expr),
@@ -510,16 +586,6 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 stmts.extend(destructure.post_stmts);
 
                 Ok(stmts)
-            }
-            Stmt::Global(names) => {
-                let names: Vec<_> = names.iter().map(|name| name.0.into()).collect();
-
-                Ok(PyBlock(vec![(PyStmt::Global(names), *span).into()]))
-            }
-            Stmt::Nonlocal(names) => {
-                let names: Vec<_> = names.iter().map(|name| name.0.into()).collect();
-
-                Ok(PyBlock(vec![(PyStmt::Nonlocal(names), *span).into()]))
             }
             Stmt::Raise(expr) => {
                 let expr_node = expr.transform(ctx)?;

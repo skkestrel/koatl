@@ -19,7 +19,16 @@ impl AstBuilder {
     }
 
     pub fn assign<'src>(&self, target: SExpr<'src>, value: SExpr<'src>) -> SStmt<'src> {
-        (Stmt::Assign(target, value), self.span)
+        (Stmt::Assign(target, value, vec![]), self.span)
+    }
+
+    pub fn assign_modified<'src>(
+        &self,
+        target: SExpr<'src>,
+        value: SExpr<'src>,
+        modifiers: Vec<AssignModifier>,
+    ) -> SStmt<'src> {
+        (Stmt::Assign(target, value, modifiers), self.span)
     }
 
     pub fn return_<'src>(&self, expr: SExpr<'src>) -> SStmt<'src> {
@@ -28,22 +37,6 @@ impl AstBuilder {
 
     pub fn assert<'src>(&self, expr: SExpr<'src>, msg: Option<SExpr<'src>>) -> SStmt<'src> {
         (Stmt::Assert(expr, msg), self.span)
-    }
-
-    pub fn global<'src>(&self, names: Vec<&'src str>) -> SStmt<'src> {
-        let names = names
-            .into_iter()
-            .map(|name| (name.into(), self.span))
-            .collect();
-        (Stmt::Global(names), self.span)
-    }
-
-    pub fn nonlocal<'src>(&self, names: Vec<&'src str>) -> SStmt<'src> {
-        let names = names
-            .into_iter()
-            .map(|name| (name.into(), self.span))
-            .collect();
-        (Stmt::Nonlocal(names), self.span)
     }
 
     pub fn while_<'src>(&self, test: SExpr<'src>, body: SBlock<'src>) -> SStmt<'src> {
