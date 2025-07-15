@@ -273,25 +273,34 @@ impl AstBuilder {
         }
     }
 
-    // Import statement builder
+    pub fn import_star<'src>(&self, trunk: Vec<&'src str>, level: usize) -> ImportStmt<'src> {
+        ImportStmt {
+            trunk: trunk.into_iter().map(|t| (t.into(), self.span)).collect(),
+            imports: ImportList::Star,
+            level,
+        }
+    }
+
     pub fn import_<'src>(
         &self,
         trunk: Vec<&'src str>,
         leaves: Vec<(&'src str, Option<&'src str>)>,
-        star: bool,
+        level: usize,
     ) -> ImportStmt<'src> {
         ImportStmt {
             trunk: trunk.into_iter().map(|t| (t.into(), self.span)).collect(),
-            leaves: leaves
-                .into_iter()
-                .map(|(name, alias)| {
-                    (
-                        (name.into(), self.span),
-                        alias.map(|a| (a.into(), self.span)),
-                    )
-                })
-                .collect(),
-            star,
+            imports: ImportList::Leaves(
+                leaves
+                    .into_iter()
+                    .map(|(name, alias)| {
+                        (
+                            (name.into(), self.span),
+                            alias.map(|a| (a.into(), self.span)),
+                        )
+                    })
+                    .collect(),
+            ),
+            level,
         }
     }
 }

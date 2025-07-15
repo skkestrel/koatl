@@ -42,7 +42,7 @@ pub enum PyStmt<'a> {
     Global(Vec<PyIdent<'a>>),
     Nonlocal(Vec<PyIdent<'a>>),
     Import(PyImportAlias<'a>),
-    ImportFrom(PyIdent<'a>, Vec<PyImportAlias<'a>>),
+    ImportFrom(PyIdent<'a>, Vec<PyImportAlias<'a>>, usize),
     FnDef(PyIdent<'a>, Vec<PyArgDefItem<'a>>, PyBlock<'a>),
     ClassDef(PyIdent<'a>, Vec<PyCallItem<'a>>, PyBlock<'a>),
     While(SPyExpr<'a>, PyBlock<'a>),

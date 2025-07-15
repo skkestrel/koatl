@@ -1,0 +1,2 @@
+do = x =>
+    raise NotImplementedError()

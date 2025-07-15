@@ -1,2 +1,1 @@
-def id(x):
-    x
+from .functional import *

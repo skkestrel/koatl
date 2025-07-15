@@ -453,9 +453,10 @@ impl SPyStmt<'_> {
                 name.emit_to(ctx);
                 ctx.emit_endl();
             }
-            PyStmt::ImportFrom(module, aliases) => {
+            PyStmt::ImportFrom(module, aliases, level) => {
                 ctx.emit_indent();
                 ctx.emit("from ");
+                ctx.emit(&".".repeat(*level));
                 ctx.emit(&module);
                 ctx.emit(" import ");
                 if aliases.is_empty() {

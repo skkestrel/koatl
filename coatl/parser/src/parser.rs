@@ -622,76 +622,76 @@ where
         Star,
     }
 
-    let import_stmt =
-        just(Token::Kw("import"))
-            .ignore_then(
-                ident
-                    .clone()
-                    .separated_by(just(Token::Symbol(".")))
-                    .at_least(1)
-                    .collect()
-                    .boxed()
-                    .then(
-                        choice((
-                            just(Token::Symbol(".")).ignore_then(
-                                enumeration(ident.clone().then(
-                                    just(Token::Kw("as")).ignore_then(ident.clone()).or_not(),
-                                ))
-                                .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
-                                .map(ImportLeaves::Multiple),
-                            ),
-                            just(Token::Symbol("."))
-                                .then(just(Token::Symbol("*")))
-                                .map(|_| ImportLeaves::Star),
-                            just(Token::Kw("as"))
-                                .ignore_then(ident.clone())
-                                .map(|x| ImportLeaves::SingleAlias(x)),
-                        ))
-                        .boxed()
-                        .or_not(),
-                    ),
-            )
-            .map(
-                |(mut trunk, leaves): (Vec<SIdent>, Option<ImportLeaves>)| -> Stmt {
-                    match leaves {
-                        Some(ImportLeaves::Multiple(leaves)) => Stmt::Import(ImportStmt {
-                            trunk,
-                            leaves,
-                            star: false,
-                        }),
-                        Some(ImportLeaves::SingleAlias(alias)) => {
-                            if let Some(leaf) = trunk.pop() {
-                                Stmt::Import(ImportStmt {
-                                    trunk,
-                                    leaves: vec![(leaf, Some(alias))],
-                                    star: false,
-                                })
-                            } else {
-                                panic!("trunk should not be empty here")
-                            }
-                        }
-                        Some(ImportLeaves::Star) => Stmt::Import(ImportStmt {
-                            trunk,
-                            leaves: vec![],
-                            star: true,
-                        }),
-                        None => {
-                            if let Some(leaf) = trunk.pop() {
-                                Stmt::Import(ImportStmt {
-                                    trunk,
-                                    leaves: vec![(leaf, None)],
-                                    star: false,
-                                })
-                            } else {
-                                panic!("trunk should not be empty here")
-                            }
+    let import_stmt = just(Token::Kw("import"))
+        .ignore_then(group((
+            just_symbol(".").repeated().count(),
+            ident
+                .clone()
+                .separated_by(just_symbol("."))
+                .at_least(1)
+                .collect()
+                .boxed(),
+            choice((
+                just(Token::Symbol(".")).ignore_then(
+                    enumeration(
+                        ident
+                            .clone()
+                            .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not()),
+                    )
+                    .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
+                    .map(ImportLeaves::Multiple),
+                ),
+                just(Token::Symbol("."))
+                    .then(just(Token::Symbol("*")))
+                    .map(|_| ImportLeaves::Star),
+                just(Token::Kw("as"))
+                    .ignore_then(ident.clone())
+                    .map(|x| ImportLeaves::SingleAlias(x)),
+            ))
+            .boxed()
+            .or_not(),
+        )))
+        .map(
+            |(level, mut trunk, leaves): (usize, Vec<SIdent>, Option<ImportLeaves>)| -> Stmt {
+                match leaves {
+                    Some(ImportLeaves::Multiple(leaves)) => Stmt::Import(ImportStmt {
+                        trunk,
+                        imports: ImportList::Leaves(leaves),
+                        level,
+                    }),
+                    Some(ImportLeaves::SingleAlias(alias)) => {
+                        if let Some(leaf) = trunk.pop() {
+                            Stmt::Import(ImportStmt {
+                                trunk,
+                                imports: ImportList::Leaves(vec![(leaf, Some(alias))]),
+                                level,
+                            })
+                        } else {
+                            panic!("trunk should not be empty here")
                         }
                     }
-                },
-            )
-            .then_ignore(just(Token::Eol))
-            .labelled("import statement")
-            .boxed();
+                    Some(ImportLeaves::Star) => Stmt::Import(ImportStmt {
+                        trunk,
+                        imports: ImportList::Star,
+                        level,
+                    }),
+                    None => {
+                        if let Some(leaf) = trunk.pop() {
+                            Stmt::Import(ImportStmt {
+                                trunk,
+                                imports: ImportList::Leaves(vec![(leaf, None)]),
+                                level,
+                            })
+                        } else {
+                            panic!("trunk should not be empty here")
+                        }
+                    }
+                }
+            },
+        )
+        .then_ignore(just(Token::Eol))
+        .labelled("import statement")
+        .boxed();
 
     stmt.define(
         choice((

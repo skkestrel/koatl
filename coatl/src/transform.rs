@@ -653,23 +653,30 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     );
                 }
 
-                if import_stmt.star {
-                    aliases.push(PyImportAlias {
-                        name: "*".into(),
-                        as_name: None,
-                    });
-                } else {
-                    for (ident, alias) in &import_stmt.leaves {
+                match &import_stmt.imports {
+                    ImportList::Star => {
                         aliases.push(PyImportAlias {
-                            name: ident.0.into(),
-                            as_name: alias.as_ref().map(|a| a.0.into()),
+                            name: "*".into(),
+                            as_name: None,
                         });
+                    }
+                    ImportList::Leaves(imports) => {
+                        for (ident, alias) in imports {
+                            aliases.push(PyImportAlias {
+                                name: ident.0.into(),
+                                as_name: alias.as_ref().map(|a| a.0.into()),
+                            });
+                        }
                     }
                 }
 
                 if let Some(base_module) = base_module {
                     Ok(PyBlock(vec![
-                        (PyStmt::ImportFrom(base_module.into(), aliases), *span).into(),
+                        (
+                            PyStmt::ImportFrom(base_module.into(), aliases, import_stmt.level),
+                            *span,
+                        )
+                            .into(),
                     ]))
                 } else {
                     let mut stmts = PyBlock::new();

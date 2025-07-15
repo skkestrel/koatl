@@ -171,14 +171,14 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                 let alias_ast = ctx.ast_cls("alias", (&alias.name, alias.as_name.as_deref()))?;
                 ctx.ast_node("Import", ([alias_ast],), &self.tl_span)
             }
-            PyStmt::ImportFrom(module, items) => {
+            PyStmt::ImportFrom(module, items, level) => {
                 let aliases_ast: Result<Vec<_>, _> = items
                     .iter()
                     .map(|item| ctx.ast_cls("alias", (&item.name, item.as_name.as_deref())))
                     .collect();
                 ctx.ast_node(
                     "ImportFrom",
-                    (module.as_ref(), aliases_ast?, 0),
+                    (module.as_ref(), aliases_ast?, level),
                     &self.tl_span,
                 )
             }

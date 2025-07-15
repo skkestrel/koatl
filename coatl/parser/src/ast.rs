@@ -41,10 +41,19 @@ pub type Ident<'a> = &'a str;
 pub type SIdent<'a> = Spanned<Ident<'a>>;
 
 #[derive(Debug, Clone)]
+pub enum ImportList<'a> {
+    // ident, alias
+    Leaves(Vec<(SIdent<'a>, Option<SIdent<'a>>)>),
+    Star,
+}
+
+#[derive(Debug, Clone)]
 pub struct ImportStmt<'a> {
     pub trunk: Vec<SIdent<'a>>,
-    pub leaves: Vec<(SIdent<'a>, Option<SIdent<'a>>)>,
-    pub star: bool,
+    pub imports: ImportList<'a>,
+
+    // number of dots prepending the trunk
+    pub level: usize,
 }
 
 #[derive(Debug, Clone)]

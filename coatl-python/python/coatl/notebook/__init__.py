@@ -13,7 +13,7 @@ def source_code_transformer(lines):
 
 
 def load_ipython_extension(ipython):
-    exec("from coatl.prelude import *", ipython.user_ns)
+    exec("from coatl.runtime import *", ipython.user_ns)
     print("coatl enabled")
     ttm = ipython.input_transformer_manager
     

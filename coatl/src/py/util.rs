@@ -51,8 +51,9 @@ impl PyAstBuilder {
         &self,
         module: impl Into<PyIdent<'src>>,
         aliases: Vec<PyImportAlias<'src>>,
+        level: usize,
     ) -> SPyStmt<'src> {
-        (PyStmt::ImportFrom(module.into(), aliases), self.span).into()
+        (PyStmt::ImportFrom(module.into(), aliases, level), self.span).into()
     }
 
     pub fn fn_def<'src>(

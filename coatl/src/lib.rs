@@ -43,11 +43,12 @@ pub fn transpile_to_py_ast<'src>(src: &'src str, inject_prelude: bool) -> TlResu
             0,
             (
                 PyStmt::ImportFrom(
-                    "coatl.prelude".into(),
+                    "coatl.runtime".into(),
                     vec![PyImportAlias {
                         name: "*".into(),
                         as_name: None,
                     }],
+                    0,
                 ),
                 Span {
                     start: 0,
