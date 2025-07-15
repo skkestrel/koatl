@@ -31,7 +31,7 @@ maturin develop -m coatl-python/Cargo.toml
 maturin build --release -m coatl-python/Cargo.toml
 ```
 
-# Installing kernel (todo)
+# Installing the kernel
 
 ```
 cd coatl-kernel
