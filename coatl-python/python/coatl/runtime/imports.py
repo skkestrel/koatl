@@ -12,12 +12,22 @@ class TlFinder(MetaPathFinder):
             path = sys.path
 
         module_name = fullname.split('.')[-1]
+
         for entry in path:
-            if os.path.isdir(entry):
-                for filename in os.listdir(entry):
-                    if filename == f"{module_name}.tl":
-                        filepath = os.path.join(entry, filename)
-                        return spec_from_loader(fullname, TlLoader(filepath))
+            # 1. Check for a regular module file: {entry}/{module_name}.tl
+            file_path = os.path.join(entry, f"{module_name}.tl")
+            if os.path.isfile(file_path):
+                return spec_from_loader(fullname, TlLoader(file_path))
+
+            # 2. Check for a package: {entry}/{module_name}/__init__.tl
+            package_path = os.path.join(entry, module_name)
+            init_path = os.path.join(package_path, "__init__.tl")
+            
+            if os.path.isdir(package_path) and os.path.isfile(init_path):
+                spec = spec_from_loader(fullname, TlLoader(init_path), is_package=True)
+                spec.submodule_search_locations = [package_path]
+                return spec
+
         return None
 
 class TlLoader(Loader):
