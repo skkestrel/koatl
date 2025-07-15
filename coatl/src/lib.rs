@@ -24,6 +24,44 @@ pub struct TlErr {
 pub type TlResult<T> = Result<T, Vec<TlErr>>;
 
 pub fn transpile_to_py_ast<'src>(src: &'src str) -> TlResult<PyBlock<'src>> {
+    let tl_ast = parse_tl(src)?;
+
+    let py_ast: PyBlock<'src> = transform_ast(&src, &tl_ast).map_err(|e| {
+        e.0.into_iter()
+            .map(|e| TlErr {
+                kind: TlErrKind::Transform,
+                message: e.message,
+                span: e.span,
+                contexts: vec![],
+            })
+            .collect::<Vec<_>>()
+    })?;
+
+    Ok(py_ast)
+}
+
+pub fn transpile(src: &str) -> TlResult<String> {
+    let mut py_ast = transpile_to_py_ast(src)?;
+
+    let mut ctx = EmitCtx {
+        indentation: 0,
+        source: String::new(),
+    };
+    py_ast.emit_to(&mut ctx, 0).map_err(|e| {
+        e.0.into_iter()
+            .map(|e| TlErr {
+                kind: TlErrKind::Emit,
+                message: e.message,
+                span: e.span,
+                contexts: vec![],
+            })
+            .collect::<Vec<_>>()
+    })?;
+
+    Ok(ctx.source)
+}
+
+pub fn parse_tl<'src>(src: &'src str) -> TlResult<::parser::ast::SBlock<'src>> {
     let mut errs = vec![];
 
     let (tokens, token_errs) = tokenize(&src);
@@ -61,37 +99,5 @@ pub fn transpile_to_py_ast<'src>(src: &'src str) -> TlResult<PyBlock<'src>> {
     let tl_ast: (Block<'src>, Span) = tl_ast.ok_or_else(|| errs)?;
     // println!("AST: {ast:?}");
 
-    let py_ast: PyBlock<'src> = transform_ast(&src, &tl_ast).map_err(|e| {
-        e.0.into_iter()
-            .map(|e| TlErr {
-                kind: TlErrKind::Transform,
-                message: e.message,
-                span: e.span,
-                contexts: vec![],
-            })
-            .collect::<Vec<_>>()
-    })?;
-
-    Ok(py_ast)
-}
-
-pub fn transpile(src: &str) -> TlResult<String> {
-    let mut py_ast = transpile_to_py_ast(src)?;
-
-    let mut ctx = EmitCtx {
-        indentation: 0,
-        source: String::new(),
-    };
-    py_ast.emit_to(&mut ctx, 0).map_err(|e| {
-        e.0.into_iter()
-            .map(|e| TlErr {
-                kind: TlErrKind::Emit,
-                message: e.message,
-                span: e.span,
-                contexts: vec![],
-            })
-            .collect::<Vec<_>>()
-    })?;
-
-    Ok(ctx.source)
+    Ok(tl_ast)
 }

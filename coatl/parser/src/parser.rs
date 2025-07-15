@@ -364,8 +364,48 @@ where
         },
     );
 
+    let arg_list = enumeration(choice((
+        just_symbol("*")
+            .ignore_then(ident.clone())
+            .map(|x| ArgItem::ArgSpread(x)),
+        just_symbol("**")
+            .ignore_then(ident.clone())
+            .map(ArgItem::KwargSpread),
+        ident
+            .clone()
+            .then_ignore(just_symbol("="))
+            .then(sexpr.clone())
+            .map(|(key, value)| ArgItem::DefaultArg(key, value)),
+        ident.clone().map(ArgItem::Arg),
+    )))
+    .labelled("argument-def-list")
+    .boxed();
+
+    let mut fn_ = chumsky::recursive::Recursive::declare();
+
+    fn_.define(
+        choice((
+            choice((
+                arg_list
+                    .clone()
+                    .delimited_by_with_eol(just_symbol("("), just_symbol(")")),
+                ident.clone().map(|x| vec![ArgItem::Arg(x)]),
+            ))
+            .then_ignore(just_symbol("=>"))
+            .then(choice((
+                sblock.clone(),
+                fn_.clone().map(|x| Block::Expr(x)).spanned().boxed(),
+            )))
+            .map(|(args, body)| Expr::Fn(args, Box::new(body)))
+            .spanned(),
+            binary4.clone(),
+        ))
+        .labelled("function definition")
+        .boxed(),
+    );
+
     let binary5 = make_binary_op(
-        binary4,
+        choice((fn_, binary4)),
         select! {
             Token::Symbol("|") => BinaryOp::Pipe,
         },
@@ -455,38 +495,8 @@ where
         .labelled("class")
         .boxed();
 
-    let arg_list = enumeration(choice((
-        just_symbol("*")
-            .ignore_then(ident.clone())
-            .map(|x| ArgItem::ArgSpread(x)),
-        just_symbol("**")
-            .ignore_then(ident.clone())
-            .map(ArgItem::KwargSpread),
-        ident
-            .clone()
-            .then_ignore(just_symbol("="))
-            .then(sexpr.clone())
-            .map(|(key, value)| ArgItem::DefaultArg(key, value)),
-        ident.clone().map(ArgItem::Arg),
-    )))
-    .labelled("argument-def-list")
-    .boxed();
-
-    let fn_ = choice((
-        arg_list
-            .clone()
-            .delimited_by_with_eol(just_symbol("("), just_symbol(")")),
-        ident.clone().map(|x| vec![ArgItem::Arg(x)]),
-    ))
-    .then_ignore(just_symbol("=>"))
-    .then(sblock_or_expr.clone())
-    .map(|(args, body)| Expr::Fn(args, Box::new(body)))
-    .spanned()
-    .labelled("function definition")
-    .boxed();
-
     sexpr.define(
-        choice((slice0, slice1, fn_, class_, if_, match_, binary))
+        choice((slice0, slice1, class_, if_, match_, binary))
             .labelled("expression")
             .as_context()
             .boxed(),

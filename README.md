@@ -28,6 +28,9 @@ npm test
 
 ```
 maturin develop -m coatl-python/Cargo.toml
+# or
+# cd coatl-python
+# maturin develop
 maturin build --release -m coatl-python/Cargo.toml
 ```
 

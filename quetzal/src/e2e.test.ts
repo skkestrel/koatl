@@ -23,7 +23,7 @@ expect.extend({
 
 async function run_e2e(file: string) {
 	try {
-		await execAsync(`PYTHONPATH=tests/e2e ../target/release/coatl run ${file}`);
+		await execAsync(`PYTHONPATH=tests/e2e ../target/debug/coatl run ${file}`);
 	} catch (error: any) {
 		expect(error).e2e_fail();
 	}
