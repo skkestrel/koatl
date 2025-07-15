@@ -98,7 +98,7 @@ where
         static KEYWORDS: &[&str] = &[
             "if", "then", "else", "match", "import", "export", "as", "class", "while", "for", "in",
             "break", "continue", "with", "yield", "global", "nonlocal", "return", "raise", "try",
-            "except", "finally", "and", "or", "not", "assert", "module"
+            "except", "finally", "and", "or", "not", "assert", "module",
         ];
 
         let keywords = HashSet::<String>::from_iter(KEYWORDS.iter().map(|s| s.to_string()));
@@ -430,10 +430,10 @@ where
             ));
         }
 
-        while let Some(c) = self.peek() {
-            if c == ' ' || c == '\t' {
-                self.next();
-            } else if self.try_parse(TokenizeCtx::parse_newline).is_ok() {
+        loop {
+            self.parse_nonsemantic()?;
+
+            if self.try_parse(TokenizeCtx::parse_newline_or_eof).is_ok() {
                 return Ok(());
             } else {
                 return Err(Rich::custom(
@@ -442,8 +442,6 @@ where
                 ));
             }
         }
-
-        Ok(())
     }
 
     fn parse_seq(&mut self, seq: &str) -> TResult<'src, ()> {
