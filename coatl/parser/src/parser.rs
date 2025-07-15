@@ -277,7 +277,7 @@ where
                             Postfix::Call(args) => Expr::Call(Box::new(expr), args),
                             Postfix::Subscript(args) => Expr::Subscript(Box::new(expr), args),
                             Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
-                            Postfix::Then(rhs) => Expr::Pipe(Box::new(expr), Box::new(rhs)),
+                            Postfix::Then(rhs) => Expr::Then(Box::new(expr), Box::new(rhs)),
                         },
                         e.span(),
                     )
@@ -289,7 +289,8 @@ where
 
     unary.define(
         select! {
-            Token::Symbol("@") => UnaryOp::Await,
+            Token::Symbol("@") => UnaryOp::Yield,
+            Token::Symbol("@@") => UnaryOp::YieldFrom,
             Token::Symbol("+") => UnaryOp::Pos,
             Token::Symbol("-") => UnaryOp::Neg,
             Token::Symbol("~") => UnaryOp::Inv,
@@ -356,7 +357,21 @@ where
         },
     );
 
-    let binary = binary3.boxed();
+    let binary4 = make_binary_op(
+        binary3,
+        select! {
+            Token::Symbol("??") => BinaryOp::Coalesce,
+        },
+    );
+
+    let binary5 = make_binary_op(
+        binary4,
+        select! {
+            Token::Symbol("|") => BinaryOp::Pipe,
+        },
+    );
+
+    let binary = binary5.boxed();
 
     let slice0 = just_symbol("..")
         .ignore_then(binary.clone().or_not())
@@ -470,22 +485,8 @@ where
     .labelled("function definition")
     .boxed();
 
-    let yield_ = just(Token::Kw("yield"))
-        .ignore_then(just_symbol("*").or_not())
-        .then(sexpr.clone())
-        .map(|(star, expr)| {
-            if star.is_some() {
-                Expr::YieldFrom(Box::new(expr))
-            } else {
-                Expr::Yield(Box::new(expr))
-            }
-        })
-        .spanned()
-        .labelled("yield")
-        .boxed();
-
     sexpr.define(
-        choice((slice0, slice1, fn_, class_, if_, match_, yield_, binary))
+        choice((slice0, slice1, fn_, class_, if_, match_, binary))
             .labelled("expression")
             .as_context()
             .boxed(),

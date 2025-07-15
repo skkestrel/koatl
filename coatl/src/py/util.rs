@@ -121,6 +121,19 @@ impl PyAstBuilder {
     }
 
     // Expression builders
+    pub fn if_expr<'src>(
+        &self,
+        test: SPyExpr<'src>,
+        body: SPyExpr<'src>,
+        orelse: SPyExpr<'src>,
+    ) -> SPyExpr<'src> {
+        (
+            PyExpr::IfExpr(Box::new(test), Box::new(body), Box::new(orelse)),
+            self.span,
+        )
+            .into()
+    }
+
     pub fn ident<'src>(&self, name: impl Into<PyIdent<'src>>, ctx: PyNameCtx) -> SPyExpr<'src> {
         (PyExpr::Ident(name.into(), ctx), self.span).into()
     }

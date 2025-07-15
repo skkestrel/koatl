@@ -113,6 +113,7 @@ pub enum PyBinaryOp {
     Div,
     Mod,
     Pow,
+    MatMult,
 
     And,
     Or,
@@ -179,6 +180,8 @@ pub enum PyExpr<'a> {
     Call(Box<SPyExpr<'a>>, Vec<PyCallItem<'a>>),
     Attribute(Box<SPyExpr<'a>>, PyIdent<'a>, PyNameCtx),
     Subscript(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>, PyNameCtx),
+
+    IfExpr(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
 
     Tuple(Vec<PyTupleItem<'a>>),
     Dict(Vec<PyDictItem<'a>>),

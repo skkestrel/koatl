@@ -2,7 +2,7 @@ use parser::ast::Span;
 
 use crate::{py::ast::*, transform::TfResult};
 
-const LOW_PREC: f32 = -1.0;
+const LOW_PREC: f32 = -100.0;
 const HIGH_PREC: f32 = 100.0;
 
 pub struct EmitCtx {
@@ -127,7 +127,7 @@ impl PyBinaryOp {
             | PyBinaryOp::And
             | PyBinaryOp::Or => 0.0,
             PyBinaryOp::Add | PyBinaryOp::Sub => 1.0,
-            PyBinaryOp::Mult | PyBinaryOp::Div | PyBinaryOp::Mod => 2.0,
+            PyBinaryOp::Mult | PyBinaryOp::Div | PyBinaryOp::Mod | PyBinaryOp::MatMult => 2.0,
             PyBinaryOp::Pow => 3.0,
         }
     }
@@ -140,6 +140,7 @@ impl PyBinaryOp {
             PyBinaryOp::Div => "/",
             PyBinaryOp::Mod => "%",
             PyBinaryOp::Pow => "**",
+            PyBinaryOp::MatMult => "@",
             PyBinaryOp::Eq => "==",
             PyBinaryOp::Neq => "!=",
             PyBinaryOp::Lt => "<",
@@ -328,6 +329,16 @@ impl SPyExpr<'_> {
                     ctx.emit(":");
                     step.emit_to(ctx, LOW_PREC)?;
                 }
+            }
+            PyExpr::IfExpr(cond, if_, else_) => {
+                // TODO precedence here?
+                ctx.emit("(");
+                if_.emit_to(ctx, LOW_PREC)?;
+                ctx.emit(" if ");
+                cond.emit_to(ctx, LOW_PREC)?;
+                ctx.emit(" else ");
+                else_.emit_to(ctx, LOW_PREC)?;
+                ctx.emit(")");
             }
         };
 

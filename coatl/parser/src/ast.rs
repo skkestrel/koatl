@@ -14,6 +14,7 @@ pub enum BinaryOp {
     MatMul,
     Div,
     Exp,
+
     Lt,
     Leq,
     Gt,
@@ -22,6 +23,9 @@ pub enum BinaryOp {
     Neq,
     Is,
     Nis,
+
+    Coalesce,
+    Pipe,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -29,7 +33,8 @@ pub enum UnaryOp {
     Inv,
     Pos,
     Neg,
-    Await,
+    Yield,
+    YieldFrom,
 }
 
 pub type Ident<'a> = &'a str;
@@ -150,10 +155,7 @@ pub enum Expr<'a> {
     Call(Box<SExpr<'a>>, Vec<SCallItem<'a>>),
     Subscript(Box<SExpr<'a>>, Vec<ListItem<'a>>),
     Attribute(Box<SExpr<'a>>, SIdent<'a>),
-    Pipe(Box<SExpr<'a>>, Box<SExpr<'a>>),
-
-    Yield(Box<SExpr<'a>>),
-    YieldFrom(Box<SExpr<'a>>),
+    Then(Box<SExpr<'a>>, Box<SExpr<'a>>),
 
     Fn(Vec<ArgItem<'a>>, Box<SBlock<'a>>),
     Fstr(Spanned<String>, Vec<(SFmtExpr<'a>, Spanned<String>)>),

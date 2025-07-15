@@ -223,7 +223,9 @@ where
     }
 
     fn parse_symbol(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
-        const POLYGRAMS: &[&str] = &["===", "<=>", "=>", "..", "==", "<>", "<=", ">=", "//", "**"];
+        const POLYGRAMS: &[&str] = &[
+            "===", "<=>", "=>", "..", "==", "<>", "<=", ">=", "//", "**", "??", "@@", ".=",
+        ];
         const MONOGRAMS: &str = "[]()<>.,;:!?@$%^&*+-=|\\/`~";
 
         let saved = self.input.save();

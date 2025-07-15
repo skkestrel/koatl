@@ -156,16 +156,8 @@ impl AstBuilder {
         )
     }
 
-    pub fn pipe<'src>(&self, left: SExpr<'src>, right: SExpr<'src>) -> SExpr<'src> {
-        (Expr::Pipe(Box::new(left), Box::new(right)), self.span)
-    }
-
-    pub fn yield_<'src>(&self, value: SExpr<'src>) -> SExpr<'src> {
-        (Expr::Yield(Box::new(value)), self.span)
-    }
-
-    pub fn yield_from<'src>(&self, value: SExpr<'src>) -> SExpr<'src> {
-        (Expr::YieldFrom(Box::new(value)), self.span)
+    pub fn then<'src>(&self, left: SExpr<'src>, right: SExpr<'src>) -> SExpr<'src> {
+        (Expr::Then(Box::new(left), Box::new(right)), self.span)
     }
 
     pub fn function<'src>(&self, args: Vec<ArgItem<'src>>, body: SBlock<'src>) -> SExpr<'src> {

@@ -531,6 +531,12 @@ impl<'src> PyExprExt<'src> for SPyExpr<'src> {
                 let expr_ast = expr.emit_py(ctx)?;
                 ctx.ast_node("YieldFrom", (expr_ast,), &self.tl_span)?
             }
+            PyExpr::IfExpr(cond, if_, else_) => {
+                let cond_ast = cond.emit_py(ctx)?;
+                let if_ast = if_.emit_py(ctx)?;
+                let else_ast = else_.emit_py(ctx)?;
+                ctx.ast_node("IfExp", (cond_ast, if_ast, else_ast), &self.tl_span)?
+            }
         })
     }
 }

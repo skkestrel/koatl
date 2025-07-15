@@ -1071,7 +1071,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     pre_stmts: aux_stmts,
                 })
             }
-            Expr::Pipe(lhs, rhs) => {
+            Expr::Then(lhs, rhs) => {
                 let lhs = lhs.transform(ctx)?;
                 let rhs = rhs.transform(ctx)?;
 
@@ -1169,22 +1169,6 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 })
             }
             Expr::Match(subject, cases) => transform_match_expr(ctx, subject, cases, span),
-            Expr::Yield(expr) => {
-                let value = expr.transform(ctx)?;
-
-                Ok(PyExprWithPre {
-                    expr: (PyExpr::Yield(Box::new(value.expr)), *span).into(),
-                    pre_stmts: value.pre_stmts,
-                })
-            }
-            Expr::YieldFrom(expr) => {
-                let value = expr.transform(ctx)?;
-
-                Ok(PyExprWithPre {
-                    expr: (PyExpr::YieldFrom(Box::new(value.expr)), *span).into(),
-                    pre_stmts: value.pre_stmts,
-                })
-            }
             Expr::Binary(op, lhs, rhs) => {
                 let lhs = lhs.transform(ctx)?;
                 let rhs = rhs.transform(ctx)?;
@@ -1193,39 +1177,59 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 aux_stmts.extend(rhs.pre_stmts);
 
                 let py_op = match op {
-                    BinaryOp::Add => Some(PyBinaryOp::Add),
-                    BinaryOp::Sub => Some(PyBinaryOp::Sub),
-                    BinaryOp::Mul => Some(PyBinaryOp::Mult),
-                    BinaryOp::Div => Some(PyBinaryOp::Div),
-                    BinaryOp::Mod => Some(PyBinaryOp::Mod),
-                    BinaryOp::Exp => Some(PyBinaryOp::Pow),
+                    BinaryOp::Add => PyBinaryOp::Add,
+                    BinaryOp::Sub => PyBinaryOp::Sub,
+                    BinaryOp::Mul => PyBinaryOp::Mult,
+                    BinaryOp::Div => PyBinaryOp::Div,
+                    BinaryOp::Mod => PyBinaryOp::Mod,
+                    BinaryOp::Exp => PyBinaryOp::Pow,
+                    BinaryOp::MatMul => PyBinaryOp::MatMult,
 
-                    BinaryOp::Lt => Some(PyBinaryOp::Lt),
-                    BinaryOp::Gt => Some(PyBinaryOp::Gt),
-                    BinaryOp::Leq => Some(PyBinaryOp::Leq),
-                    BinaryOp::Geq => Some(PyBinaryOp::Geq),
-                    BinaryOp::Eq => Some(PyBinaryOp::Eq),
-                    BinaryOp::Neq => Some(PyBinaryOp::Neq),
-                    BinaryOp::Is => Some(PyBinaryOp::Is),
-                    BinaryOp::Nis => Some(PyBinaryOp::Nis),
-                    _ => None,
+                    BinaryOp::Lt => PyBinaryOp::Lt,
+                    BinaryOp::Gt => PyBinaryOp::Gt,
+                    BinaryOp::Leq => PyBinaryOp::Leq,
+                    BinaryOp::Geq => PyBinaryOp::Geq,
+                    BinaryOp::Eq => PyBinaryOp::Eq,
+                    BinaryOp::Neq => PyBinaryOp::Neq,
+                    BinaryOp::Is => PyBinaryOp::Is,
+                    BinaryOp::Nis => PyBinaryOp::Nis,
+
+                    BinaryOp::Pipe => {
+                        return Ok(PyExprWithPre {
+                            expr: (
+                                PyExpr::Call(Box::new(rhs.expr), vec![PyCallItem::Arg(lhs.expr)]),
+                                *span,
+                            )
+                                .into(),
+                            pre_stmts: aux_stmts,
+                        });
+                    }
+
+                    BinaryOp::Coalesce => {
+                        let a = PyAstBuilder::new(*span);
+                        return Ok(PyExprWithPre {
+                            expr: a.if_expr(
+                                a.binary(
+                                    PyBinaryOp::Is,
+                                    lhs.expr.clone(),
+                                    a.literal(PyLiteral::None),
+                                ),
+                                rhs.expr,
+                                lhs.expr,
+                            ),
+                            pre_stmts: aux_stmts,
+                        });
+                    }
                 };
 
-                if let Some(py_op) = py_op {
-                    return Ok(PyExprWithPre {
-                        expr: (
-                            PyExpr::Binary(py_op, Box::new(lhs.expr), Box::new(rhs.expr)),
-                            *span,
-                        )
-                            .into(),
-                        pre_stmts: aux_stmts,
-                    });
-                } else {
-                    return Err(TfErrBuilder::default()
-                        .message(format!("Unsupported binary operator: {:?}", op))
-                        .span(*span)
-                        .build_errs());
-                }
+                return Ok(PyExprWithPre {
+                    expr: (
+                        PyExpr::Binary(py_op, Box::new(lhs.expr), Box::new(rhs.expr)),
+                        *span,
+                    )
+                        .into(),
+                    pre_stmts: aux_stmts,
+                });
             }
             Expr::Unary(op, expr) => {
                 let expr = expr.transform(ctx)?;
@@ -1235,7 +1239,18 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     UnaryOp::Neg => PyUnaryOp::Neg,
                     UnaryOp::Pos => PyUnaryOp::Pos,
                     UnaryOp::Inv => PyUnaryOp::Inv,
-                    UnaryOp::Await => todo!(),
+                    UnaryOp::Yield => {
+                        return Ok(PyExprWithPre {
+                            expr: (PyExpr::Yield(Box::new(expr.expr)), *span).into(),
+                            pre_stmts: aux_stmts,
+                        });
+                    }
+                    UnaryOp::YieldFrom => {
+                        return Ok(PyExprWithPre {
+                            expr: (PyExpr::YieldFrom(Box::new(expr.expr)), *span).into(),
+                            pre_stmts: aux_stmts,
+                        });
+                    }
                 };
 
                 return Ok(PyExprWithPre {
