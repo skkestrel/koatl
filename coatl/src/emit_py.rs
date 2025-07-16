@@ -1,5 +1,5 @@
-use coatl::parser::ast::*;
-use coatl::py::ast::*;
+use coatl_core::parser::ast::*;
+use coatl_core::py::ast::*;
 
 use pyo3::{
     call::PyCallArgs,

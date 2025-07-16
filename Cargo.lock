@@ -66,17 +66,16 @@ dependencies = [
 name = "coatl"
 version = "0.1.0"
 dependencies = [
- "ariadne",
- "parser",
+ "coatl-core",
  "pyo3",
 ]
 
 [[package]]
-name = "coatl-python"
+name = "coatl-core"
 version = "0.1.0"
 dependencies = [
- "coatl",
- "pyo3",
+ "ariadne",
+ "parser",
 ]
 
 [[package]]

@@ -306,16 +306,32 @@ where
     fn make_binary_op<'tokens, 'src: 'tokens, I, POp, PArg>(
         arg: PArg,
         op: POp,
+        right_assoc: bool,
     ) -> impl Parser<'tokens, I, SExpr<'src>, extra::Err<Rich<'tokens, Token<'src>, Span>>> + Clone
     where
-        PArg: Parser<'tokens, I, SExpr<'src>, extra::Err<Rich<'tokens, Token<'src>, Span>>> + Clone,
-        POp: Parser<'tokens, I, BinaryOp, extra::Err<Rich<'tokens, Token<'src>, Span>>> + Clone,
+        PArg: Parser<'tokens, I, SExpr<'src>, extra::Err<Rich<'tokens, Token<'src>, Span>>>
+            + Clone
+            + 'tokens,
+        POp: Parser<'tokens, I, BinaryOp, extra::Err<Rich<'tokens, Token<'src>, Span>>>
+            + Clone
+            + 'tokens,
         I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
     {
-        arg.clone()
-            .foldl_with(op.then(arg).repeated(), |lhs, (op, rhs), e| {
-                (Expr::Binary(op, Box::new(lhs), Box::new(rhs)), e.span())
-            })
+        if right_assoc {
+            arg.clone()
+                .then(op)
+                .repeated()
+                .foldr_with(arg, |(lhs, op), rhs, e| {
+                    (Expr::Binary(op, Box::new(lhs), Box::new(rhs)), e.span())
+                })
+                .boxed()
+        } else {
+            arg.clone()
+                .foldl_with(op.then(arg).repeated(), |lhs, (op, rhs), e| {
+                    (Expr::Binary(op, Box::new(lhs), Box::new(rhs)), e.span())
+                })
+                .boxed()
+        }
     }
 
     let binary0 = make_binary_op(
@@ -323,6 +339,7 @@ where
         select! {
             Token::Symbol("**") => BinaryOp::Exp,
         },
+        true,
     );
 
     let binary1 = make_binary_op(
@@ -333,6 +350,7 @@ where
             Token::Symbol("%") => BinaryOp::Mod,
             Token::Symbol("@") => BinaryOp::MatMul,
         },
+        false,
     );
 
     let binary2 = make_binary_op(
@@ -341,6 +359,7 @@ where
             Token::Symbol("+") => BinaryOp::Add,
             Token::Symbol("-") => BinaryOp::Sub,
         },
+        false,
     );
 
     let binary3 = make_binary_op(
@@ -355,6 +374,7 @@ where
             Token::Symbol("===") => BinaryOp::Is,
             Token::Symbol("<=>") => BinaryOp::Nis,
         },
+        false,
     );
 
     let binary4 = make_binary_op(
@@ -362,6 +382,7 @@ where
         select! {
             Token::Symbol("??") => BinaryOp::Coalesce,
         },
+        false,
     );
 
     let arg_list = enumeration(choice((
@@ -409,6 +430,7 @@ where
         select! {
             Token::Symbol("|") => BinaryOp::Pipe,
         },
+        false,
     );
 
     let binary = binary5.boxed();

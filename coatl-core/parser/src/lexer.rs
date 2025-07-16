@@ -556,7 +556,6 @@ where
                 }
                 current_str = String::new();
 
-                // TODO either parse a new block or an inline expression
                 self.parse_nonsemantic()?;
                 let _ = self.try_parse(|x| x.parse_newline());
 

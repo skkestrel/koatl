@@ -1,218 +1,41 @@
-pub mod parser;
-pub mod py;
-pub mod transform;
+pub mod emit_py;
 
-use parser::ast::{Block, Span};
+use coatl_core::{transpile_to_py_ast, TranspileOptions};
+use pyo3::prelude::*;
 
-use crate::py::ast::{PyImportAlias, PyLiteral, PyTupleItem};
-use crate::py::util::PyAstBuilder;
-use crate::py::{ast::PyBlock, emit::EmitCtx};
-use crate::transform::{TransformOutput, transform_ast};
-use parser::{TokenList, parse_tokens, tokenize};
-
-pub enum TlErrKind {
-    Parse,
-    Transform,
-    Emit,
-}
-
-pub struct TlErr {
-    pub kind: TlErrKind,
-    pub message: String,
-    pub span: Option<Span>,
-    pub contexts: Vec<(String, Span)>,
-}
-
-pub type TlResult<T> = Result<T, Vec<TlErr>>;
-
-pub struct TranspileOptions {
-    pub treat_final_as_expr: bool,
-    pub inject_prelude: bool,
-    pub inject_runtime: bool,
-    pub set_exports: bool,
-}
-
-impl TranspileOptions {
-    pub fn script() -> Self {
-        TranspileOptions {
-            treat_final_as_expr: false,
-            inject_prelude: true,
-            inject_runtime: true,
-            set_exports: false,
+#[pyfunction(signature=(src, mode="module"))]
+fn transpile(src: &str, mode: &str) -> PyResult<PyObject> {
+    let options = match mode {
+        "module" => TranspileOptions::module(),
+        "prelude" => TranspileOptions::prelude(),
+        "interactive" => TranspileOptions::interactive(),
+        "script" => TranspileOptions::script(),
+        _ => {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Invalid mode. Use 'module' or 'prelude' or 'interactive' or 'script'.",
+            ))
         }
-    }
+    };
 
-    pub fn interactive() -> Self {
-        let mut opt = TranspileOptions::script();
-        opt.treat_final_as_expr = true;
-        opt.inject_prelude = false;
-        opt.inject_runtime = false;
-        opt
-    }
-
-    pub fn module() -> Self {
-        TranspileOptions {
-            treat_final_as_expr: false,
-            inject_prelude: true,
-            inject_runtime: true,
-            set_exports: true,
-        }
-    }
-
-    pub fn prelude() -> Self {
-        let mut opt = TranspileOptions::module();
-        opt.inject_prelude = false; // don't inject the prelude when loading prelude
-        opt
-    }
-}
-
-pub fn transpile_to_py_ast<'src>(
-    src: &'src str,
-    options: TranspileOptions,
-) -> TlResult<PyBlock<'src>> {
-    let tl_ast = parse_tl(src)?;
-
-    let output: TransformOutput<'src> = transform_ast(&src, &tl_ast, options.treat_final_as_expr)
-        .map_err(|e| {
-        e.0.into_iter()
-            .map(|e| TlErr {
-                kind: TlErrKind::Transform,
-                message: e.message,
-                span: e.span,
-                contexts: vec![],
-            })
-            .collect::<Vec<_>>()
+    let py_ast = transpile_to_py_ast(src, options).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyException, _>(format!(
+            "Transpilation error: {}",
+            e.iter()
+                .map(|err| err.message.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
     })?;
 
-    let mut py_ast = output.py_block;
-
-    let a = PyAstBuilder::new(Span {
-        start: 0,
-        end: 0,
-        context: (),
-    });
-
-    if options.inject_prelude {
-        py_ast.0.insert(
-            0,
-            a.import_from(
-                Some("coatl.prelude".into()),
-                vec![PyImportAlias {
-                    name: "*".into(),
-                    as_name: None,
-                }],
-                0,
-            ),
-        );
-    }
-
-    if options.inject_runtime {
-        py_ast.0.insert(
-            0,
-            a.import_from(
-                Some("coatl.runtime".into()),
-                vec![PyImportAlias {
-                    name: "*".into(),
-                    as_name: None,
-                }],
-                0,
-            ),
-        );
-    }
-
-    if options.set_exports {
-        py_ast.0.push(a.expr(a.call(
-            a.load_ident("set_exports"),
-            vec![
-                    a.call_arg(a.load_ident("__package__")),
-                    a.call_arg(a.call(a.load_ident("globals"), vec![])),
-                    a.call_arg(
-                        a.tuple(
-                            output
-                                .exports
-                                .iter()
-                                .map(|x| {
-                                    PyTupleItem::Item(a.literal(PyLiteral::Str(x.clone())))
-                                })
-                                .collect(),
-                        ),
-                    ),
-                    a.call_arg(
-                        a.tuple(
-                            output
-                                .module_star_exports
-                                .iter()
-                                .map(|x| {
-                                    PyTupleItem::Item(a.literal(PyLiteral::Str(x.clone())))
-                                })
-                                .collect(),
-                        ),
-                ),
-            ],
-        )));
-    }
-
-    Ok(py_ast)
-}
-
-pub fn transpile(src: &str, options: TranspileOptions) -> TlResult<String> {
-    let mut py_ast = transpile_to_py_ast(src, options)?;
-
-    let mut ctx = EmitCtx {
-        indentation: 0,
-        source: String::new(),
-    };
-    py_ast.emit_to(&mut ctx, 0).map_err(|e| {
-        e.0.into_iter()
-            .map(|e| TlErr {
-                kind: TlErrKind::Emit,
-                message: e.message,
-                span: e.span,
-                contexts: vec![],
-            })
-            .collect::<Vec<_>>()
+    let py_ast_obj = emit_py::emit_py(&py_ast, src).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyException, _>(format!("Emission error: {}", e.message))
     })?;
 
-    Ok(ctx.source)
+    Ok(py_ast_obj)
 }
 
-pub fn parse_tl<'src>(src: &'src str) -> TlResult<::parser::ast::SBlock<'src>> {
-    let mut errs = vec![];
-
-    let (tokens, token_errs) = tokenize(&src);
-    errs.extend(token_errs.into_iter().map(|e| {
-        TlErr {
-            kind: TlErrKind::Parse,
-            message: e.reason().to_string(),
-            span: Some(*e.span()),
-            contexts: e
-                .contexts()
-                .map(|(label, span)| (label.to_string(), *span))
-                .collect(),
-        }
-    }));
-
-    let tokens: TokenList<'src> = match tokens {
-        Some(tokens) => tokens,
-        None => return Err(errs),
-    };
-    // println!("tokens: {tokens}");
-
-    let (tl_ast, parser_errs) = parse_tokens(&src, &tokens);
-    errs.extend(parser_errs.into_iter().map(|e| {
-        TlErr {
-            kind: TlErrKind::Parse,
-            message: e.reason().to_string(),
-            span: Some(*e.span()),
-            contexts: e
-                .contexts()
-                .map(|(label, span)| (label.to_string(), *span))
-                .collect(),
-        }
-    }));
-
-    let tl_ast: (Block<'src>, Span) = tl_ast.ok_or_else(|| errs)?;
-    // println!("AST: {ast:?}");
-
-    Ok(tl_ast)
+#[pymodule(name = "_rs")]
+fn py_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(transpile, m)?)?;
+    Ok(())
 }

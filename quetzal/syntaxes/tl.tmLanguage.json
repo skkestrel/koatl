@@ -1962,7 +1962,7 @@
 			"patterns": [
 				{
 					"name": "comment.line.number-sign.tl",
-					"begin": "(\\#)(!?=-)",
+					"begin": "(\\#)(?!=-)",
 					"beginCaptures": {
 						"1": {
 							"name": "punctuation.definition.comment.tl"

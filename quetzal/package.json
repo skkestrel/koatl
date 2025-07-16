@@ -7,9 +7,6 @@
 	"engines": {
 		"vscode": "^1.102.0"
 	},
-	"scripts": {
-		"test": "cargo build && jest"
-	},
 	"categories": [
 		"Programming Languages"
 	],

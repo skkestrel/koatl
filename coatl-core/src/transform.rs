@@ -214,7 +214,7 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
                         final_expr: Some(t.expr),
                     })
                 } else {
-                    // TODO this clone is bad
+                    // TODO this clone is bad - refactor AST ownership?
                     let f = (Stmt::Expr(sexpr.clone()), sexpr.1);
                     let stmts = f.transform(ctx, is_top_level)?;
 
@@ -662,7 +662,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 let target: &SExpr<'src> = target;
 
                 if let Expr::Ident((ident, _)) = &target.0 {
-                    // TODO unpacking
+                    // TODO destructuring
 
                     let iter_node: PyExprWithPre<'src> = iter.transform(ctx)?;
                     let aux_stmts = iter_node.pre_stmts;
@@ -1263,65 +1263,51 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 let obj = obj.transform(ctx)?;
                 let mut aux_stmts = obj.pre_stmts;
 
-                let processed_indices: TfResult<Vec<_>> = indices
-                    .into_iter()
-                    .map(|index| match index {
-                        ListItem::Spread(_expr) => {
-                            // TODO
-
-                            Err(TfErrBuilder::default()
-                                .message("Spread in subscripts not yet supported")
-                                .span(*span)
-                                .build_errs())
-                        }
-                        ListItem::Item(expr) => {
-                            let e = expr.transform(ctx)?;
-                            aux_stmts.extend(e.pre_stmts);
-                            Ok(e.expr)
-                        }
-                    })
-                    .collect();
-
-                let indices = processed_indices?;
-
-                if indices.len() == 1 {
-                    return Ok(PyExprWithPre {
-                        expr: (
-                            PyExpr::Subscript(
-                                Box::new(obj.expr),
-                                Box::new(indices[0].clone()),
-                                py_ctx,
-                            ),
-                            *span,
-                        )
-                            .into(),
-                        pre_stmts: aux_stmts,
-                    });
+                let single_item = if indices.len() == 1 {
+                    match &indices[0] {
+                        ListItem::Item(item) => Some(item),
+                        ListItem::Spread(_) => None,
+                    }
                 } else {
-                    Ok(PyExprWithPre {
-                        expr: (
-                            PyExpr::Subscript(
-                                Box::new(obj.expr),
-                                Box::new(
-                                    (
-                                        PyExpr::Tuple(
-                                            indices
-                                                .into_iter()
-                                                .map(|i| PyTupleItem::Item(i).into())
-                                                .collect(),
-                                        ),
-                                        *span,
-                                    )
-                                        .into(),
-                                ),
-                                py_ctx,
-                            ),
-                            *span,
-                        )
-                            .into(),
-                        pre_stmts: aux_stmts,
-                    })
-                }
+                    None
+                };
+
+                let subscript_expr = if let Some(single_item) = single_item {
+                    let e = single_item.transform(ctx)?;
+                    aux_stmts.extend(e.pre_stmts);
+                    e.expr
+                } else {
+                    (
+                        PyExpr::Tuple(
+                            indices
+                                .into_iter()
+                                .map(|i| match i {
+                                    ListItem::Item(expr) => {
+                                        let e = expr.transform(ctx)?;
+                                        aux_stmts.extend(e.pre_stmts);
+                                        Ok(PyTupleItem::Item(e.expr))
+                                    }
+                                    ListItem::Spread(expr) => {
+                                        let e = expr.transform(ctx)?;
+                                        aux_stmts.extend(e.pre_stmts);
+                                        Ok(PyTupleItem::Spread(e.expr))
+                                    }
+                                })
+                                .collect::<TfResult<Vec<_>>>()?,
+                        ),
+                        *span,
+                    )
+                        .into()
+                };
+
+                Ok(PyExprWithPre {
+                    expr: (
+                        PyExpr::Subscript(Box::new(obj.expr), Box::new(subscript_expr), py_ctx),
+                        *span,
+                    )
+                        .into(),
+                    pre_stmts: aux_stmts,
+                })
             }
             Expr::If(cond, then_block, else_block) => {
                 transform_if_expr(ctx, cond, then_block, else_block, span)

@@ -106,7 +106,7 @@ impl<'a> std::iter::FromIterator<SPyStmt<'a>> for PyBlock<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PyBinaryOp {
     Add,
     Sub,

@@ -230,11 +230,13 @@ impl SPyExpr<'_> {
                 let prec = op.precedence();
                 set_prec(prec);
 
-                left.emit_sided_to(ctx, prec, true)?;
+                let right_assoc = *op == PyBinaryOp::Pow;
+
+                left.emit_sided_to(ctx, prec, true ^ right_assoc)?;
                 ctx.emit(" ");
                 op.emit_to(ctx);
                 ctx.emit(" ");
-                right.emit_sided_to(ctx, prec, false)?;
+                right.emit_sided_to(ctx, prec, false ^ right_assoc)?;
             }
             PyExpr::Unary(op, expr) => {
                 let prec = op.precedence();
@@ -544,7 +546,7 @@ impl SPyStmt<'_> {
                 body.emit_to(ctx, 1)?;
                 for handler in handlers {
                     ctx.emit_indent();
-                    ctx.emit("except:"); // TODO specific cases
+                    ctx.emit("except:"); // TODO emit for guarded cases
                     ctx.emit_endl();
                     handler.body.emit_to(ctx, 1)?;
                 }
