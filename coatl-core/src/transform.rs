@@ -3,6 +3,9 @@ use std::borrow::Cow;
 use crate::py::{ast::*, util::PyAstBuilder};
 use parser::ast::*;
 
+// TODO implement $
+// TODO add never to transform_final_expr
+
 #[derive(Debug)]
 pub struct TfErr {
     pub message: String,
@@ -750,7 +753,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                         None
                     };
 
-                    let body_block = body.transform_with_final_stmt(ctx)?;
+                    let body_block = except.body.transform_with_final_stmt(ctx)?;
 
                     let except_ast = PyExceptHandler {
                         typ: Some(type_node),

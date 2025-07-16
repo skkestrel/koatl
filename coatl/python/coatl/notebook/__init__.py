@@ -8,8 +8,9 @@ import ast
 def source_code_transformer(lines):
     source = "".join(lines)
     transformed_source = ast.unparse(transpile(source, mode="interactive"))
+    lines = [line + '\n' for line in transformed_source.splitlines()]
 
-    return [line + '\n' for line in transformed_source.splitlines()]
+    return lines
 
 
 def import_prelude(namespace):

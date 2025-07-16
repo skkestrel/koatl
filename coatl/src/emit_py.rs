@@ -304,8 +304,18 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                         ctx.ast_cls("ExceptHandler", (typ_ast, name_ast, handler_body_ast))
                     })
                     .collect();
-                let finally_ast = finally_block.as_ref().map(|f| f.emit_py(ctx)).transpose()?;
-                ctx.ast_node("Try", (body_ast, handlers_ast?, finally_ast), &self.tl_span)
+
+                let finally_ast = finally_block
+                    .as_ref()
+                    .map(|f| f.emit_py(ctx))
+                    .transpose()?
+                    .unwrap_or(PyList::empty(ctx.py).unbind());
+
+                ctx.ast_node(
+                    "Try",
+                    (body_ast, handlers_ast?, PyList::empty(ctx.py), finally_ast),
+                    &self.tl_span,
+                )
             }
             PyStmt::Break => ctx.ast_node("Break", (), &self.tl_span),
             PyStmt::Continue => ctx.ast_node("Continue", (), &self.tl_span),
