@@ -3,9 +3,15 @@
 https://github.com/pyenv/pyenv-installer
 
 ```
+cd coatl
 pyenv virtualenv pyo3
 pyenv local pyo3
 pip install maturin
+
+maturin develop -m ./Coatl.toml
+# maturin build --release -m coatl/Cargo.toml
+
+pytest
 ```
 
 # Building cli tool
@@ -14,24 +20,6 @@ pip install maturin
 cargo test
 cargo build
 target/debug/coatl trans sample/hello_world.tl
-```
-
-# Running e2e tests
-
-```
-cd quetzal
-npm install
-npm test
-```
-
-# Installing python package
-
-```
-maturin develop -m coatl-python/Cargo.toml
-# or
-# cd coatl-python
-# maturin develop
-maturin build --release -m coatl-python/Cargo.toml
 ```
 
 # Installing the kernel

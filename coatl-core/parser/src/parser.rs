@@ -317,18 +317,38 @@ where
             + 'tokens,
         I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
     {
-        if right_assoc {
+        if !right_assoc {
             arg.clone()
-                .then(op)
-                .repeated()
-                .foldr_with(arg, |(lhs, op), rhs, e| {
+                .foldl_with(op.then(arg).repeated(), |lhs, (op, rhs), e| {
                     (Expr::Binary(op, Box::new(lhs), Box::new(rhs)), e.span())
                 })
                 .boxed()
         } else {
             arg.clone()
-                .foldl_with(op.then(arg).repeated(), |lhs, (op, rhs), e| {
-                    (Expr::Binary(op, Box::new(lhs), Box::new(rhs)), e.span())
+                .then(op.then(arg).repeated().collect::<Vec<_>>())
+                .map_with(|(lhs, then), e| {
+                    if then.is_empty() {
+                        lhs
+                    } else {
+                        let mut lhs_op = vec![];
+                        let mut rhs = lhs;
+
+                        // arg, (op, arg, op, arg)
+                        // to
+                        // (arg, op, arg, op), arg
+
+                        for (op, arg) in then {
+                            let old_rhs = rhs;
+                            rhs = arg;
+
+                            lhs_op.push((old_rhs, op));
+                        }
+
+                        lhs_op.into_iter().rfold(rhs, |rhs, (lhs, op)| {
+                            // TODO fix the spans here to point to the right place
+                            (Expr::Binary(op, Box::new(lhs), Box::new(rhs)), e.span())
+                        })
+                    }
                 })
                 .boxed()
         }

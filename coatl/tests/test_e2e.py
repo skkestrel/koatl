@@ -13,7 +13,7 @@ def get_test_data():
         test_cases.append(pytest.param(file_path, id=str(file_path)))
         print(file_path)
             
-    return test_cases[:5]
+    return test_cases
 
 @pytest.mark.parametrize("test_file", get_test_data())
 def test_e2e(test_file):
