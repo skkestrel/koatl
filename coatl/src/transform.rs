@@ -490,6 +490,66 @@ trait SStmtExt<'src> {
     ) -> TfResult<PyBlock<'src>>;
 }
 
+fn get_scope_modifier<'a>(
+    mods: &'a Vec<AssignModifier>,
+    is_top_level: bool,
+    span: &Span,
+) -> TfResult<Option<&'a AssignModifier>> {
+    let scope_modifier = mods
+        .iter()
+        .filter(|m| {
+            matches!(
+                m,
+                AssignModifier::Export | AssignModifier::Global | AssignModifier::Nonlocal
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if scope_modifier.len() > 1 {
+        return Err(TfErrBuilder::default()
+            .message("Only one scope modifier is allowed in an assignment")
+            .span(*span)
+            .build_errs());
+    }
+
+    let scope_modifier = scope_modifier.first().map(|x| *x);
+
+    if !is_top_level && scope_modifier.is_some_and(|x| *x == AssignModifier::Export) {
+        return Err(TfErrBuilder::default()
+            .message("Export modifier is only allowed at the top level")
+            .span(*span)
+            .build_errs());
+    }
+
+    Ok(scope_modifier)
+}
+
+fn get_scope_modifying_statements<'a>(
+    ctx: &mut TfCtx<'a>,
+    scope_modifier: Option<&AssignModifier>,
+    decls: Vec<PyIdent<'a>>,
+    span: &Span,
+) -> TfResult<PyBlock<'a>> {
+    let mut stmts = PyBlock::new();
+
+    if let Some(scope_modifier) = scope_modifier {
+        match scope_modifier {
+            AssignModifier::Export => ctx.exports.extend(decls),
+            AssignModifier::Global => {
+                // exports are implemented by lifting into global scope
+
+                stmts.push((PyStmt::Global(decls), *span).into());
+            }
+
+            AssignModifier::Nonlocal => {
+                stmts.push((PyStmt::Nonlocal(decls), *span).into());
+            }
+        }
+    }
+
+    Ok(stmts)
+}
+
 impl<'src> SStmtExt<'src> for SStmt<'src> {
     fn transform<'ast>(
         &'ast self,
@@ -536,81 +596,57 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 Ok(stmts)
             }
             Stmt::Assign(target, value, modifiers) => {
-                if let (Expr::Ident((ident, _ident_span)), Expr::Fn(arglist, body)) =
-                    (&target.0, &value.0)
-                {
-                    return make_fndef_stmts(
-                        ctx,
-                        (*ident).into(),
-                        arglist,
-                        FnDefBody::Block(body),
-                        span,
-                    );
-                }
+                let scope_modifier = get_scope_modifier(modifiers, top_level, span)?;
 
-                if let (Expr::Ident((ident, _ident_span)), Expr::Class(bases, body)) =
-                    (&target.0, &value.0)
-                {
-                    return make_classdef_stmts(ctx, (*ident).into(), &bases, &body, span);
-                }
-
-                let scope_modifier = modifiers
-                    .iter()
-                    .filter(|m| {
-                        matches!(
-                            m,
-                            AssignModifier::Export
-                                | AssignModifier::Global
-                                | AssignModifier::Nonlocal
+                let (binding_stmts, decls): (PyBlock, Vec<PyIdent>) =
+                    if let (Expr::Ident((ident, _ident_span)), Expr::Fn(arglist, body)) =
+                        (&target.0, &value.0)
+                    {
+                        (
+                            make_fndef_stmts(
+                                ctx,
+                                (*ident).into(),
+                                arglist,
+                                FnDefBody::Block(body),
+                                span,
+                            )?,
+                            vec![(*ident).into()],
                         )
-                    })
-                    .collect::<Vec<_>>();
+                    } else if let (Expr::Ident((ident, _ident_span)), Expr::Class(bases, body)) =
+                        (&target.0, &value.0)
+                    {
+                        (
+                            make_classdef_stmts(ctx, (*ident).into(), &bases, &body, span)?,
+                            vec![(*ident).into()],
+                        )
+                    } else {
+                        let value_node = value.transform(ctx)?;
+                        let mut stmts = value_node.pre_stmts;
 
-                if scope_modifier.len() > 1 {
-                    return Err(TfErrBuilder::default()
-                        .message("Only one scope modifier is allowed in an assignment")
-                        .span(*span)
-                        .build_errs());
-                }
+                        let decl_only = scope_modifier.is_some();
+                        let destructure = destructure(ctx, target, decl_only)?;
 
-                let scope_modifier = scope_modifier.first();
+                        stmts.push(
+                            (
+                                PyStmt::Assign(destructure.assign_to, value_node.expr),
+                                target.1,
+                            )
+                                .into(),
+                        );
+                        stmts.extend(destructure.post_stmts);
 
-                if !top_level && scope_modifier.is_some_and(|x| **x == AssignModifier::Export) {
-                    return Err(TfErrBuilder::default()
-                        .message("Export modifier is only allowed at the top level")
-                        .span(*span)
-                        .build_errs());
-                }
+                        (stmts, destructure.declarations)
+                    };
 
-                let value_node = value.transform(ctx)?;
-                let mut stmts = value_node.pre_stmts;
-                let decl_only = scope_modifier.is_some();
-                let destructure = destructure(ctx, target, decl_only)?;
+                let mut stmts = PyBlock::new();
 
-                if let Some(scope_modifier) = scope_modifier {
-                    match scope_modifier {
-                        AssignModifier::Export | AssignModifier::Global => {
-                            // exports are implemented by lifting into global scope
-
-                            stmts.push((PyStmt::Global(destructure.declarations), target.1).into());
-                        }
-
-                        AssignModifier::Nonlocal => {
-                            stmts.push(
-                                (PyStmt::Nonlocal(destructure.declarations), target.1).into(),
-                            );
-                        }
-                    }
-                }
-
-                stmts.push(
-                    (
-                        PyStmt::Assign(destructure.assign_to, value_node.expr),
-                        target.1,
-                    )
-                        .into(),
-                );
-                stmts.extend(destructure.post_stmts);
+                stmts.extend(get_scope_modifying_statements(
+                    ctx,
+                    scope_modifier,
+                    decls,
+                    span,
+                )?);
+                stmts.extend(binding_stmts);
 
                 Ok(stmts)
             }
@@ -773,8 +809,11 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                         if import_stmt.reexport {
                             // alias else orig_name
-                            ctx.exports
-                                .extend(imports.iter().map(|x| x.1.unwrap_or(x.0).0.into()))
+                            ctx.exports.extend(
+                                aliases
+                                    .iter()
+                                    .map(|x| x.as_name.clone().unwrap_or(x.name.clone())),
+                            );
                         }
                     }
                 }

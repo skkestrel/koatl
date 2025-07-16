@@ -625,7 +625,7 @@ where
         .boxed();
 
     let import_stmt = just(Token::Kw("export"))
-        .to(())
+        .to(1)
         .or_not()
         .then_ignore(just(Token::Kw("import")))
         .then(group((

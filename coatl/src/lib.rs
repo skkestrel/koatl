@@ -29,26 +29,25 @@ pub struct TranspileOptions {
     pub treat_final_as_expr: bool,
     pub inject_prelude: bool,
     pub inject_runtime: bool,
-    pub clean_up_exports: bool,
+    pub set_exports: bool,
 }
 
 impl TranspileOptions {
-    pub fn interactive() -> Self {
+    pub fn script() -> Self {
         TranspileOptions {
-            treat_final_as_expr: true,
-            inject_prelude: false,
-            inject_runtime: false,
-            clean_up_exports: false,
+            treat_final_as_expr: false,
+            inject_prelude: true,
+            inject_runtime: true,
+            set_exports: false,
         }
     }
 
-    pub fn prelude() -> Self {
-        TranspileOptions {
-            treat_final_as_expr: false,
-            inject_prelude: false, // don't inject the prelude when loading prelude
-            inject_runtime: true,
-            clean_up_exports: true,
-        }
+    pub fn interactive() -> Self {
+        let mut opt = TranspileOptions::script();
+        opt.treat_final_as_expr = true;
+        opt.inject_prelude = false;
+        opt.inject_runtime = false;
+        opt
     }
 
     pub fn module() -> Self {
@@ -56,17 +55,14 @@ impl TranspileOptions {
             treat_final_as_expr: false,
             inject_prelude: true,
             inject_runtime: true,
-            clean_up_exports: true,
+            set_exports: true,
         }
     }
 
-    pub fn script() -> Self {
-        TranspileOptions {
-            treat_final_as_expr: false,
-            inject_prelude: true,
-            inject_runtime: true,
-            clean_up_exports: false,
-        }
+    pub fn prelude() -> Self {
+        let mut opt = TranspileOptions::module();
+        opt.inject_prelude = false; // don't inject the prelude when loading prelude
+        opt
     }
 }
 
@@ -124,10 +120,11 @@ pub fn transpile_to_py_ast<'src>(
         );
     }
 
-    if options.clean_up_exports {
+    if options.set_exports {
         py_ast.0.push(a.expr(a.call(
-            a.load_ident("clean_up_exports"),
+            a.load_ident("set_exports"),
             vec![
+                    a.call_arg(a.load_ident("__package__")),
                     a.call_arg(a.call(a.load_ident("globals"), vec![])),
                     a.call_arg(
                         a.tuple(
