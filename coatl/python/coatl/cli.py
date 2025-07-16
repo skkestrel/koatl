@@ -1,5 +1,13 @@
+def transpile_from_source(source, mode="script", script_path="<string>"):
+    from coatl import transpile
+    import ast
+
+    transpiled_code = transpile(source, mode=mode)
+
+    return ast.unparse(transpiled_code)
+
 def run_from_source(source, mode="script", script_path="<string>"):
-    from coatl._rs import transpile
+    from coatl import transpile
 
     transpiled_code = transpile(source, mode=mode)
     code_obj = compile(transpiled_code, script_path, 'exec')

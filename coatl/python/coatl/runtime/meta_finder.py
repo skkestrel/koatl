@@ -4,7 +4,7 @@ import linecache
 from importlib.abc import MetaPathFinder, Loader
 from importlib.util import spec_from_loader
 
-from coatl._rs import transpile
+from coatl import transpile
 
 class TlFinder(MetaPathFinder):
     def find_spec(self, fullname, path, target=None):

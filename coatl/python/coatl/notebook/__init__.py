@@ -1,6 +1,6 @@
 from IPython.core.magic import register_line_magic
 
-from coatl._rs import transpile
+from coatl import transpile
 from .magic import coatl_cell_magic, CoatlSystemAssign, CoatlMagicAssign, CoatlEscapedCommand
 
 import ast
