@@ -4,9 +4,10 @@ pub mod transform;
 
 use parser::ast::{Block, Span};
 
-use crate::py::ast::{PyImportAlias, PyStmt};
+use crate::py::ast::{PyImportAlias, PyLiteral, PyTupleItem};
+use crate::py::util::PyAstBuilder;
 use crate::py::{ast::PyBlock, emit::EmitCtx};
-use crate::transform::{transform_ast, transform_ast_interactive};
+use crate::transform::{TransformOutput, transform_ast};
 use parser::{TokenList, parse_tokens, tokenize};
 
 pub enum TlErrKind {
@@ -27,6 +28,8 @@ pub type TlResult<T> = Result<T, Vec<TlErr>>;
 pub struct TranspileOptions {
     pub treat_final_as_expr: bool,
     pub inject_prelude: bool,
+    pub inject_runtime: bool,
+    pub clean_up_exports: bool,
 }
 
 impl TranspileOptions {
@@ -34,13 +37,35 @@ impl TranspileOptions {
         TranspileOptions {
             treat_final_as_expr: true,
             inject_prelude: false,
+            inject_runtime: false,
+            clean_up_exports: false,
         }
     }
 
-    pub fn default() -> Self {
+    pub fn prelude() -> Self {
+        TranspileOptions {
+            treat_final_as_expr: false,
+            inject_prelude: false, // don't inject the prelude when loading prelude
+            inject_runtime: true,
+            clean_up_exports: true,
+        }
+    }
+
+    pub fn module() -> Self {
         TranspileOptions {
             treat_final_as_expr: false,
             inject_prelude: true,
+            inject_runtime: true,
+            clean_up_exports: true,
+        }
+    }
+
+    pub fn script() -> Self {
+        TranspileOptions {
+            treat_final_as_expr: false,
+            inject_prelude: true,
+            inject_runtime: true,
+            clean_up_exports: false,
         }
     }
 }
@@ -51,12 +76,8 @@ pub fn transpile_to_py_ast<'src>(
 ) -> TlResult<PyBlock<'src>> {
     let tl_ast = parse_tl(src)?;
 
-    let mut py_ast: PyBlock<'src> = (if options.treat_final_as_expr {
-        transform_ast_interactive(&src, &tl_ast)
-    } else {
-        transform_ast(&src, &tl_ast)
-    })
-    .map_err(|e| {
+    let output: TransformOutput<'src> = transform_ast(&src, &tl_ast, options.treat_final_as_expr)
+        .map_err(|e| {
         e.0.into_iter()
             .map(|e| TlErr {
                 kind: TlErrKind::Transform,
@@ -67,26 +88,71 @@ pub fn transpile_to_py_ast<'src>(
             .collect::<Vec<_>>()
     })?;
 
+    let mut py_ast = output.py_block;
+
+    let a = PyAstBuilder::new(Span {
+        start: 0,
+        end: 0,
+        context: (),
+    });
+
     if options.inject_prelude {
         py_ast.0.insert(
             0,
-            (
-                PyStmt::ImportFrom(
-                    "coatl.runtime".into(),
-                    vec![PyImportAlias {
-                        name: "*".into(),
-                        as_name: None,
-                    }],
-                    0,
-                ),
-                Span {
-                    start: 0,
-                    end: 0,
-                    context: (),
-                },
-            )
-                .into(),
+            a.import_from(
+                Some("coatl.prelude".into()),
+                vec![PyImportAlias {
+                    name: "*".into(),
+                    as_name: None,
+                }],
+                0,
+            ),
         );
+    }
+
+    if options.inject_runtime {
+        py_ast.0.insert(
+            0,
+            a.import_from(
+                Some("coatl.runtime".into()),
+                vec![PyImportAlias {
+                    name: "*".into(),
+                    as_name: None,
+                }],
+                0,
+            ),
+        );
+    }
+
+    if options.clean_up_exports {
+        py_ast.0.push(a.expr(a.call(
+            a.load_ident("clean_up_exports"),
+            vec![
+                    a.call_arg(a.call(a.load_ident("globals"), vec![])),
+                    a.call_arg(
+                        a.tuple(
+                            output
+                                .exports
+                                .iter()
+                                .map(|x| {
+                                    PyTupleItem::Item(a.literal(PyLiteral::Str(x.clone())))
+                                })
+                                .collect(),
+                        ),
+                    ),
+                    a.call_arg(
+                        a.tuple(
+                            output
+                                .module_star_exports
+                                .iter()
+                                .map(|x| {
+                                    PyTupleItem::Item(a.literal(PyLiteral::Str(x.clone())))
+                                })
+                                .collect(),
+                        ),
+                ),
+            ],
+        )));
     }
 
     Ok(py_ast)

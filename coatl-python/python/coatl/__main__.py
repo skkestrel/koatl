@@ -17,7 +17,7 @@ except FileNotFoundError:
 if script_path.endswith('.tl'):
     from coatl._rs import transpile
 
-    transpiled_code = transpile(original_script_code)
+    transpiled_code = transpile(original_script_code, mode="script")
     code_obj = compile(transpiled_code, script_path, 'exec')
     script_globals = {
         '__name__': '__main__',

@@ -1,20 +1,26 @@
 from IPython.core.magic import register_line_magic
 
-from coatl._rs import transpile_interactive
+from coatl._rs import transpile
 from .magic import coatl_cell_magic, CoatlSystemAssign, CoatlMagicAssign, CoatlEscapedCommand
 
 import ast
 
 def source_code_transformer(lines):
     source = "".join(lines)
-    transformed_source = ast.unparse(transpile_interactive(source))
+    transformed_source = ast.unparse(transpile(source, mode="interactive"))
 
     return [line + '\n' for line in transformed_source.splitlines()]
 
 
+def import_prelude(namespace):
+    exec("from coatl.runtime import *", namespace)
+    exec("from coatl.prelude import *", namespace)
+
+
 def load_ipython_extension(ipython):
-    exec("from coatl.runtime import *", ipython.user_ns)
+    import_prelude(ipython.user_ns)
     print("coatl enabled")
+
     ttm = ipython.input_transformer_manager
     
     def activate_compiler():

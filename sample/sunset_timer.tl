@@ -15,9 +15,9 @@ slice = class:
 
         if self.stop == None:
             for i in range(start, 100000, step):
-                yield i
+                @i
         else:
-            yield* range(start, self.stop, step)
+            @@range(start, self.stop, step)
 
         None
 

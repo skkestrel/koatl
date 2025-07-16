@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::py::{ast::*, emit::EmitCtx, util::PyAstBuilder};
+use crate::py::{ast::*, util::PyAstBuilder};
 use parser::ast::*;
 
 #[derive(Debug)]
@@ -55,11 +55,17 @@ pub type TfResult<T> = Result<T, TfErrs>;
 
 struct TfCtx<'src> {
     source: &'src str,
+    exports: Vec<PyIdent<'src>>,
+    module_star_exports: Vec<PyIdent<'src>>,
 }
 
 impl<'src> TfCtx<'src> {
     fn new(source: &'src str) -> TfResult<Self> {
-        Ok(TfCtx { source })
+        Ok(TfCtx {
+            source,
+            exports: Vec::new(),
+            module_star_exports: Vec::new(),
+        })
     }
 
     fn linecol(&self, cursor: usize) -> (usize, usize) {
@@ -103,6 +109,7 @@ trait SBlockExt<'src> {
         &'ast self,
         ctx: &mut TfCtx<'src>,
         treat_final_as_expr: bool,
+        is_top_level: bool,
     ) -> TfResult<PyBlockWithFinal<'src>>;
 }
 
@@ -111,7 +118,7 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
         &'ast self,
         ctx: &mut TfCtx<'src>,
     ) -> TfResult<PyBlock<'src>> {
-        let tr = self.transform(ctx, false)?;
+        let tr = self.transform(ctx, false, false)?;
 
         if tr.final_expr.is_some() {
             panic!("there shouldn't be a final expr");
@@ -124,13 +131,14 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
         &'ast self,
         ctx: &mut TfCtx<'src>,
     ) -> TfResult<PyBlockWithFinal<'src>> {
-        Ok(self.transform(ctx, true)?)
+        Ok(self.transform(ctx, true, false)?)
     }
 
     fn transform<'ast>(
         &'ast self,
         ctx: &mut TfCtx<'src>,
         treat_final_as_expr: bool,
+        is_top_level: bool,
     ) -> TfResult<PyBlockWithFinal<'src>> {
         let (block, _span) = self;
 
@@ -148,7 +156,7 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
                 let mut ok = true;
 
                 let mut handle_stmt = |stmt: &SStmt<'src>| {
-                    match stmt.transform(ctx) {
+                    match stmt.transform(ctx, is_top_level) {
                         Ok(transformed) => {
                             py_stmts.extend(transformed);
                         }
@@ -208,7 +216,7 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
                 } else {
                     // TODO this clone is bad
                     let f = (Stmt::Expr(sexpr.clone()), sexpr.1);
-                    let stmts = f.transform(ctx)?;
+                    let stmts = f.transform(ctx, is_top_level)?;
 
                     Ok(PyBlockWithFinal {
                         stmts,
@@ -475,11 +483,19 @@ fn destructure<'src, 'ast>(
 }
 
 trait SStmtExt<'src> {
-    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlock<'src>>;
+    fn transform<'ast>(
+        &'ast self,
+        ctx: &mut TfCtx<'src>,
+        top_level: bool,
+    ) -> TfResult<PyBlock<'src>>;
 }
 
 impl<'src> SStmtExt<'src> for SStmt<'src> {
-    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlock<'src>> {
+    fn transform<'ast>(
+        &'ast self,
+        ctx: &mut TfCtx<'src>,
+        top_level: bool,
+    ) -> TfResult<PyBlock<'src>> {
         let (stmt, span) = self;
 
         match &stmt {
@@ -558,6 +574,13 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 }
 
                 let scope_modifier = scope_modifier.first();
+
+                if !top_level && scope_modifier.is_some_and(|x| **x == AssignModifier::Export) {
+                    return Err(TfErrBuilder::default()
+                        .message("Export modifier is only allowed at the top level")
+                        .span(*span)
+                        .build_errs());
+                }
 
                 let value_node = value.transform(ctx)?;
                 let mut stmts = value_node.pre_stmts;
@@ -710,17 +733,23 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
             Stmt::Continue => Ok(PyBlock(vec![(PyStmt::Continue, *span).into()])),
             Stmt::Import(import_stmt) => {
                 let mut aliases = vec![];
-                let mut base_module = None;
 
-                if !import_stmt.trunk.is_empty() {
-                    base_module = Some(
-                        import_stmt
-                            .trunk
-                            .iter()
-                            .map(|ident| ident.0.as_ref())
-                            .collect::<Vec<_>>()
-                            .join("."),
-                    );
+                let base_module = import_stmt
+                    .trunk
+                    .iter()
+                    .map(|ident| ident.0.as_ref())
+                    .collect::<Vec<_>>()
+                    .join(".");
+
+                let full_module = ".".repeat(import_stmt.level) + &base_module;
+
+                if import_stmt.reexport {
+                    if !top_level {
+                        return Err(TfErrBuilder::default()
+                            .message("Re-exporting imports is only allowed at the top level")
+                            .span(*span)
+                            .build_errs());
+                    }
                 }
 
                 match &import_stmt.imports {
@@ -729,6 +758,10 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                             name: "*".into(),
                             as_name: None,
                         });
+
+                        if import_stmt.reexport {
+                            ctx.module_star_exports.push(full_module.into());
+                        }
                     }
                     ImportList::Leaves(imports) => {
                         for (ident, alias) in imports {
@@ -737,51 +770,26 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                                 as_name: alias.as_ref().map(|a| a.0.into()),
                             });
                         }
+
+                        if import_stmt.reexport {
+                            // alias else orig_name
+                            ctx.exports
+                                .extend(imports.iter().map(|x| x.1.unwrap_or(x.0).0.into()))
+                        }
                     }
                 }
 
-                let mut stmts = PyBlock::new();
                 let a = PyAstBuilder::new(*span);
 
-                if let Some(base_module) = base_module {
-                    stmts.push(
-                        (
-                            PyStmt::ImportFrom(base_module.into(), aliases, import_stmt.level),
-                            *span,
-                        )
-                            .into(),
-                    );
+                let py_import: SPyStmt = if !import_stmt.trunk.is_empty() {
+                    a.import_from(Some(base_module.into()), aliases, import_stmt.level)
+                } else if import_stmt.level != 0 {
+                    a.import_from(None, aliases, import_stmt.level)
                 } else {
-                    for alias in aliases {
-                        stmts.push((PyStmt::Import(alias), *span).into());
-                    }
-                }
+                    a.import(aliases)
+                };
 
-                if import_stmt.reexport {
-                    let mut dummy_ctx = EmitCtx {
-                        indentation: 0,
-                        source: String::new(),
-                    };
-
-                    for stmt in stmts.0.iter_mut().collect::<Vec<_>>() {
-                        stmt.emit_to(&mut dummy_ctx).map_err(|e| {
-                            TfErrBuilder::default()
-                                .message(format!("Error emitting re-export exec: {:?}", e))
-                                .span(*span)
-                                .build_errs()
-                        })?;
-                    }
-
-                    stmts.push(a.expr(a.call(
-                        a.load_ident("exec"),
-                        vec![
-                            a.call_arg(a.literal(PyLiteral::Str(dummy_ctx.source.into()))),
-                            a.call_arg(a.call(a.load_ident("globals"), vec![])),
-                        ],
-                    )));
-                }
-
-                Ok(stmts)
+                Ok(PyBlock(vec![py_import]))
             }
             Stmt::Err => Err(TfErrBuilder::default()
                 .message("unexpected statement error (should have been caught in lexer)".to_owned())
@@ -1506,26 +1514,34 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
     }
 }
 
+pub struct TransformOutput<'src> {
+    pub py_block: PyBlock<'src>,
+    pub exports: Vec<PyIdent<'src>>,
+    pub module_star_exports: Vec<PyIdent<'src>>,
+}
+
 pub fn transform_ast<'src, 'ast>(
     source: &'src str,
     block: &'ast SBlock<'src>,
-) -> TfResult<PyBlock<'src>> {
+    treat_final_as_expr: bool,
+) -> TfResult<TransformOutput<'src>> {
     let mut ctx = TfCtx::new(source)?;
-    let stmts = block.transform_with_final_stmt(&mut ctx)?;
-    Ok(stmts)
-}
+    let mut stmts = block.transform(&mut ctx, treat_final_as_expr, true)?;
 
-pub fn transform_ast_interactive<'src, 'ast>(
-    source: &'src str,
-    block: &'ast SBlock<'src>,
-) -> TfResult<PyBlock<'src>> {
-    let mut ctx = TfCtx::new(source)?;
-    let mut stmts = block.transform_with_final_expr(&mut ctx)?;
-
-    if let Some(final_expr) = stmts.final_expr {
-        let span = final_expr.tl_span;
-        stmts.stmts.push((PyStmt::Expr(final_expr), span).into());
+    if treat_final_as_expr {
+        if let Some(final_expr) = stmts.final_expr {
+            let span = final_expr.tl_span;
+            stmts.stmts.push((PyStmt::Expr(final_expr), span).into());
+        }
+    } else {
+        if stmts.final_expr.is_some() {
+            panic!("there shouldn't be a final expr");
+        }
     }
 
-    Ok(stmts.stmts)
+    Ok(TransformOutput {
+        py_block: stmts.stmts,
+        exports: ctx.exports,
+        module_star_exports: ctx.module_star_exports,
+    })
 }

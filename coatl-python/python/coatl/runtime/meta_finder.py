@@ -35,7 +35,7 @@ class TlLoader(Loader):
         self.filepath = filepath
 
     def create_module(self, spec):
-        return None  # Use default module creation
+        return None
 
     def exec_module(self, module):
         module.__file__ = self.filepath
@@ -50,7 +50,11 @@ class TlLoader(Loader):
             self.filepath,
         )
 
-        transpiled_code = transpile(source_code)
+        if module.__name__.startswith("coatl.prelude"):
+            transpiled_code = transpile(source_code, mode="prelude")
+        else:
+            transpiled_code = transpile(source_code, mode="module")
+
         code = compile(transpiled_code, self.filepath, "exec")
 
         exec(code, module.__dict__)

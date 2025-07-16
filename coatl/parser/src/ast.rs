@@ -65,7 +65,7 @@ pub struct ExceptHandler<'a> {
     pub body: SBlock<'a>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AssignModifier {
     Export,
     Global,

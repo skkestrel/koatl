@@ -1,5 +1,5 @@
 from ipykernel.ipkernel import IPythonKernel
-from coatl.notebook import source_code_transformer
+from coatl.notebook import source_code_transformer, import_prelude
 from coatl.notebook.magic import coatl_cell_magic, CoatlSystemAssign, CoatlMagicAssign, CoatlEscapedCommand
 
 
@@ -29,4 +29,4 @@ class CoatlKernel(IPythonKernel):
         self.shell.input_transformer_manager.token_transformers.insert(1, CoatlEscapedCommand)
         self.shell.input_transformer_manager.token_transformers.insert(2, CoatlSystemAssign)
 
-        exec("from coatl.runtime import *", self.shell.user_ns)
+        import_prelude(self.shell.user_ns)

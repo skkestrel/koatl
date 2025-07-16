@@ -624,12 +624,6 @@ where
         .labelled("continue statement")
         .boxed();
 
-    enum ImportLeaves<'a> {
-        Multiple(Vec<(SIdent<'a>, Option<SIdent<'a>>)>),
-        SingleAlias(SIdent<'a>),
-        Star,
-    }
-
     let import_stmt = just(Token::Kw("export"))
         .to(())
         .or_not()
@@ -638,76 +632,36 @@ where
             just_symbol(".").repeated().count(),
             ident
                 .clone()
-                .separated_by(just_symbol("."))
-                .at_least(1)
+                .then_ignore(just_symbol("."))
+                .repeated()
                 .collect()
                 .boxed(),
             choice((
-                just(Token::Symbol(".")).ignore_then(
-                    enumeration(
-                        ident
-                            .clone()
-                            .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not()),
-                    )
-                    .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
-                    .map(ImportLeaves::Multiple),
-                ),
-                just(Token::Symbol("."))
-                    .then(just(Token::Symbol("*")))
-                    .map(|_| ImportLeaves::Star),
-                just(Token::Kw("as"))
-                    .ignore_then(ident.clone())
-                    .map(|x| ImportLeaves::SingleAlias(x)),
+                enumeration(
+                    ident
+                        .clone()
+                        .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not()),
+                )
+                .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
+                .map(ImportList::Leaves)
+                .boxed(),
+                just(Token::Symbol("*")).map(|_| ImportList::Star),
+                ident
+                    .clone()
+                    .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not())
+                    .map(|x| ImportList::Leaves(vec![x]))
+                    .boxed(),
             ))
-            .boxed()
-            .or_not(),
+            .boxed(),
         )))
-        .map(
-            |(reexport, (level, mut trunk, leaves)): (
-                Option<()>,
-                (usize, Vec<SIdent>, Option<ImportLeaves>),
-            )|
-             -> Stmt {
-                match leaves {
-                    Some(ImportLeaves::Multiple(leaves)) => Stmt::Import(ImportStmt {
-                        trunk,
-                        imports: ImportList::Leaves(leaves),
-                        level,
-                        reexport: reexport.is_some(),
-                    }),
-                    Some(ImportLeaves::SingleAlias(alias)) => {
-                        if let Some(leaf) = trunk.pop() {
-                            Stmt::Import(ImportStmt {
-                                trunk,
-                                imports: ImportList::Leaves(vec![(leaf, Some(alias))]),
-                                level,
-                                reexport: reexport.is_some(),
-                            })
-                        } else {
-                            panic!("trunk should not be empty here")
-                        }
-                    }
-                    Some(ImportLeaves::Star) => Stmt::Import(ImportStmt {
-                        trunk,
-                        imports: ImportList::Star,
-                        level,
-                        reexport: reexport.is_some(),
-                    }),
-                    None => {
-                        if let Some(leaf) = trunk.pop() {
-                            Stmt::Import(ImportStmt {
-                                trunk,
-                                imports: ImportList::Leaves(vec![(leaf, None)]),
-                                level,
-                                reexport: reexport.is_some(),
-                            })
-                        } else {
-                            panic!("trunk should not be empty here")
-                        }
-                    }
-                }
-            },
-        )
+        .map(|(reexport, (level, trunk, import_list))| -> Stmt {
+            Stmt::Import(ImportStmt {
+                trunk,
+                imports: import_list,
+                level,
+                reexport: reexport.is_some(),
+            })
+        })
         .then_ignore(just(Token::Eol))
         .labelled("import statement")
         .boxed();

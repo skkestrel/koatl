@@ -167,18 +167,31 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                 let names_list: Vec<&str> = names.iter().map(|n| n.as_ref()).collect();
                 ctx.ast_node("Nonlocal", (names_list,), &self.tl_span)
             }
-            PyStmt::Import(alias) => {
-                let alias_ast = ctx.ast_cls("alias", (&alias.name, alias.as_name.as_deref()))?;
-                ctx.ast_node("Import", ([alias_ast],), &self.tl_span)
+            PyStmt::Del(exprs) => {
+                let py_exprs = exprs
+                    .iter()
+                    .map(|e| e.emit_py(ctx))
+                    .collect::<PyTlResult<Vec<_>>>()?;
+
+                ctx.ast_node("Delete", (py_exprs,), &self.tl_span)
+            }
+            PyStmt::Import(aliases) => {
+                let py_aliases = aliases
+                    .iter()
+                    .map(|alias| ctx.ast_cls("alias", (&alias.name, alias.as_name.as_deref())))
+                    .collect::<PyTlResult<Vec<_>>>()?;
+
+                ctx.ast_node("Import", (py_aliases,), &self.tl_span)
             }
             PyStmt::ImportFrom(module, items, level) => {
-                let aliases_ast: Result<Vec<_>, _> = items
+                let py_aliases = items
                     .iter()
                     .map(|item| ctx.ast_cls("alias", (&item.name, item.as_name.as_deref())))
-                    .collect();
+                    .collect::<PyTlResult<Vec<_>>>()?;
+
                 ctx.ast_node(
                     "ImportFrom",
-                    (module.as_ref(), aliases_ast?, level),
+                    (module.as_ref(), py_aliases, level),
                     &self.tl_span,
                 )
             }

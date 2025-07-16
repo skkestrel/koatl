@@ -43,13 +43,13 @@ impl PyAstBuilder {
         (PyStmt::Nonlocal(names), self.span).into()
     }
 
-    pub fn import<'src>(&self, alias: PyImportAlias<'src>) -> SPyStmt<'src> {
-        (PyStmt::Import(alias), self.span).into()
+    pub fn import<'src>(&self, aliases: Vec<PyImportAlias<'src>>) -> SPyStmt<'src> {
+        (PyStmt::Import(aliases), self.span).into()
     }
 
     pub fn import_from<'src>(
         &self,
-        module: impl Into<PyIdent<'src>>,
+        module: impl Into<Option<PyIdent<'src>>>,
         aliases: Vec<PyImportAlias<'src>>,
         level: usize,
     ) -> SPyStmt<'src> {
@@ -72,6 +72,10 @@ impl PyAstBuilder {
         body: PyBlock<'src>,
     ) -> SPyStmt<'src> {
         (PyStmt::ClassDef(name.into(), bases, body), self.span).into()
+    }
+
+    pub fn del<'src>(&self, targets: Vec<SPyExpr<'src>>) -> SPyStmt<'src> {
+        (PyStmt::Del(targets), self.span).into()
     }
 
     pub fn while_<'src>(&self, test: SPyExpr<'src>, body: PyBlock<'src>) -> SPyStmt<'src> {

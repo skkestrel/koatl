@@ -425,6 +425,17 @@ impl SPyStmt<'_> {
                 }
                 ctx.emit_endl();
             }
+            PyStmt::Del(exprs) => {
+                ctx.emit_indent();
+                ctx.emit("del ");
+                for (i, expr) in exprs.iter_mut().enumerate() {
+                    if i > 0 {
+                        ctx.emit(", ");
+                    }
+                    expr.emit_to(ctx, LOW_PREC)?;
+                }
+                ctx.emit_endl();
+            }
             PyStmt::Global(names) => {
                 ctx.emit_indent();
                 ctx.emit("global ");
@@ -447,17 +458,24 @@ impl SPyStmt<'_> {
                 }
                 ctx.emit_endl();
             }
-            PyStmt::Import(name) => {
+            PyStmt::Import(names) => {
                 ctx.emit_indent();
                 ctx.emit("import ");
-                name.emit_to(ctx);
+                for (i, name) in names.iter_mut().enumerate() {
+                    if i > 0 {
+                        ctx.emit(", ");
+                    }
+                    name.emit_to(ctx);
+                }
                 ctx.emit_endl();
             }
             PyStmt::ImportFrom(module, aliases, level) => {
                 ctx.emit_indent();
                 ctx.emit("from ");
                 ctx.emit(&".".repeat(*level));
-                ctx.emit(&module);
+                if let Some(module) = module {
+                    ctx.emit(&module);
+                }
                 ctx.emit(" import ");
                 if aliases.is_empty() {
                     ctx.emit("*");
