@@ -684,31 +684,26 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
             }
             Stmt::For(target, iter, body) => {
                 let target: &SExpr<'src> = target;
+                let iter_node: PyExprWithPre<'src> = iter.transform_with_placeholder_guard(ctx)?;
+                let aux_stmts = iter_node.pre_stmts;
 
-                if let Expr::Ident((ident, _)) = &target.0 {
-                    // TODO destructuring
+                let mut block = aux_stmts;
 
-                    let iter_node: PyExprWithPre<'src> =
-                        iter.transform_with_placeholder_guard(ctx)?;
-                    let aux_stmts = iter_node.pre_stmts;
+                let destructure = destructure(ctx, target, true)?;
 
-                    let body_block: PyBlock<'src> = body.transform_with_final_stmt(ctx)?;
-                    let mut block = aux_stmts;
-                    block.push(
-                        (
-                            PyStmt::For((*ident).into(), iter_node.expr, body_block),
-                            *span,
-                        )
-                            .into(),
-                    );
+                let mut body_block = PyBlock::new();
+                body_block.extend(destructure.post_stmts);
+                body_block.extend(body.transform_with_final_stmt(ctx)?);
 
-                    Ok(block)
-                } else {
-                    Err(TfErrBuilder::default()
-                        .message("for loop target must be an identifier".to_owned())
-                        .span(*span)
-                        .build_errs())
-                }
+                block.push(
+                    (
+                        PyStmt::For(destructure.assign_to, iter_node.expr, body_block),
+                        *span,
+                    )
+                        .into(),
+                );
+
+                Ok(block)
             }
             Stmt::While(cond, body) => {
                 let cond_node = cond.transform_with_placeholder_guard(ctx)?;

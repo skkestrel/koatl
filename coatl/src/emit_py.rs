@@ -279,11 +279,7 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                 ctx.ast_node("While", (cond_ast, body_ast, orelse), &self.tl_span)
             }
             PyStmt::For(target, iter, body) => {
-                let target_ast = ctx.ast_node(
-                    "Name",
-                    (target.as_ref(), ctx.ast_cls("Store", ())?),
-                    &self.tl_span,
-                )?;
+                let target_ast = target.emit_py(ctx)?;
                 let iter_ast = iter.emit_py(ctx)?;
                 let body_ast = body.emit_py(ctx)?;
                 let orelse = Vec::<PyObject>::new();

@@ -532,7 +532,7 @@ impl SPyStmt<'_> {
             PyStmt::For(target, iter, body) => {
                 ctx.emit_indent();
                 ctx.emit("for ");
-                ctx.emit(&target);
+                target.emit_to(ctx, LOW_PREC)?;
                 ctx.emit(" in ");
                 iter.emit_to(ctx, LOW_PREC)?;
                 ctx.emit(":");

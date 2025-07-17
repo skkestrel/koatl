@@ -46,7 +46,7 @@ pub enum PyStmt<'a> {
     FnDef(PyIdent<'a>, Vec<PyArgDefItem<'a>>, PyBlock<'a>),
     ClassDef(PyIdent<'a>, Vec<PyCallItem<'a>>, PyBlock<'a>),
     While(SPyExpr<'a>, PyBlock<'a>),
-    For(PyIdent<'a>, SPyExpr<'a>, PyBlock<'a>),
+    For(SPyExpr<'a>, SPyExpr<'a>, PyBlock<'a>),
     Try(PyBlock<'a>, Vec<PyExceptHandler<'a>>, Option<PyBlock<'a>>),
     Del(Vec<SPyExpr<'a>>),
     Break,

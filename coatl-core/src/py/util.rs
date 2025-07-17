@@ -84,11 +84,11 @@ impl PyAstBuilder {
 
     pub fn for_<'src>(
         &self,
-        target: impl Into<PyIdent<'src>>,
+        target: SPyExpr<'src>,
         iter: SPyExpr<'src>,
         body: PyBlock<'src>,
     ) -> SPyStmt<'src> {
-        (PyStmt::For(target.into(), iter, body), self.span).into()
+        (PyStmt::For(target, iter, body), self.span).into()
     }
 
     pub fn if_<'src>(
