@@ -153,7 +153,7 @@ impl AstBuilder {
         (Expr::Then(Box::new(left), Box::new(right)), self.span)
     }
 
-    pub fn function<'src>(&self, args: Vec<ArgItem<'src>>, body: SBlock<'src>) -> SExpr<'src> {
+    pub fn function<'src>(&self, args: Vec<ArgDefItem<'src>>, body: SBlock<'src>) -> SExpr<'src> {
         (Expr::Fn(args, Box::new(body)), self.span)
     }
 
@@ -229,22 +229,22 @@ impl AstBuilder {
 
     // Argument item builders
     pub fn arg<'src>(&self, name: &'src str) -> SArgItem<'src> {
-        (ArgItem::Arg((name.into(), self.span)), self.span)
+        (ArgDefItem::Arg((name.into(), self.span)), self.span)
     }
 
     pub fn default_arg<'src>(&self, name: &'src str, default: SExpr<'src>) -> SArgItem<'src> {
         (
-            ArgItem::DefaultArg((name.into(), self.span), default),
+            ArgDefItem::DefaultArg((name.into(), self.span), default),
             self.span,
         )
     }
 
     pub fn arg_spread<'src>(&self, name: &'src str) -> SArgItem<'src> {
-        (ArgItem::ArgSpread((name.into(), self.span)), self.span)
+        (ArgDefItem::ArgSpread((name.into(), self.span)), self.span)
     }
 
     pub fn kwarg_spread<'src>(&self, name: &'src str) -> SArgItem<'src> {
-        (ArgItem::KwargSpread((name.into(), self.span)), self.span)
+        (ArgDefItem::KwargSpread((name.into(), self.span)), self.span)
     }
 
     // Format expression builder

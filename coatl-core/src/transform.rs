@@ -80,7 +80,7 @@ impl<'src> TfCtx<'src> {
             .last()
             .map_or(0, |line| line.len());
 
-        (line, col)
+        (line + 1, col)
     }
 
     fn temp_var_name(&self, typ: &str, cursor: usize) -> String {
@@ -1087,7 +1087,7 @@ enum FnDefBody<'src, 'ast> {
 }
 
 enum FnDefArgs<'src, 'ast> {
-    ArgList(&'ast [ArgItem<'src>]),
+    ArgList(&'ast [ArgDefItem<'src>]),
     PyArgList(Vec<PyArgDefItem<'src>>),
 }
 
@@ -1105,14 +1105,14 @@ fn make_fndef_stmts<'src, 'ast>(
             let mut args_vec = vec![];
             for arg in args {
                 let new_arg = match arg {
-                    ArgItem::Arg(name) => PyArgDefItem::Arg(name.0.into(), None),
-                    ArgItem::DefaultArg(name, default) => {
+                    ArgDefItem::Arg(name) => PyArgDefItem::Arg(name.0.into(), None),
+                    ArgDefItem::DefaultArg(name, default) => {
                         let expr = default.transform_with_placeholder_guard(ctx)?;
                         aux_stmts.extend(expr.pre_stmts);
                         PyArgDefItem::Arg(name.0.into(), Some(expr.expr))
                     }
-                    ArgItem::ArgSpread(name) => PyArgDefItem::ArgSpread(name.0.into()),
-                    ArgItem::KwargSpread(name) => PyArgDefItem::KwargSpread(name.0.into()),
+                    ArgDefItem::ArgSpread(name) => PyArgDefItem::ArgSpread(name.0.into()),
+                    ArgDefItem::KwargSpread(name) => PyArgDefItem::KwargSpread(name.0.into()),
                 };
                 args_vec.push(new_arg);
             }

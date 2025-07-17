@@ -132,18 +132,53 @@ where
     .labelled("placeholder")
     .boxed();
 
-    let list = enumeration(choice((
+    let list_item = choice((
         just_symbol("*")
             .ignore_then(unary.clone())
             .map(ListItem::Spread),
         sexpr.clone().map(ListItem::Item),
-    )))
-    .delimited_by_with_eol(just_symbol("["), just_symbol("]"))
-    .map(Expr::List)
-    .labelled("list")
-    .as_context()
-    .spanned()
+    ))
     .boxed();
+
+    let list = enumeration(list_item.clone())
+        .delimited_by_with_eol(just_symbol("["), just_symbol("]"))
+        .map(Expr::List)
+        .labelled("list")
+        .as_context()
+        .spanned()
+        .boxed();
+
+    let nary_list = group((
+        list_item.clone(),
+        just_symbol(",")
+            .ignore_then(list_item)
+            .repeated()
+            .collect::<Vec<_>>(),
+        just_symbol(",").to(1).or_not(),
+    ))
+    .map_with(|(first, rest, last_comma), e| -> SExpr {
+        let mut items = Vec::<ListItem>::new();
+
+        match first {
+            ListItem::Item(expr) if rest.is_empty() && last_comma.is_none() => {
+                return expr;
+            }
+            ListItem::Item(..) => {
+                items.push(first);
+            }
+            ListItem::Spread(..) => {
+                items.push(first);
+            }
+        }
+        items.extend(rest);
+
+        (Expr::List(items), e.span())
+    })
+    .labelled("nary-list")
+    .as_context()
+    .boxed();
+
+    let binding_target = nary_list.clone();
 
     let mapping = enumeration(choice((
         just_symbol("**")
@@ -401,16 +436,16 @@ where
     let arg_list = enumeration(choice((
         just_symbol("*")
             .ignore_then(ident.clone())
-            .map(|x| ArgItem::ArgSpread(x)),
+            .map(|x| ArgDefItem::ArgSpread(x)),
         just_symbol("**")
             .ignore_then(ident.clone())
-            .map(ArgItem::KwargSpread),
+            .map(ArgDefItem::KwargSpread),
         ident
             .clone()
             .then_ignore(just_symbol("="))
             .then(sexpr.clone())
-            .map(|(key, value)| ArgItem::DefaultArg(key, value)),
-        ident.clone().map(ArgItem::Arg),
+            .map(|(key, value)| ArgDefItem::DefaultArg(key, value)),
+        ident.clone().map(ArgDefItem::Arg),
     )))
     .labelled("argument-def-list")
     .boxed();
@@ -423,7 +458,7 @@ where
                 arg_list
                     .clone()
                     .delimited_by_with_eol(just_symbol("("), just_symbol(")")),
-                ident.clone().map(|x| vec![ArgItem::Arg(x)]),
+                ident.clone().map(|x| vec![ArgDefItem::Arg(x)]),
             ))
             .then_ignore(just_symbol("=>"))
             .then(choice((
@@ -537,7 +572,7 @@ where
             .boxed(),
     );
 
-    let expr_stmt = sexpr
+    let expr_stmt = nary_list
         .clone()
         .then_ignore(just(Token::Eol))
         .map(Stmt::Expr)
@@ -553,8 +588,8 @@ where
         .repeated()
         .collect()
         .boxed(),
-        sexpr.clone().then_ignore(just_symbol("=")),
-        sexpr.clone(),
+        binding_target.clone().then_ignore(just_symbol("=")),
+        nary_list.clone(),
     ))
     .map(|(modifiers, lhs, rhs)| Stmt::Assign(lhs, rhs, modifiers))
     .then_ignore(just(Token::Eol))
@@ -616,7 +651,7 @@ where
 
     let for_stmt = just(Token::Kw("for"))
         .ignore_then(group((
-            sexpr.clone().then_ignore(just(Token::Kw("in"))),
+            binding_target.clone().then_ignore(just(Token::Kw("in"))),
             sexpr.clone().then_ignore(just(START_BLOCK)),
             sblock.clone(),
         )))
@@ -626,7 +661,7 @@ where
         .boxed();
 
     let return_stmt = just(Token::Kw("return"))
-        .ignore_then(sexpr.clone())
+        .ignore_then(nary_list.clone())
         .then_ignore(just(Token::Eol))
         .map(Stmt::Return)
         .labelled("return statement")
@@ -641,7 +676,7 @@ where
         .boxed();
 
     let raise_stmt = just(Token::Kw("raise"))
-        .ignore_then(sexpr.clone())
+        .ignore_then(nary_list.clone())
         .then_ignore(just(Token::Eol))
         .map(Stmt::Raise)
         .labelled("raise statement")

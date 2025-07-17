@@ -133,14 +133,14 @@ pub enum CallItem<'a> {
 pub type SCallItem<'a> = Spanned<CallItem<'a>>;
 
 #[derive(Debug, Clone)]
-pub enum ArgItem<'a> {
+pub enum ArgDefItem<'a> {
     Arg(SIdent<'a>),
     DefaultArg(SIdent<'a>, SExpr<'a>),
     ArgSpread(SIdent<'a>),
     KwargSpread(SIdent<'a>),
 }
 
-pub type SArgItem<'a> = Spanned<ArgItem<'a>>;
+pub type SArgItem<'a> = Spanned<ArgDefItem<'a>>;
 
 #[derive(Debug, Clone)]
 pub enum Block<'a> {
@@ -175,7 +175,7 @@ pub enum Expr<'a> {
     Attribute(Box<SExpr<'a>>, SIdent<'a>),
     Then(Box<SExpr<'a>>, Box<SExpr<'a>>),
 
-    Fn(Vec<ArgItem<'a>>, Box<SBlock<'a>>),
+    Fn(Vec<ArgDefItem<'a>>, Box<SBlock<'a>>),
     Fstr(Spanned<String>, Vec<(SFmtExpr<'a>, Spanned<String>)>),
 
     Block(Box<SBlock<'a>>),
