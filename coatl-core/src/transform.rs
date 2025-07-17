@@ -1335,44 +1335,6 @@ fn transform_placeholder<'src>(
     }
 }
 
-fn lift_mapping_lhs<'src>(
-    ctx: &mut TfCtx<'src>,
-    lhs: &SExpr<'src>,
-) -> TfResult<PyExprWithPre<'src>> {
-    let mut aux_stmts = PyBlock::new();
-    let value = lhs.transform(ctx)?;
-    aux_stmts.extend(value.pre_stmts);
-
-    let expr = match lhs.0 {
-        Expr::Ident(..) => value.expr,
-        _ => {
-            let temp_var = ctx.temp_var_name("tmp", lhs.1.start);
-
-            aux_stmts.push(
-                (
-                    PyStmt::Assign(
-                        (
-                            PyExpr::Ident(temp_var.clone().into(), PyAccessCtx::Store),
-                            lhs.1,
-                        )
-                            .into(),
-                        value.expr,
-                    ),
-                    lhs.1,
-                )
-                    .into(),
-            );
-
-            (PyExpr::Ident(temp_var.into(), PyAccessCtx::Load), lhs.1).into()
-        }
-    };
-
-    Ok(PyExprWithPre {
-        expr,
-        pre_stmts: aux_stmts,
-    })
-}
-
 fn transform_postfix_expr<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     expr: &'ast SExpr<'src>,
@@ -1404,7 +1366,7 @@ fn transform_postfix_expr<'src, 'ast>(
     }
 
     let lhs = if lift_lhs {
-        let t = lift_mapping_lhs(ctx, &lhs_node)?;
+        let t = lhs_node.transform_lifted(ctx)?;
         aux.extend(t.pre_stmts);
         t.expr
     } else {
@@ -1418,7 +1380,7 @@ fn transform_postfix_expr<'src, 'ast>(
 
         let guard_if_expr = |e| {
             a.if_expr(
-                a.binary(PyBinaryOp::Is, lhs.clone(), a.literal(PyLiteral::None)),
+                a.call(a.load_ident("coalesces"), vec![a.call_arg(lhs.clone())]),
                 lhs.clone(),
                 e,
             )
@@ -1477,6 +1439,8 @@ fn transform_postfix_expr<'src, 'ast>(
 trait SExprExt<'src> {
     fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyExprWithPre<'src>>;
 
+    fn transform_lifted<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyExprWithPre<'src>>;
+
     /**
      * Transforms the expression, setting a placeholder guard so that
      * expr($, ...) will transform into x => expr(x, ...)
@@ -1508,6 +1472,48 @@ trait SExprExt<'src> {
 impl<'src> SExprExt<'src> for SExpr<'src> {
     fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyExprWithPre<'src>> {
         self.transform_with_access(ctx, PyAccessCtx::Load)
+    }
+
+    /**
+     * Transforms
+     * expr
+     * to
+     * x = expr
+     * x
+     */
+    fn transform_lifted<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyExprWithPre<'src>> {
+        let mut aux_stmts = PyBlock::new();
+        let value = self.transform(ctx)?;
+        aux_stmts.extend(value.pre_stmts);
+
+        let expr = match self.0 {
+            Expr::Ident(..) => value.expr,
+            _ => {
+                let temp_var = ctx.temp_var_name("tmp", self.1.start);
+
+                aux_stmts.push(
+                    (
+                        PyStmt::Assign(
+                            (
+                                PyExpr::Ident(temp_var.clone().into(), PyAccessCtx::Store),
+                                self.1,
+                            )
+                                .into(),
+                            value.expr,
+                        ),
+                        self.1,
+                    )
+                        .into(),
+                );
+
+                (PyExpr::Ident(temp_var.into(), PyAccessCtx::Load), self.1).into()
+            }
+        };
+
+        Ok(PyExprWithPre {
+            expr,
+            pre_stmts: aux_stmts,
+        })
     }
 
     fn transform_with_placeholder_guard<'ast>(
@@ -1656,6 +1662,12 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                         (lhs, rhs)
                     }
+                    BinaryOp::Coalesce => {
+                        let lhs = lhs.transform_lifted(ctx)?;
+                        let rhs = rhs.transform(ctx)?;
+
+                        (lhs, rhs)
+                    }
                     _ => (lhs.transform(ctx)?, rhs.transform(ctx)?),
                 };
 
@@ -1693,16 +1705,18 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                     BinaryOp::Coalesce => {
                         let a = PyAstBuilder::new(*span);
-                        return Ok(PyExprWithPre {
-                            expr: a.if_expr(
-                                a.binary(
-                                    PyBinaryOp::Is,
-                                    lhs.expr.clone(),
-                                    a.literal(PyLiteral::None),
-                                ),
-                                rhs.expr,
-                                lhs.expr,
+
+                        let expr = a.if_expr(
+                            a.call(
+                                a.load_ident("coalesces"),
+                                vec![a.call_arg(lhs.expr.clone())],
                             ),
+                            rhs.expr,
+                            lhs.expr,
+                        );
+
+                        return Ok(PyExprWithPre {
+                            expr,
                             pre_stmts: aux_stmts,
                         });
                     }

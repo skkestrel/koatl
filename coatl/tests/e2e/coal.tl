@@ -16,3 +16,15 @@ assert_eq(1?.($ + 1), 2)
 
 assert_eq(None ?? 1, 1)
 assert_eq(int(5) ?? 1, 5)
+
+
+# try exprs
+
+assert_eq(type(try x), NameError)
+assert_eq(type(try int(1)[1]), TypeError)
+assert_eq(type(try [0][5]), IndexError)
+assert_eq(try 5, 5)
+
+
+assert_eq((try 5)?.($+1), 6)
+assert_eq(type((try x)?.($+1)), NameError)

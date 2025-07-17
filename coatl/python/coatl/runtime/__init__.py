@@ -21,3 +21,6 @@ def set_exports(package_name, globals_dict, exports, module_star_exports):
                 exports.add(name)
 
     globals_dict["__all__"] = tuple(exports)
+
+def coalesces(x):
+    return x is None or isinstance(x, BaseException)
