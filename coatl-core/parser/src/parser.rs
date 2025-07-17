@@ -324,33 +324,18 @@ where
                 })
                 .boxed()
         } else {
-            arg.clone()
-                .then(op.then(arg).repeated().collect::<Vec<_>>())
-                .map_with(|(lhs, then), e| {
-                    if then.is_empty() {
-                        lhs
-                    } else {
-                        let mut lhs_op = vec![];
-                        let mut rhs = lhs;
-
-                        // arg, (op, arg, op, arg)
-                        // to
-                        // (arg, op, arg, op), arg
-
-                        for (op, arg) in then {
-                            let old_rhs = rhs;
-                            rhs = arg;
-
-                            lhs_op.push((old_rhs, op));
-                        }
-
-                        lhs_op.into_iter().rfold(rhs, |rhs, (lhs, op)| {
-                            // TODO fix the spans here to point to the right place
+            recursive(|bin| {
+                arg.clone()
+                    .then(op.then(bin.or(arg.clone())).or_not())
+                    .map_with(|(lhs, matched), e| {
+                        if let Some((op, rhs)) = matched {
                             (Expr::Binary(op, Box::new(lhs), Box::new(rhs)), e.span())
-                        })
-                    }
-                })
-                .boxed()
+                        } else {
+                            lhs
+                        }
+                    })
+            })
+            .boxed()
         }
     }
 
