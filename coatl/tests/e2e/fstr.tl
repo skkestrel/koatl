@@ -17,3 +17,11 @@ fstr = f"={
     a * b * c
 }="
 assert_eq(fstr, "=6=")
+
+assert_eq(f"{{}}", "{}")
+assert_eq(f"{{{1}}}", "{1}")
+
+assert_eq(f"""
+
+{{1}}
+{2 * 5}""", "\n\n{1}\n10")
