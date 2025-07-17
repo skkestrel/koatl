@@ -228,15 +228,12 @@ impl AstBuilder {
     }
 
     // Argument item builders
-    pub fn arg<'src>(&self, name: &'src str) -> SArgItem<'src> {
-        (ArgDefItem::Arg((name.into(), self.span)), self.span)
+    pub fn arg<'src>(&self, arg: SExpr<'src>) -> SArgItem<'src> {
+        (ArgDefItem::Arg(arg, None), self.span)
     }
 
-    pub fn default_arg<'src>(&self, name: &'src str, default: SExpr<'src>) -> SArgItem<'src> {
-        (
-            ArgDefItem::DefaultArg((name.into(), self.span), default),
-            self.span,
-        )
+    pub fn default_arg<'src>(&self, arg: SExpr<'src>, default: SExpr<'src>) -> SArgItem<'src> {
+        (ArgDefItem::Arg(arg, Some(default)), self.span)
     }
 
     pub fn arg_spread<'src>(&self, name: &'src str) -> SArgItem<'src> {

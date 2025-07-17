@@ -134,8 +134,7 @@ pub type SCallItem<'a> = Spanned<CallItem<'a>>;
 
 #[derive(Debug, Clone)]
 pub enum ArgDefItem<'a> {
-    Arg(SIdent<'a>),
-    DefaultArg(SIdent<'a>, SExpr<'a>),
+    Arg(SExpr<'a>, Option<SExpr<'a>>),
     ArgSpread(SIdent<'a>),
     KwargSpread(SIdent<'a>),
 }

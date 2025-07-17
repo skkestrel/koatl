@@ -1094,29 +1094,48 @@ fn make_fndef_stmts<'src, 'ast>(
     span: &Span,
 ) -> TfResult<PyBlock<'src>> {
     let mut aux_stmts = PyBlock::new();
+    let mut body_stmts = PyBlock::new();
 
     let args = match arglist {
         FnDefArgs::ArgList(args) => {
             let mut args_vec = vec![];
             for arg in args {
-                let new_arg = match arg {
-                    ArgDefItem::Arg(name) => PyArgDefItem::Arg(name.0.into(), None),
-                    ArgDefItem::DefaultArg(name, default) => {
-                        let expr = default.transform_with_placeholder_guard(ctx)?;
-                        aux_stmts.extend(expr.pre_stmts);
-                        PyArgDefItem::Arg(name.0.into(), Some(expr.expr))
+                let arg = match arg {
+                    ArgDefItem::Arg(arg, default) => {
+                        let default = if let Some(default) = default {
+                            let t = default.transform_with_placeholder_guard(ctx)?;
+                            aux_stmts.extend(t.pre_stmts);
+                            Some(t.expr)
+                        } else {
+                            None
+                        };
+
+                        let des = destructure(ctx, &arg, true)?;
+                        body_stmts.extend(des.post_stmts);
+
+                        let assign_name = match des.assign_to.value {
+                            PyExpr::Ident(ident, _) => ident,
+                            _ => {
+                                return Err(TfErrBuilder::default()
+                                    .message("Internal error: Destructuring assignment target must be an identifier")
+                                    .span(arg.1)
+                                    .build_errs());
+                            }
+                        };
+
+                        PyArgDefItem::Arg(assign_name, default)
                     }
                     ArgDefItem::ArgSpread(name) => PyArgDefItem::ArgSpread(name.0.into()),
                     ArgDefItem::KwargSpread(name) => PyArgDefItem::KwargSpread(name.0.into()),
                 };
-                args_vec.push(new_arg);
+                args_vec.push(arg);
             }
             args_vec
         }
         FnDefArgs::PyArgList(args) => args,
     };
 
-    let body_stmts = match body {
+    body_stmts.extend(match body {
         FnDefBody::PyStmts(stmts) => stmts,
         FnDefBody::Block(block) => {
             let block = block.transform_with_final_expr(ctx)?;
@@ -1128,7 +1147,7 @@ fn make_fndef_stmts<'src, 'ast>(
 
             stmts
         }
-    };
+    });
 
     let mut stmts = aux_stmts;
     stmts.push((PyStmt::FnDef(name.into(), args, body_stmts), *span).into());

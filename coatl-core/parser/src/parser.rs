@@ -433,6 +433,46 @@ where
         false,
     );
 
+    let slice0 = group((
+        binary4.clone(),
+        just_symbol("..")
+            .ignore_then(binary4.clone().or_not())
+            .or_not(),
+        just_symbol("..")
+            .ignore_then(binary4.clone().or_not())
+            .or_not(),
+    ))
+    .map_with(|(lhs, a, b), e| {
+        if a.is_none() && b.is_none() {
+            lhs
+        } else {
+            (
+                Expr::Slice(
+                    Some(Box::new(lhs)),
+                    a.flatten().map(Box::new),
+                    b.flatten().map(Box::new),
+                ),
+                e.span(),
+            )
+        }
+    })
+    .labelled("slice")
+    .boxed();
+
+    let slice1 = just_symbol("..")
+        .ignore_then(binary4.clone().or_not())
+        .then(
+            just_symbol("..")
+                .ignore_then(binary4.clone().or_not())
+                .or_not(),
+        )
+        .map(|(e1, e2)| Expr::Slice(None, e1.map(Box::new), e2.flatten().map(Box::new)))
+        .spanned()
+        .labelled("slice")
+        .boxed();
+
+    let slices = choice((slice0, slice1));
+
     let arg_list = enumeration(choice((
         just_symbol("*")
             .ignore_then(ident.clone())
@@ -440,66 +480,61 @@ where
         just_symbol("**")
             .ignore_then(ident.clone())
             .map(ArgDefItem::KwargSpread),
-        ident
+        sexpr
             .clone()
-            .then_ignore(just_symbol("="))
-            .then(sexpr.clone())
-            .map(|(key, value)| ArgDefItem::DefaultArg(key, value)),
-        ident.clone().map(ArgDefItem::Arg),
+            .then(just_symbol("=").ignore_then(sexpr.clone()).or_not())
+            .map(|(key, value)| ArgDefItem::Arg(key, value)),
     )))
     .labelled("argument-def-list")
     .boxed();
 
     let mut fn_ = chumsky::recursive::Recursive::declare();
+    let fn_body = just_symbol("=>")
+        .ignore_then(choice((
+            sblock.clone(),
+            fn_.clone().map(|x| Block::Expr(x)).spanned().boxed(),
+        )))
+        .boxed();
 
-    fn_.define(
-        choice((
-            choice((
-                arg_list
-                    .clone()
-                    .delimited_by_with_eol(just_symbol("("), just_symbol(")")),
-                ident.clone().map(|x| vec![ArgDefItem::Arg(x)]),
-            ))
-            .then_ignore(just_symbol("=>"))
-            .then(choice((
-                sblock.clone(),
-                fn_.clone().map(|x| Block::Expr(x)).spanned().boxed(),
-            )))
-            .map(|(args, body)| Expr::Fn(args, Box::new(body)))
-            .spanned(),
-            binary4.clone(),
-        ))
-        .labelled("function definition")
-        .boxed(),
-    );
+    let unary_fn = slices
+        .clone()
+        .then(fn_body.clone().or_not())
+        .map_with(|(x, body), e| {
+            if let Some(body) = body {
+                (
+                    Expr::Fn(vec![ArgDefItem::Arg(x, None)], Box::new(body)),
+                    e.span(),
+                )
+            } else {
+                x
+            }
+        })
+        .labelled("unary-fn")
+        .as_context()
+        .boxed();
 
-    let binary5 = make_binary_op(
-        choice((fn_, binary4)),
+    let nary_fn = arg_list
+        .clone()
+        .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
+        .then(fn_body)
+        .map(|(args, body)| Expr::Fn(args, Box::new(body)))
+        .spanned()
+        .labelled("nary-fn")
+        .as_context()
+        .boxed();
+
+    fn_.define(choice((nary_fn, unary_fn)).labelled("fn-or-binary").boxed());
+    // fn_.define(unary_fn.labelled("fn-or-binary").boxed());
+
+    let binary6 = make_binary_op(
+        fn_,
         select! {
             Token::Symbol("|") => BinaryOp::Pipe,
         },
         false,
     );
 
-    let binary = binary5.boxed();
-
-    let slice0 = just_symbol("..")
-        .ignore_then(binary.clone().or_not())
-        .then(just_symbol("..").ignore_then(binary.clone()).or_not())
-        .map(|(e1, e2)| Expr::Slice(None, e1.map(Box::new), e2.map(Box::new)))
-        .spanned()
-        .labelled("slice")
-        .boxed();
-
-    let slice1 = binary
-        .clone()
-        .then_ignore(just_symbol(".."))
-        .then(binary.clone().or_not())
-        .then(just_symbol("..").ignore_then(binary.clone()).or_not())
-        .map(|((e0, e1), e2)| Expr::Slice(Some(Box::new(e0)), e1.map(Box::new), e2.map(Box::new)))
-        .spanned()
-        .labelled("slice")
-        .boxed();
+    let binary = binary6.boxed();
 
     let if_ = just(Token::Kw("if"))
         .ignore_then(group((
@@ -566,7 +601,7 @@ where
         .boxed();
 
     sexpr.define(
-        choice((slice0, slice1, class_, if_, match_, binary))
+        choice((class_, if_, match_, binary))
             .labelled("expression")
             .as_context()
             .boxed(),
