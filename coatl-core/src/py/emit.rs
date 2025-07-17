@@ -581,6 +581,11 @@ impl SPyStmt<'_> {
                 ctx.emit("continue");
                 ctx.emit_endl();
             }
+            PyStmt::Pass => {
+                ctx.emit_indent();
+                ctx.emit("pass");
+                ctx.emit_endl();
+            }
             PyStmt::Match(py_spanned, py_match_cases) => {
                 ctx.emit_indent();
                 ctx.emit("match ");

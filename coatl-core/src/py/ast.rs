@@ -51,6 +51,7 @@ pub enum PyStmt<'a> {
     Del(Vec<SPyExpr<'a>>),
     Break,
     Continue,
+    Pass,
 }
 
 pub type SPyStmt<'a> = PySpanned<PyStmt<'a>>;

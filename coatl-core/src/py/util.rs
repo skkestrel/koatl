@@ -125,6 +125,10 @@ impl PyAstBuilder {
         (PyStmt::Continue, self.span).into()
     }
 
+    pub fn pass<'src>(&self) -> SPyStmt<'src> {
+        (PyStmt::Pass, self.span).into()
+    }
+
     // Expression builders
     pub fn if_expr<'src>(
         &self,

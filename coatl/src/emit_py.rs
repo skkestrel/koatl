@@ -294,7 +294,16 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                 let handlers_ast: Result<Vec<_>, _> = handlers
                     .iter()
                     .map(|handler| {
-                        let typ_ast = handler.typ.as_ref().map(|t| t.emit_py(ctx)).transpose()?;
+                        let typ_ast = if let Some(typ) = &handler.typ {
+                            typ.emit_py(ctx)?
+                        } else {
+                            PySpanned::from((
+                                PyExpr::Ident("Exception".into(), PyAccessCtx::Load),
+                                self.tl_span,
+                            ))
+                            .emit_py(ctx)?
+                        };
+
                         let name_ast: Option<String> = handler.name.as_deref().map(Into::into);
                         let handler_body_ast = handler.body.emit_py(ctx)?;
                         ctx.ast_cls("ExceptHandler", (typ_ast, name_ast, handler_body_ast))
@@ -313,6 +322,7 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                     &self.tl_span,
                 )
             }
+            PyStmt::Pass => ctx.ast_node("Pass", (), &self.tl_span),
             PyStmt::Break => ctx.ast_node("Break", (), &self.tl_span),
             PyStmt::Continue => ctx.ast_node("Continue", (), &self.tl_span),
         }

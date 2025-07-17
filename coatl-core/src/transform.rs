@@ -1548,7 +1548,30 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
         match &expr {
             Expr::Checked(expr) => {
-                todo!();
+                let a = PyAstBuilder::new(*span);
+                let t = expr.transform(ctx)?;
+                let var_name = ctx.temp_var_name("chk", span.start);
+
+                let mut try_body = t.pre_stmts;
+                try_body.push(a.assign(a.ident(var_name.clone(), PyAccessCtx::Store), t.expr));
+
+                let mut catch_body = PyBlock::new();
+                catch_body.push(a.assign(
+                    a.ident(var_name.clone(), PyAccessCtx::Store),
+                    a.load_ident("__e"),
+                ));
+
+                let mut stmts = PyBlock::new();
+                stmts.push(a.try_(
+                    try_body,
+                    vec![a.except_handler(None, Some("__e"), catch_body)],
+                    None,
+                ));
+
+                Ok(PyExprWithPre {
+                    pre_stmts: stmts,
+                    expr: a.load_ident(var_name),
+                })
             }
             Expr::Placeholder => transform_placeholder(ctx, span, access_ctx),
             Expr::Fn(arglist, body) => {
