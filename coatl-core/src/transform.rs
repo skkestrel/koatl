@@ -937,6 +937,7 @@ fn transform_if_expr<'src, 'ast>(
     if let BlockFinal::Expr(final_expr) = final_ {
         else_block_ast.push((PyStmt::Assign(store_ret_var, final_expr), *span).into());
     } else if let BlockFinal::Never = final_ {
+    } else {
         return Err(TfErrBuilder::default()
             .message("else block must have a final expression")
             .span(else_block.1)
