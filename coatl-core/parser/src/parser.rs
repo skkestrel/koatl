@@ -313,14 +313,33 @@ where
     postfix.define(
         atom.clone()
             .foldl_with(
-                choice((call, subscript, attribute, then)).repeated(),
-                |expr, op, e| -> SExpr {
+                just_symbol("?")
+                    .to(1)
+                    .or_not()
+                    .then(choice((call, subscript, attribute, then)))
+                    .repeated(),
+                |expr, (coal, op), e| -> SExpr {
                     (
-                        match op {
-                            Postfix::Call(args) => Expr::Call(Box::new(expr), args),
-                            Postfix::Subscript(args) => Expr::Subscript(Box::new(expr), args),
-                            Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
-                            Postfix::Then(rhs) => Expr::Then(Box::new(expr), Box::new(rhs)),
+                        if coal.is_none() {
+                            match op {
+                                Postfix::Call(args) => Expr::Call(Box::new(expr), args),
+                                Postfix::Subscript(args) => Expr::Subscript(Box::new(expr), args),
+                                Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
+                                Postfix::Then(rhs) => Expr::Then(Box::new(expr), Box::new(rhs)),
+                            }
+                        } else {
+                            match op {
+                                Postfix::Call(args) => Expr::MappedCall(Box::new(expr), args),
+                                Postfix::Subscript(args) => {
+                                    Expr::MappedSubscript(Box::new(expr), args)
+                                }
+                                Postfix::Attribute(attr) => {
+                                    Expr::MappedAttribute(Box::new(expr), attr)
+                                }
+                                Postfix::Then(rhs) => {
+                                    Expr::MappedThen(Box::new(expr), Box::new(rhs))
+                                }
+                            }
                         },
                         e.span(),
                     )
@@ -600,8 +619,15 @@ where
         .labelled("class")
         .boxed();
 
+    let checked_ = just(Token::Kw("try"))
+        .ignore_then(sexpr.clone())
+        .map(|expr| Expr::Checked(Box::new(expr)))
+        .spanned()
+        .labelled("checked")
+        .boxed();
+
     sexpr.define(
-        choice((class_, if_, match_, binary))
+        choice((checked_, class_, if_, match_, binary))
             .labelled("expression")
             .as_context()
             .boxed(),
