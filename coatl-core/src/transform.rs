@@ -4,7 +4,6 @@ use crate::py::{ast::*, util::PyAstBuilder};
 use parser::ast::*;
 
 // TODO implement $
-// TODO add never to transform_final_expr
 
 #[derive(Debug)]
 pub struct TfErr {
@@ -87,9 +86,15 @@ impl<'src> TfCtx<'src> {
     }
 }
 
+enum BlockFinal<'src> {
+    Expr(SPyExpr<'src>),
+    Never,
+    Nothing,
+}
+
 struct PyBlockWithFinal<'src> {
     stmts: PyBlock<'src>,
-    final_expr: Option<SPyExpr<'src>>,
+    final_: BlockFinal<'src>,
 }
 
 struct PyExprWithPre<'src> {
@@ -123,7 +128,7 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
     ) -> TfResult<PyBlock<'src>> {
         let tr = self.transform(ctx, false, false)?;
 
-        if tr.final_expr.is_some() {
+        if let BlockFinal::Expr(..) = tr.final_ {
             panic!("there shouldn't be a final expr");
         }
 
@@ -150,7 +155,7 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
                 if stmts.is_empty() {
                     return Ok(PyBlockWithFinal {
                         stmts: PyBlock::new(),
-                        final_expr: None,
+                        final_: BlockFinal::Nothing,
                     });
                 }
 
@@ -170,7 +175,6 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
                     };
                 };
 
-                let mut final_expr = None;
                 let mut iter = stmts.iter();
 
                 for stmt in iter.by_ref().take(stmts.len() - 1) {
@@ -178,13 +182,14 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
                 }
 
                 let final_stmt = iter.next().unwrap();
+                let mut final_ = BlockFinal::Nothing;
 
                 if treat_final_as_expr {
                     match &final_stmt.0 {
                         Stmt::Expr(expr) => match expr.transform(ctx) {
                             Ok(expr_with_aux) => {
                                 py_stmts.extend(expr_with_aux.pre_stmts);
-                                final_expr = Some(expr_with_aux.expr);
+                                final_ = BlockFinal::Expr(expr_with_aux.expr);
                             }
                             Err(e) => {
                                 errs.extend(e.0);
@@ -192,6 +197,16 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
                             }
                         },
                         _ => {
+                            match &final_stmt.0 {
+                                Stmt::Return(..)
+                                | Stmt::Raise(..)
+                                | Stmt::Continue
+                                | Stmt::Break => {
+                                    final_ = BlockFinal::Never;
+                                }
+                                _ => {}
+                            }
+
                             handle_stmt(final_stmt);
                         }
                     }
@@ -202,7 +217,7 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
                 if ok {
                     Ok(PyBlockWithFinal {
                         stmts: py_stmts,
-                        final_expr: final_expr,
+                        final_,
                     })
                 } else {
                     Err(TfErrs(errs))
@@ -214,7 +229,7 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
 
                     Ok(PyBlockWithFinal {
                         stmts: t.pre_stmts,
-                        final_expr: Some(t.expr),
+                        final_: BlockFinal::Expr(t.expr),
                     })
                 } else {
                     // TODO this clone is bad - refactor AST ownership?
@@ -223,7 +238,7 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
 
                     Ok(PyBlockWithFinal {
                         stmts,
-                        final_expr: None,
+                        final_: BlockFinal::Nothing,
                     })
                 }
             }
@@ -894,11 +909,12 @@ fn transform_if_expr<'src, 'ast>(
     )
         .into();
 
-    let PyBlockWithFinal { stmts, final_expr } = then_block.transform_with_final_expr(ast)?;
+    let PyBlockWithFinal { stmts, final_ } = then_block.transform_with_final_expr(ast)?;
     let mut then_block_ast = stmts;
 
-    if let Some(final_expr) = final_expr {
+    if let BlockFinal::Expr(final_expr) = final_ {
         then_block_ast.push((PyStmt::Assign(store_ret_var.clone(), final_expr), *span).into());
+    } else if let BlockFinal::Never = final_ {
     } else {
         return Err(TfErrBuilder::default()
             .message("then block must have a final expression")
@@ -913,11 +929,11 @@ fn transform_if_expr<'src, 'ast>(
             .build_errs()
     })?;
 
-    let PyBlockWithFinal { stmts, final_expr } = else_block.transform_with_final_expr(ast)?;
+    let PyBlockWithFinal { stmts, final_ } = else_block.transform_with_final_expr(ast)?;
     let mut else_block_ast = stmts;
-    if let Some(final_expr) = final_expr {
+    if let BlockFinal::Expr(final_expr) = final_ {
         else_block_ast.push((PyStmt::Assign(store_ret_var, final_expr), *span).into());
-    } else {
+    } else if let BlockFinal::Never = final_ {
         return Err(TfErrBuilder::default()
             .message("else block must have a final expression")
             .span(else_block.1)
@@ -994,8 +1010,14 @@ fn transform_match_expr<'src, 'ast>(
         let py_block = block.transform_with_final_expr(ast)?;
         let mut block_stmts = py_block.stmts;
 
-        if let Some(final_expr) = py_block.final_expr {
+        if let BlockFinal::Expr(final_expr) = py_block.final_ {
             block_stmts.push((PyStmt::Assign(store_ret_var.clone(), final_expr), block.1).into());
+        } else if let BlockFinal::Never = py_block.final_ {
+        } else {
+            return Err(TfErrBuilder::default()
+                .message("match-expr case must have a final expression")
+                .span((*block).1)
+                .build_errs());
         }
 
         py_cases.push(PyMatchCase {
@@ -1088,7 +1110,7 @@ fn make_fndef_stmts<'src, 'ast>(
             let block = block.transform_with_final_expr(ctx)?;
             let mut stmts = block.stmts;
 
-            if let Some(final_expr) = block.final_expr {
+            if let BlockFinal::Expr(final_expr) = block.final_ {
                 stmts.push((PyStmt::Return(final_expr), *span).into());
             }
 
@@ -1316,16 +1338,19 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 transform_if_expr(ctx, cond, then_block, else_block, span)
             }
             Expr::Block(block) => {
-                let PyBlockWithFinal { stmts, final_expr } =
-                    block.transform_with_final_expr(ctx)?;
+                let PyBlockWithFinal { stmts, final_ } = block.transform_with_final_expr(ctx)?;
+
+                let expr = if let BlockFinal::Expr(final_) = final_ {
+                    final_
+                } else {
+                    return Err(TfErrBuilder::default()
+                        .message("block-expression must have a final expression")
+                        .span(block.1)
+                        .build_errs());
+                };
 
                 Ok(PyExprWithPre {
-                    expr: final_expr.ok_or_else(|| {
-                        TfErrBuilder::default()
-                            .message("block-expression must have a final expression")
-                            .span(block.1)
-                            .build_errs()
-                    })?,
+                    expr,
                     pre_stmts: stmts,
                 })
             }
@@ -1521,12 +1546,14 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     let block_node = fmt_expr.0.block.transform_with_final_expr(ctx)?;
                     aux_stmts.extend(block_node.stmts);
 
-                    let expr_node = block_node.final_expr.ok_or_else(|| {
-                        TfErrBuilder::default()
+                    let expr_node = if let BlockFinal::Expr(final_) = block_node.final_ {
+                        final_
+                    } else {
+                        return Err(TfErrBuilder::default()
                             .message("f-string expression must have a final expression")
                             .span(fmt_expr.1)
-                            .build_errs()
-                    })?;
+                            .build_errs());
+                    };
 
                     nodes.push(PyFstrPart::Expr(expr_node, "".into()));
                     nodes.push(PyFstrPart::Str(str_part.0.clone().into()));
@@ -1556,13 +1583,11 @@ pub fn transform_ast<'src, 'ast>(
     let mut ctx = TfCtx::new(source)?;
     let mut stmts = block.transform(&mut ctx, treat_final_as_expr, true)?;
 
-    if treat_final_as_expr {
-        if let Some(final_expr) = stmts.final_expr {
+    if let BlockFinal::Expr(final_expr) = stmts.final_ {
+        if treat_final_as_expr {
             let span = final_expr.tl_span;
             stmts.stmts.push((PyStmt::Expr(final_expr), span).into());
-        }
-    } else {
-        if stmts.final_expr.is_some() {
+        } else {
             panic!("there shouldn't be a final expr");
         }
     }
