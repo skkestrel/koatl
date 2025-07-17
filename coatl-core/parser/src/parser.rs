@@ -545,8 +545,35 @@ where
     fn_.define(choice((nary_fn, unary_fn)).labelled("fn-or-binary").boxed());
     // fn_.define(unary_fn.labelled("fn-or-binary").boxed());
 
+    let if_ = fn_
+        .clone()
+        .then(
+            group((
+                just(Token::Kw("then"))
+                    .then(just(START_BLOCK).or_not())
+                    .ignore_then(sblock_or_expr.clone()),
+                just(Token::Eol)
+                    .or_not()
+                    .then(just(Token::Kw("else")))
+                    .then(just(START_BLOCK).or_not())
+                    .ignore_then(sblock_or_expr.clone())
+                    .or_not(),
+            ))
+            .or_not(),
+        )
+        .map_with(|(cond, if_cases), e| {
+            if let Some((if_, else_)) = if_cases {
+                (
+                    Expr::If(Box::new(cond), Box::new(if_), else_.map(Box::new)),
+                    e.span(),
+                )
+            } else {
+                cond
+            }
+        });
+
     let binary6 = make_binary_op(
-        fn_,
+        if_,
         select! {
             Token::Symbol("|") => BinaryOp::Pipe,
         },
@@ -555,7 +582,7 @@ where
 
     let binary = binary6.boxed();
 
-    let if_ = just(Token::Kw("if"))
+    let classic_if = just(Token::Kw("if"))
         .ignore_then(group((
             sexpr.clone().then_ignore(just(START_BLOCK)),
             sblock_or_expr.clone(),
@@ -587,7 +614,7 @@ where
         .then(
             case_
                 .repeated()
-                .collect()
+                .collect::<Vec<_>>()
                 .delimited_by_with_eol(just_symbol("BEGIN_BLOCK"), just_symbol("END_BLOCK")),
         )
         .map(|(scrutinee, cases)| Expr::Match(Box::new(scrutinee), cases))
@@ -627,7 +654,7 @@ where
         .boxed();
 
     sexpr.define(
-        choice((checked_, class_, if_, match_, binary))
+        choice((checked_, class_, classic_if, match_, binary))
             .labelled("expression")
             .as_context()
             .boxed(),
