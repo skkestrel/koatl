@@ -4,6 +4,7 @@ use crate::py::{ast::*, util::PyAstBuilder};
 use parser::ast::*;
 
 // TODO simplify function defs when no aux statements
+// TODO add decorators to keep namespace clean
 
 #[derive(Debug)]
 pub struct TfErr {

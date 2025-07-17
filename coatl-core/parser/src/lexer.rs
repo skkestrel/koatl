@@ -267,29 +267,46 @@ where
             return Err(Rich::custom(self.span_since(&start), "expected a number"));
         };
 
-        let mut after_dot = c == Some('.');
+        let mut first_dot_cursor = self.input.save();
         let mut digits_before_dot = false;
         let mut digits_after_dot = false;
+        let mut after_dot = false;
+        let mut just_saw_dot = false;
 
         while let Some(c) = self.peek() {
             if c == '.' {
+                if just_saw_dot {
+                    // handle 10.. properly
+                    self.input.rewind(first_dot_cursor);
+                    break;
+                }
+
                 if after_dot {
+                    // don't allow 10.1.1
                     return Err(Rich::custom(
                         self.span_since(&start),
                         "unexpected second dot",
                     ));
+                } else {
+                    first_dot_cursor = self.input.save();
                 }
+
+                just_saw_dot = true;
                 after_dot = true;
-            } else if !(c.is_ascii_digit() || c == '_') {
-                break;
-            }
+            } else {
+                if !(c.is_ascii_digit() || c == '_') {
+                    break;
+                }
 
-            if after_dot && c.is_ascii_digit() {
-                digits_after_dot = true;
-            }
+                if after_dot && c.is_ascii_digit() {
+                    digits_after_dot = true;
+                }
 
-            if !after_dot && c.is_ascii_digit() {
-                digits_before_dot = true;
+                if !after_dot && c.is_ascii_digit() {
+                    digits_before_dot = true;
+                }
+
+                just_saw_dot = false;
             }
 
             self.next();
@@ -684,6 +701,8 @@ where
                     expect_new_block = false;
                 } else {
                     let tok;
+
+                    // TODO improve number parsing - 0.1.1 should fail at this level
 
                     if let Ok(token) = self.try_parse(TokenizeCtx::parse_number) {
                         tok = token;

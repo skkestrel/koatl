@@ -546,8 +546,22 @@ impl SPyStmt<'_> {
                 body.emit_to(ctx, 1)?;
                 for handler in handlers {
                     ctx.emit_indent();
-                    ctx.emit("except:"); // TODO emit for guarded cases
+                    ctx.emit("except ");
+
+                    if let Some(typ) = &mut handler.typ {
+                        typ.emit_to(ctx, LOW_PREC)?;
+                    } else {
+                        ctx.emit("Exception");
+                    }
+
+                    if let Some(name) = &handler.name {
+                        ctx.emit(" as ");
+                        ctx.emit(name);
+                    }
+
+                    ctx.emit(":");
                     ctx.emit_endl();
+
                     handler.body.emit_to(ctx, 1)?;
                 }
                 if let Some(finally) = finally {
