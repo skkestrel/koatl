@@ -125,6 +125,13 @@ where
     .labelled("identifier")
     .boxed();
 
+    let placeholder = select! {
+        Token::Symbol("$") => Expr::Placeholder,
+    }
+    .spanned()
+    .labelled("placeholder")
+    .boxed();
+
     let list = enumeration(choice((
         just_symbol("*")
             .ignore_then(unary.clone())
@@ -191,8 +198,9 @@ where
 
     atom.define(
         choice((
-            literal,
             ident.clone().map(Expr::Ident).spanned(),
+            literal,
+            placeholder,
             list,
             mapping,
             fstr,

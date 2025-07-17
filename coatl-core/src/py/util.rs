@@ -139,12 +139,12 @@ impl PyAstBuilder {
             .into()
     }
 
-    pub fn ident<'src>(&self, name: impl Into<PyIdent<'src>>, ctx: PyNameCtx) -> SPyExpr<'src> {
+    pub fn ident<'src>(&self, name: impl Into<PyIdent<'src>>, ctx: PyAccessCtx) -> SPyExpr<'src> {
         (PyExpr::Ident(name.into(), ctx), self.span).into()
     }
 
     pub fn load_ident<'src>(&self, name: impl Into<PyIdent<'src>>) -> SPyExpr<'src> {
-        self.ident(name, PyNameCtx::Load)
+        self.ident(name, PyAccessCtx::Load)
     }
 
     pub fn literal<'src>(&self, lit: PyLiteral<'src>) -> SPyExpr<'src> {
@@ -196,7 +196,7 @@ impl PyAstBuilder {
         &self,
         value: SPyExpr<'src>,
         attr: impl Into<PyIdent<'src>>,
-        ctx: PyNameCtx,
+        ctx: PyAccessCtx,
     ) -> SPyExpr<'src> {
         (
             PyExpr::Attribute(Box::new(value), attr.into(), ctx),
@@ -209,7 +209,7 @@ impl PyAstBuilder {
         &self,
         value: SPyExpr<'src>,
         slice: SPyExpr<'src>,
-        ctx: PyNameCtx,
+        ctx: PyAccessCtx,
     ) -> SPyExpr<'src> {
         (
             PyExpr::Subscript(Box::new(value), Box::new(slice), ctx),

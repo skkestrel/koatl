@@ -327,13 +327,13 @@ trait PyNameCtxExt {
     fn emit_py(&self, ctx: &PyCtx<'_, '_>) -> PyTlResult<PyObject>;
 }
 
-impl PyNameCtxExt for PyNameCtx {
+impl PyNameCtxExt for PyAccessCtx {
     fn emit_py(&self, ctx: &PyCtx<'_, '_>) -> PyTlResult<PyObject> {
         Ok(ctx.ast_cls(
             match self {
-                PyNameCtx::Load => "Load",
-                PyNameCtx::Store => "Store",
-                PyNameCtx::Del => "Del",
+                PyAccessCtx::Load => "Load",
+                PyAccessCtx::Store => "Store",
+                PyAccessCtx::Del => "Del",
             },
             (),
         )?)

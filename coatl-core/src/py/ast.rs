@@ -5,7 +5,7 @@ use parser::ast::Span;
 pub type PyIdent<'a> = Cow<'a, str>;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum PyNameCtx {
+pub enum PyAccessCtx {
     Load,
     Store,
     Del,
@@ -174,13 +174,13 @@ pub enum PyFstrPart<'a> {
 pub enum PyExpr<'a> {
     Literal(PyLiteral<'a>),
     Fstr(Vec<PyFstrPart<'a>>),
-    Ident(PyIdent<'a>, PyNameCtx),
+    Ident(PyIdent<'a>, PyAccessCtx),
 
     Binary(PyBinaryOp, Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
     Unary(PyUnaryOp, Box<SPyExpr<'a>>),
     Call(Box<SPyExpr<'a>>, Vec<PyCallItem<'a>>),
-    Attribute(Box<SPyExpr<'a>>, PyIdent<'a>, PyNameCtx),
-    Subscript(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>, PyNameCtx),
+    Attribute(Box<SPyExpr<'a>>, PyIdent<'a>, PyAccessCtx),
+    Subscript(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>, PyAccessCtx),
 
     IfExpr(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
 

@@ -154,9 +154,7 @@ pub type SBlock<'a> = Spanned<Block<'a>>;
 pub enum Expr<'a> {
     Literal(SLiteral<'a>),
     Ident(SIdent<'a>),
-    Unary(UnaryOp, Box<SExpr<'a>>),
-    Binary(BinaryOp, Box<SExpr<'a>>, Box<SExpr<'a>>),
-
+    Placeholder,
     List(Vec<ListItem<'a>>),
     Mapping(Vec<MappingItem<'a>>),
     Slice(
@@ -164,6 +162,9 @@ pub enum Expr<'a> {
         Option<Box<SExpr<'a>>>,
         Option<Box<SExpr<'a>>>,
     ),
+
+    Unary(UnaryOp, Box<SExpr<'a>>),
+    Binary(BinaryOp, Box<SExpr<'a>>, Box<SExpr<'a>>),
 
     If(Box<SExpr<'a>>, Box<SBlock<'a>>, Option<Box<SBlock<'a>>>),
     Match(Box<SExpr<'a>>, Vec<(SExpr<'a>, Box<SBlock<'a>>)>),
