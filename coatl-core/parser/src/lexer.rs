@@ -428,7 +428,7 @@ where
             {
                 self.parse_block_comment()?;
             } else if c == '#' {
-                while self.try_parse(TokenizeCtx::parse_newline_or_eof).is_err() {
+                while self.look_ahead(TokenizeCtx::parse_newline_or_eof).is_err() {
                     self.next();
                 }
             } else {
