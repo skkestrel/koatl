@@ -307,7 +307,7 @@ where
                 .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
                 .map(Postfix::Then),
         )
-        .labelled("then")
+        .labelled("generalized-attr")
         .boxed();
 
     postfix.define(

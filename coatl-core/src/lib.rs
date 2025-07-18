@@ -3,12 +3,13 @@ pub mod py;
 pub mod transform;
 
 use parser::ast::{Block, Span};
+use parser::{TokenList, parse_tokens, tokenize};
 
 use crate::py::ast::{PyImportAlias, PyLiteral, PyTupleItem};
 use crate::py::util::PyAstBuilder;
 use crate::py::{ast::PyBlock, emit::EmitCtx};
 use crate::transform::{TransformOutput, transform_ast};
-use parser::{TokenList, parse_tokens, tokenize};
+use ariadne::{Color, Label, Report, ReportKind, sources};
 
 pub enum TlErrKind {
     Parse,
@@ -174,6 +175,34 @@ pub fn transpile(src: &str, options: TranspileOptions) -> TlResult<String> {
     })?;
 
     Ok(ctx.source)
+}
+
+pub fn format_errs(errs: &[TlErr], filename: &str, src: &str) -> Vec<u8> {
+    let filename = filename.to_string();
+    let mut writer = Vec::<u8>::new();
+
+    for e in errs {
+        let range = e.span.map(|e| e.into_range()).unwrap_or(0..0);
+
+        Report::build(ReportKind::Error, (filename.clone(), range.clone()))
+            .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
+            .with_message(&e.message)
+            .with_label(
+                Label::new((filename.clone(), range.clone()))
+                    .with_message(e.message.clone())
+                    .with_color(Color::Red),
+            )
+            .with_labels(e.contexts.iter().map(|(label, span)| {
+                Label::new((filename.clone(), span.into_range()))
+                    .with_message(format!("while parsing this {label}"))
+                    .with_color(Color::Yellow)
+            }))
+            .finish()
+            .write(sources([(filename.clone(), src)]), &mut writer)
+            .unwrap();
+    }
+
+    writer
 }
 
 pub fn parse_tl<'src>(src: &'src str) -> TlResult<::parser::ast::SBlock<'src>> {

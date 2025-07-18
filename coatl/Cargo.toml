@@ -3,11 +3,11 @@ name = "coatl"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "coatl"
 crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = "0.25.0"
+ariadne = "0.5.1"
 coatl-core = { path = "../coatl-core" }
