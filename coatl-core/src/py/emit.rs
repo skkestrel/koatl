@@ -383,6 +383,19 @@ impl SPyExpr<'_> {
                 else_.emit_to(ctx, LOW_PREC)?;
                 ctx.emit(")");
             }
+            PyExpr::Lambda(args, body) => {
+                ctx.emit("(lambda ");
+                ctx.emit("");
+                for (i, arg) in args.iter_mut().enumerate() {
+                    if i > 0 {
+                        ctx.emit(", ");
+                    }
+                    arg.emit_to(ctx)?;
+                }
+                ctx.emit(": ");
+                body.emit_to(ctx, HIGH_PREC)?;
+                ctx.emit(")");
+            }
         };
 
         if require_paren {

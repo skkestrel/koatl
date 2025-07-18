@@ -6,7 +6,6 @@ use crate::{
 };
 use parser::ast::*;
 
-// TODO simplify function defs when no aux statements
 // TODO add decorators to keep namespace clean
 
 #[derive(Debug)]
@@ -628,7 +627,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                         (&target.0, &value.0)
                     {
                         (
-                            make_fndef_stmts(
+                            make_fn_def(
                                 ctx,
                                 (*ident).into(),
                                 FnDefArgs::ArgList(arglist),
@@ -715,27 +714,16 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 let cond: SPyExpr<'src> = if cond_node.pre_stmts.is_empty() {
                     cond_node.expr
                 } else {
-                    let cond_name = ctx.temp_var_name("whilecond", span.start);
-                    let aux_fn: PyBlock<'src> = make_fndef_stmts(
+                    let aux_fn = make_fn_exp(
                         ctx,
-                        cond_name.clone().into(),
                         FnDefArgs::PyArgList(vec![]),
                         FnDefBody::PyStmts(cond_node.pre_stmts),
                         span,
                     )?;
 
-                    stmts.extend(aux_fn);
+                    stmts.extend(aux_fn.pre_stmts);
 
-                    (
-                        PyExpr::Call(
-                            Box::new(
-                                (PyExpr::Ident(cond_name.into(), PyAccessCtx::Load), *span).into(),
-                            ),
-                            vec![],
-                        ),
-                        *span,
-                    )
-                        .into()
+                    (PyExpr::Call(Box::new(aux_fn.expr), vec![]), *span).into()
                 };
 
                 stmts.push((PyStmt::While(cond, body_block), *span).into());
@@ -1084,15 +1072,12 @@ enum FnDefArgs<'src, 'ast> {
     PyArgList(Vec<PyArgDefItem<'src>>),
 }
 
-fn make_fndef_stmts<'src, 'ast>(
+fn make_arglist<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
-    name: Cow<'src, str>,
     arglist: FnDefArgs<'src, 'ast>,
-    body: FnDefBody<'src, 'ast>,
-    span: &Span,
-) -> TfResult<PyBlock<'src>> {
-    let mut aux_stmts = PyBlock::new();
-    let mut body_stmts = PyBlock::new();
+) -> TfResult<(PyBlock<'src>, PyBlock<'src>, Vec<PyArgDefItem<'src>>)> {
+    let mut pre = PyBlock::new();
+    let mut post = PyBlock::new();
 
     let args = match arglist {
         FnDefArgs::ArgList(args) => {
@@ -1102,14 +1087,14 @@ fn make_fndef_stmts<'src, 'ast>(
                     ArgDefItem::Arg(arg, default) => {
                         let default = if let Some(default) = default {
                             let t = default.transform_with_placeholder_guard(ctx)?;
-                            aux_stmts.extend(t.pre_stmts);
+                            pre.extend(t.pre_stmts);
                             Some(t.expr)
                         } else {
                             None
                         };
 
                         let des = destructure(ctx, &arg, true)?;
-                        body_stmts.extend(des.post_stmts);
+                        post.extend(des.post_stmts);
 
                         let assign_name = match des.assign_to.value {
                             PyExpr::Ident(ident, _) => ident,
@@ -1133,6 +1118,22 @@ fn make_fndef_stmts<'src, 'ast>(
         FnDefArgs::PyArgList(args) => args,
     };
 
+    Ok((pre, post, args))
+}
+
+fn prepare_py_fn<'src, 'ast>(
+    ctx: &mut TfCtx<'src>,
+    arglist: FnDefArgs<'src, 'ast>,
+    body: FnDefBody<'src, 'ast>,
+    span: &Span,
+) -> TfResult<(PyBlock<'src>, PyBlock<'src>, Vec<PyArgDefItem<'src>>)> {
+    let mut aux_stmts = PyBlock::new();
+    let mut body_stmts = PyBlock::new();
+
+    let (pre, post, args) = make_arglist(ctx, arglist)?;
+    aux_stmts.extend(pre);
+    body_stmts.extend(post);
+
     body_stmts.extend(match body {
         FnDefBody::PyStmts(stmts) => stmts,
         FnDefBody::Block(block) => {
@@ -1147,10 +1148,45 @@ fn make_fndef_stmts<'src, 'ast>(
         }
     });
 
-    let mut stmts = aux_stmts;
-    stmts.push((PyStmt::FnDef(name.into(), args, body_stmts), *span).into());
+    Ok((aux_stmts, body_stmts, args))
+}
 
-    Ok(stmts)
+fn make_fn_exp<'src, 'ast>(
+    ctx: &mut TfCtx<'src>,
+    arglist: FnDefArgs<'src, 'ast>,
+    body: FnDefBody<'src, 'ast>,
+    span: &Span,
+) -> TfResult<PyExprWithPre<'src>> {
+    let (mut aux_stmts, body_stmts, args) = prepare_py_fn(ctx, arglist, body, span)?;
+
+    if body_stmts.0.len() == 1 {
+        // TODO maybe refactor prepare_py_fn to return body_stmts as PyExprWithPre
+        if let PyStmt::Return(expr) = &body_stmts.0[0].value {
+            return Ok(PyExprWithPre {
+                expr: (PyExpr::Lambda(args, Box::new(expr.clone())), *span).into(),
+                pre_stmts: PyBlock::new(),
+            });
+        }
+    }
+
+    let name = ctx.temp_var_name("fnexp", span.start);
+    aux_stmts.push((PyStmt::FnDef(name.clone().into(), args, body_stmts), *span).into());
+    Ok(PyExprWithPre {
+        expr: (PyExpr::Ident(name.into(), PyAccessCtx::Load), *span).into(),
+        pre_stmts: aux_stmts,
+    })
+}
+
+fn make_fn_def<'src, 'ast>(
+    ctx: &mut TfCtx<'src>,
+    name: Cow<'src, str>,
+    arglist: FnDefArgs<'src, 'ast>,
+    body: FnDefBody<'src, 'ast>,
+    span: &Span,
+) -> TfResult<PyBlock<'src>> {
+    let (mut aux_stmts, body_stmts, args) = prepare_py_fn(ctx, arglist, body, span)?;
+    aux_stmts.push((PyStmt::FnDef(name.into(), args, body_stmts), *span).into());
+    Ok(aux_stmts)
 }
 
 fn transform_call_items<'src, 'ast>(
@@ -1285,23 +1321,21 @@ where
 
     if popped.activated {
         let var_name = popped.var_name(ctx);
-        let fn_name = ctx.temp_var_name("phfn", span.start);
 
         let mut body = PyBlock::new();
         body.extend(inner_expr.pre_stmts);
         body.push((PyStmt::Return(inner_expr.expr), *span).into());
 
-        let wrapper_func = make_fndef_stmts(
+        let fn_exp = make_fn_exp(
             ctx,
-            fn_name.clone().into(),
             FnDefArgs::PyArgList(vec![PyArgDefItem::Arg(var_name, None)]),
             FnDefBody::PyStmts(body),
             span,
         )?;
 
         Ok(PyExprWithPre {
-            expr: (PyExpr::Ident(fn_name.into(), PyAccessCtx::Load), *span).into(),
-            pre_stmts: wrapper_func,
+            expr: fn_exp.expr,
+            pre_stmts: fn_exp.pre_stmts,
         })
     } else {
         Ok(inner_expr)
@@ -1586,21 +1620,12 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 })
             }
             Expr::Placeholder => transform_placeholder(ctx, span, access_ctx),
-            Expr::Fn(arglist, body) => {
-                let name = ctx.temp_var_name("fnexp", span.start);
-                let aux_stmts = make_fndef_stmts(
-                    ctx,
-                    name.clone().into(),
-                    FnDefArgs::ArgList(arglist),
-                    FnDefBody::Block(body),
-                    span,
-                )?;
-
-                Ok(PyExprWithPre {
-                    expr: (PyExpr::Ident(name.into(), PyAccessCtx::Load), *span).into(),
-                    pre_stmts: aux_stmts,
-                })
-            }
+            Expr::Fn(arglist, body) => make_fn_exp(
+                ctx,
+                FnDefArgs::ArgList(arglist),
+                FnDefBody::Block(body),
+                span,
+            ),
             Expr::Class(bases, body) => {
                 let name = Cow::<'src, str>::Owned(ctx.temp_var_name("classexp", span.start));
                 let aux_stmts = make_classdef_stmts(ctx, name.clone(), bases, body, span)?;

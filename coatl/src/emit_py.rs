@@ -107,6 +107,49 @@ impl<'src> PyBlockExt<'src> for PyBlock<'src> {
     }
 }
 
+trait PyArgDefExit<'src> {
+    fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject>;
+}
+impl<'src> PyArgDefExit<'src> for Vec<PyArgDefItem<'src>> {
+    fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject> {
+        let mut py_args = Vec::new();
+        let mut py_defaults = Vec::new();
+        let mut vararg = None;
+        let mut kwarg = None;
+
+        for arg in self {
+            match arg {
+                PyArgDefItem::Arg(arg_name, default) => {
+                    let arg_ast = ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?;
+                    py_args.push(arg_ast);
+                    if let Some(default_expr) = default {
+                        py_defaults.push(default_expr.emit_py(ctx)?);
+                    }
+                }
+                PyArgDefItem::ArgSpread(arg_name) => {
+                    vararg = Some(ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?);
+                }
+                PyArgDefItem::KwargSpread(arg_name) => {
+                    kwarg = Some(ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?);
+                }
+            }
+        }
+
+        ctx.ast_cls(
+            "arguments",
+            (
+                Vec::<PyObject>::new(), // posonlyargs
+                py_args,                // args
+                vararg,                 // vararg
+                Vec::<PyObject>::new(), // kwonlyargs
+                Vec::<PyObject>::new(), // kw_defaults
+                kwarg,                  // kwarg
+                py_defaults,            // defaults
+            ),
+        )
+    }
+}
+
 trait PyStmtExt<'src> {
     fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject>;
 }
@@ -192,41 +235,7 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                 )
             }
             PyStmt::FnDef(name, args, body) => {
-                let mut py_args = Vec::new();
-                let mut py_defaults = Vec::new();
-                let mut vararg = None;
-                let mut kwarg = None;
-
-                for arg in args {
-                    match arg {
-                        PyArgDefItem::Arg(arg_name, default) => {
-                            let arg_ast = ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?;
-                            py_args.push(arg_ast);
-                            if let Some(default_expr) = default {
-                                py_defaults.push(default_expr.emit_py(ctx)?);
-                            }
-                        }
-                        PyArgDefItem::ArgSpread(arg_name) => {
-                            vararg = Some(ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?);
-                        }
-                        PyArgDefItem::KwargSpread(arg_name) => {
-                            kwarg = Some(ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?);
-                        }
-                    }
-                }
-
-                let arguments = ctx.ast_cls(
-                    "arguments",
-                    (
-                        Vec::<PyObject>::new(), // posonlyargs
-                        py_args,                // args
-                        vararg,                 // vararg
-                        Vec::<PyObject>::new(), // kwonlyargs
-                        Vec::<PyObject>::new(), // kw_defaults
-                        kwarg,                  // kwarg
-                        py_defaults,            // defaults
-                    ),
-                )?;
+                let arguments = args.emit_py(ctx)?;
 
                 let body_ast = body.emit_py(ctx)?;
                 let decorators = Vec::<PyObject>::new();
@@ -562,6 +571,11 @@ impl<'src> PyExprExt<'src> for SPyExpr<'src> {
                 let else_ast = else_.emit_py(ctx)?;
                 ctx.ast_node("IfExp", (cond_ast, if_ast, else_ast), &self.tl_span)?
             }
+            PyExpr::Lambda(args, body) => ctx.ast_node(
+                "Lambda",
+                (args.emit_py(ctx)?, body.emit_py(ctx)?),
+                &self.tl_span,
+            )?,
         })
     }
 }
