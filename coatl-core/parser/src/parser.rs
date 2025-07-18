@@ -243,9 +243,58 @@ where
         .labelled("f-string")
         .boxed();
 
+    let case_ = sexpr
+        .clone()
+        .then_ignore(just(START_BLOCK))
+        .then(block_or_inline_stmt.clone())
+        .then_ignore(just(Token::Eol))
+        .map(|(pattern, body)| (pattern, Box::new(body)))
+        .labelled("match-case")
+        .boxed();
+
+    let match_ = just(Token::Kw("match"))
+        .ignore_then(sexpr.clone())
+        .then_ignore(just(START_BLOCK))
+        .then(
+            case_
+                .repeated()
+                .collect::<Vec<_>>()
+                .delimited_by_with_eol(just_symbol("BEGIN_BLOCK"), just_symbol("END_BLOCK")),
+        )
+        .map(|(scrutinee, cases)| Expr::Match(Box::new(scrutinee), cases))
+        .spanned()
+        .labelled("match")
+        .boxed();
+
+    let class_ = just(Token::Kw("class"))
+        .ignore_then(
+            enumeration(
+                choice((
+                    ident
+                        .clone()
+                        .then_ignore(just_symbol("="))
+                        .then(sexpr.clone())
+                        .map(|(key, value)| CallItem::Kwarg(key, value)),
+                    sexpr.clone().map(CallItem::Arg),
+                ))
+                .spanned()
+                .boxed(),
+            )
+            .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")))
+            .or_not(),
+        )
+        .then_ignore(just(START_BLOCK))
+        .then(block_or_inline_stmt.clone())
+        .map(|(arglist, block)| Expr::Class(arglist.unwrap_or_else(|| Vec::new()), Box::new(block)))
+        .spanned()
+        .labelled("class")
+        .boxed();
+
     atom.define(
         choice((
             ident.clone().map(Expr::Ident).spanned(),
+            match_, // match and class are atoms because they expect DEDENT at the end
+            class_,
             literal,
             placeholder,
             list.clone(),
@@ -598,16 +647,6 @@ where
 
     fn_.define(choice((nary_fn, unary_fn)).labelled("fn-or-binary").boxed());
 
-    let binary6 = make_binary_op(
-        fn_,
-        select! {
-            Token::Symbol("|") => BinaryOp::Pipe,
-        },
-        false,
-    );
-
-    let binary = binary6.boxed();
-
     let classic_if = just(Token::Kw("if"))
         .ignore_then(group((
             sexpr.clone().then_ignore(just(START_BLOCK)),
@@ -625,65 +664,25 @@ where
         .labelled("if")
         .boxed();
 
-    let case_ = sexpr
-        .clone()
-        .then_ignore(just(START_BLOCK))
-        .then(block_or_inline_stmt.clone())
-        .then_ignore(just(Token::Eol))
-        .map(|(pattern, body)| (pattern, Box::new(body)))
-        .labelled("match-case")
-        .boxed();
-
-    let match_ = just(Token::Kw("match"))
-        .ignore_then(sexpr.clone())
-        .then_ignore(just(START_BLOCK))
-        .then(
-            case_
-                .repeated()
-                .collect::<Vec<_>>()
-                .delimited_by_with_eol(just_symbol("BEGIN_BLOCK"), just_symbol("END_BLOCK")),
-        )
-        .map(|(scrutinee, cases)| Expr::Match(Box::new(scrutinee), cases))
-        .spanned()
-        .labelled("match")
-        .boxed();
-
-    let class_ = just(Token::Kw("class"))
-        .ignore_then(
-            enumeration(
-                choice((
-                    ident
-                        .clone()
-                        .then_ignore(just_symbol("="))
-                        .then(sexpr.clone())
-                        .map(|(key, value)| CallItem::Kwarg(key, value)),
-                    sexpr.clone().map(CallItem::Arg),
-                ))
-                .spanned()
-                .boxed(),
-            )
-            .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")))
-            .or_not(),
-        )
-        .then_ignore(just(START_BLOCK))
-        .then(block_or_inline_stmt.clone())
-        .map(|(arglist, block)| Expr::Class(arglist.unwrap_or_else(|| Vec::new()), Box::new(block)))
-        .spanned()
-        .labelled("class")
-        .boxed();
-
-    sexpr.define(
-        choice((class_, classic_if, match_, binary))
-            .labelled("expression")
-            .as_context()
-            .boxed(),
+    let binary6 = make_binary_op(
+        choice((fn_, classic_if)),
+        select! {
+            Token::Symbol("|") => BinaryOp::Pipe,
+        },
+        false,
     );
+
+    let binary = binary6.boxed();
+
+    sexpr.define(binary.labelled("expression").as_context().boxed());
 
     let expr_stmt = nary_list
         .clone()
         .map(Stmt::Expr)
         .labelled("expression statement")
         .boxed();
+
+    let stmt_rhs = choice((nary_list.clone(), sexpr.clone())).boxed();
 
     let assign_stmt = group((
         choice((
@@ -695,7 +694,7 @@ where
         .collect()
         .boxed(),
         binding_target.clone().then_ignore(just_symbol("=")),
-        nary_list.clone(),
+        stmt_rhs.clone(),
     ))
     .map(|(modifiers, lhs, rhs)| Stmt::Assign(lhs, rhs, modifiers))
     .labelled("assignment statement")
@@ -768,7 +767,7 @@ where
         .boxed();
 
     let return_stmt = just(Token::Kw("return"))
-        .ignore_then(nary_list.clone())
+        .ignore_then(stmt_rhs.clone())
         .map(Stmt::Return)
         .labelled("return statement")
         .boxed();
@@ -787,7 +786,7 @@ where
         .boxed();
 
     let raise_stmt = just(Token::Kw("raise"))
-        .ignore_then(nary_list.clone())
+        .ignore_then(stmt_rhs.clone())
         .map(Stmt::Raise)
         .labelled("raise statement")
         .boxed();
