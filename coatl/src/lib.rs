@@ -9,12 +9,12 @@ use pyo3::{
     types::{PyDict, PyList},
 };
 
-#[pyfunction(signature=(src, mode="module", filename="<string>"))]
-fn transpile(src: &str, mode: &str, filename: &str) -> PyResult<PyObject> {
+#[pyfunction(signature=(src, mode="module", filename="<string>", sourcemap=false))]
+fn transpile(src: &str, mode: &str, filename: &str, sourcemap: bool) -> PyResult<PyObject> {
     let options = match mode {
         "module" => TranspileOptions::module(),
         "prelude" => TranspileOptions::prelude(),
-        "interactive" | "kernel" => TranspileOptions::interactive(),
+        "interactive" => TranspileOptions::interactive(),
         "script" => TranspileOptions::script(),
         _ => {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -23,9 +23,9 @@ fn transpile(src: &str, mode: &str, filename: &str) -> PyResult<PyObject> {
         }
     };
 
-    if mode == "kernel" {
+    if sourcemap {
         let ctx = transpile_to_source(src, options).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyException, _>(format_errs(&e, filename, src))
+            PyErr::new::<pyo3::exceptions::PySyntaxError, _>(format_errs(&e, filename, src))
         })?;
 
         let line_cache = LineColCache::new(src);
@@ -47,7 +47,7 @@ fn transpile(src: &str, mode: &str, filename: &str) -> PyResult<PyObject> {
         Ok(retval)
     } else {
         let py_ast = transpile_to_py_ast(src, options).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyException, _>(format_errs(&e, filename, src))
+            PyErr::new::<pyo3::exceptions::PySyntaxError, _>(format_errs(&e, filename, src))
         })?;
 
         let py_ast_obj = emit_py::emit_py(&py_ast, src).map_err(|e| {

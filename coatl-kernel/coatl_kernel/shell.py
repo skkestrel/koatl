@@ -21,12 +21,18 @@ class CoatlShell(ZMQInteractiveShell):
         super().__init__(*args, **kwargs)
         self.compile.shell = self
 
+    def _get_exc_info(self, exc_tuple=None):
+        ret = super()._get_exc_info(exc_tuple)
+        print(ret)
+        return ret
+
     def transform_cell(self, raw_cell):
         cell = super().transform_cell(raw_cell)
 
         self._coatl_cell = cell
+        (py_ast, sourcemap) = coatl.transpile(cell, mode="interactive", sourcemap=True)
+        self._coatl_sourcemap = sourcemap
 
-        py_ast = coatl.transpile(cell, mode="interactive")
         cell = ast.unparse(py_ast)
 
         return cell

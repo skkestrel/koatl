@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use parser::ast::Span;
+use parser::{
+    ast::Span,
+    lexer::{escape_fstr, escape_str},
+};
 
 use crate::{py::ast::*, transform::TfResult};
 
@@ -31,6 +34,30 @@ impl EmitCtx {
     pub fn emit(&mut self, text: &str) -> Span {
         let start = self.source.len();
         self.source.push_str(text);
+        let end = self.source.len();
+
+        Span {
+            context: (),
+            start,
+            end,
+        }
+    }
+
+    pub fn emit_escaped_str(&mut self, text: &str) -> Span {
+        let start = self.source.len();
+        self.source.push_str(&escape_str(text));
+        let end = self.source.len();
+
+        Span {
+            context: (),
+            start,
+            end,
+        }
+    }
+
+    pub fn emit_escaped_fstr(&mut self, text: &str) -> Span {
+        let start = self.source.len();
+        self.source.push_str(&escape_fstr(text));
         let end = self.source.len();
 
         Span {
@@ -307,7 +334,7 @@ impl SPyExpr<'_> {
                 }
                 PyLiteral::Str(s) => {
                     ctx.emit("\"");
-                    ctx.emit(s.as_ref());
+                    ctx.emit_escaped_str(s);
                     ctx.emit("\"");
                 }
                 PyLiteral::Bool(b) => {
@@ -322,7 +349,7 @@ impl SPyExpr<'_> {
                 for part in fstr_parts.iter_mut() {
                     match part {
                         PyFstrPart::Str(s) => {
-                            ctx.emit(s);
+                            ctx.emit_escaped_fstr(s);
                         }
                         PyFstrPart::Expr(expr, _ident) => {
                             ctx.emit("{");

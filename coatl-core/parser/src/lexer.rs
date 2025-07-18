@@ -82,6 +82,30 @@ pub type TExtra<'src> = extra::Full<TError<'src>, (), ()>;
 
 type TResult<'src, T> = Result<T, TError<'src>>;
 
+pub fn escape_str(s: &str) -> String {
+    // TODO
+    s.chars()
+        .map(|c| match c {
+            '\n' => "\\n".to_string(),
+            '"' => "\\\"".to_string(),
+            _ => c.to_string(),
+        })
+        .collect()
+}
+
+pub fn escape_fstr(s: &str) -> String {
+    // TODO
+    s.chars()
+        .map(|c| match c {
+            '{' => "{{".to_string(),
+            '}' => "}}".to_string(),
+            '\n' => "\\n".to_string(),
+            '"' => "\\\"".to_string(),
+            _ => c.to_string(),
+        })
+        .collect()
+}
+
 struct TokenizeCtx<'src: 'parse, 'parse, 'input, TInput>
 where
     TInput: StrInput<'src, Token = char, Span = SimpleSpan, Slice = &'src str>,
