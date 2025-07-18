@@ -571,6 +571,102 @@ fn get_scope_modifying_statements<'a>(
     Ok(stmts)
 }
 
+fn transform_assignment<'src, 'ast>(
+    ctx: &mut TfCtx<'src>,
+    lhs: &'ast SExpr<'src>,
+    rhs: &'ast SExpr<'src>,
+    scope_modifier: Option<&AssignModifier>,
+    span: &Span,
+) -> TfResult<(PyBlock<'src>, Vec<PyIdent<'src>>)> {
+    let mut stmts = PyBlock::new();
+    if let Expr::Ident((ident, _ident_span)) = &lhs.0 {
+        let mut decorators = vec![];
+        let mut cur_node = &rhs.0;
+
+        loop {
+            match cur_node {
+                Expr::Then(left, right) => {
+                    cur_node = &left.0;
+                    decorators.push(right);
+                }
+                Expr::Binary(BinaryOp::Pipe, left, right) => {
+                    cur_node = &left.0;
+                    decorators.push(right);
+                }
+                Expr::Call(left, right) => {
+                    if right.len() != 1 {
+                        break;
+                    }
+
+                    match &right[0].0 {
+                        CallItem::Arg(arg) => {
+                            cur_node = &arg.0;
+                            decorators.push(left);
+                        }
+                        _ => {
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+
+        let py_decorators = || {
+            Ok(PyDecorators(
+                decorators
+                    .into_iter()
+                    .map(|x| {
+                        let t = x.transform(ctx)?;
+                        stmts.extend(t.pre_stmts);
+                        Ok(t.expr)
+                    })
+                    .collect::<TfResult<_>>()?,
+            ))
+        };
+
+        if let Expr::Fn(arglist, body) = &rhs.0 {
+            let decorators = py_decorators()?;
+            return Ok((
+                make_fn_def(
+                    ctx,
+                    (*ident).into(),
+                    FnDefArgs::ArgList(arglist),
+                    FnDefBody::Block(body),
+                    decorators,
+                    span,
+                )?,
+                vec![(*ident).into()],
+            ));
+        } else if let Expr::Class(bases, body) = &rhs.0 {
+            let decorators = py_decorators()?;
+            return Ok((
+                make_class_def(ctx, (*ident).into(), &bases, &body, decorators, span)?,
+                vec![(*ident).into()],
+            ));
+        };
+    };
+
+    let value_node = rhs.transform_with_placeholder_guard(ctx)?;
+    stmts.extend(value_node.pre_stmts);
+
+    let decl_only = scope_modifier.is_some();
+    let destructure = destructure(ctx, lhs, decl_only)?;
+
+    stmts.push(
+        (
+            PyStmt::Assign(destructure.assign_to, value_node.expr),
+            lhs.1,
+        )
+            .into(),
+    );
+    stmts.extend(destructure.post_stmts);
+
+    Ok((stmts, destructure.declarations))
+}
+
 impl<'src> SStmtExt<'src> for SStmt<'src> {
     fn transform<'ast>(
         &'ast self,
@@ -623,44 +719,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 let scope_modifier = get_scope_modifier(modifiers, top_level, span)?;
 
                 let (binding_stmts, decls): (PyBlock, Vec<PyIdent>) =
-                    if let (Expr::Ident((ident, _ident_span)), Expr::Fn(arglist, body)) =
-                        (&target.0, &value.0)
-                    {
-                        (
-                            make_fn_def(
-                                ctx,
-                                (*ident).into(),
-                                FnDefArgs::ArgList(arglist),
-                                FnDefBody::Block(body),
-                                span,
-                            )?,
-                            vec![(*ident).into()],
-                        )
-                    } else if let (Expr::Ident((ident, _ident_span)), Expr::Class(bases, body)) =
-                        (&target.0, &value.0)
-                    {
-                        (
-                            make_classdef_stmts(ctx, (*ident).into(), &bases, &body, span)?,
-                            vec![(*ident).into()],
-                        )
-                    } else {
-                        let value_node = value.transform_with_placeholder_guard(ctx)?;
-                        let mut stmts = value_node.pre_stmts;
-
-                        let decl_only = scope_modifier.is_some();
-                        let destructure = destructure(ctx, target, decl_only)?;
-
-                        stmts.push(
-                            (
-                                PyStmt::Assign(destructure.assign_to, value_node.expr),
-                                target.1,
-                            )
-                                .into(),
-                        );
-                        stmts.extend(destructure.post_stmts);
-
-                        (stmts, destructure.declarations)
-                    };
+                    transform_assignment(ctx, target, value, scope_modifier, span)?;
 
                 let mut stmts = PyBlock::new();
 
@@ -1022,11 +1081,12 @@ fn transform_match_expr<'src, 'ast>(
     })
 }
 
-fn make_classdef_stmts<'src, 'ast>(
+fn make_class_def<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     name: Cow<'src, str>,
     bases: &'ast Vec<SCallItem<'src>>,
     body: &'ast Box<SBlock<'src>>,
+    decorators: PyDecorators<'src>,
     span: &Span,
 ) -> TfResult<PyBlock<'src>> {
     let mut stmts = PyBlock::new();
@@ -1057,7 +1117,13 @@ fn make_classdef_stmts<'src, 'ast>(
         bases_nodes.push(call_item);
     }
 
-    stmts.push((PyStmt::ClassDef(name.into(), bases_nodes, block), *span).into());
+    stmts.push(
+        (
+            PyStmt::ClassDef(name.into(), bases_nodes, block, decorators),
+            *span,
+        )
+            .into(),
+    );
 
     Ok(stmts)
 }
@@ -1170,7 +1236,13 @@ fn make_fn_exp<'src, 'ast>(
     }
 
     let name = ctx.temp_var_name("fnexp", span.start);
-    aux_stmts.push((PyStmt::FnDef(name.clone().into(), args, body_stmts), *span).into());
+    aux_stmts.push(
+        (
+            PyStmt::FnDef(name.clone().into(), args, body_stmts, PyDecorators::new()),
+            *span,
+        )
+            .into(),
+    );
     Ok(PyExprWithPre {
         expr: (PyExpr::Ident(name.into(), PyAccessCtx::Load), *span).into(),
         pre_stmts: aux_stmts,
@@ -1182,10 +1254,17 @@ fn make_fn_def<'src, 'ast>(
     name: Cow<'src, str>,
     arglist: FnDefArgs<'src, 'ast>,
     body: FnDefBody<'src, 'ast>,
+    decorators: PyDecorators<'src>,
     span: &Span,
 ) -> TfResult<PyBlock<'src>> {
     let (mut aux_stmts, body_stmts, args) = prepare_py_fn(ctx, arglist, body, span)?;
-    aux_stmts.push((PyStmt::FnDef(name.into(), args, body_stmts), *span).into());
+    aux_stmts.push(
+        (
+            PyStmt::FnDef(name.into(), args, body_stmts, decorators),
+            *span,
+        )
+            .into(),
+    );
     Ok(aux_stmts)
 }
 
@@ -1627,8 +1706,9 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 span,
             ),
             Expr::Class(bases, body) => {
-                let name = Cow::<'src, str>::Owned(ctx.temp_var_name("classexp", span.start));
-                let aux_stmts = make_classdef_stmts(ctx, name.clone(), bases, body, span)?;
+                let name = Cow::<'src, str>::Owned(ctx.temp_var_name("clsexp", span.start));
+                let aux_stmts =
+                    make_class_def(ctx, name.clone(), bases, body, PyDecorators::new(), span)?;
 
                 Ok(PyExprWithPre {
                     expr: (PyExpr::Ident(name, PyAccessCtx::Load), *span).into(),

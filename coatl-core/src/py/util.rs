@@ -62,7 +62,11 @@ impl PyAstBuilder {
         args: Vec<PyArgDefItem<'src>>,
         body: PyBlock<'src>,
     ) -> SPyStmt<'src> {
-        (PyStmt::FnDef(name.into(), args, body), self.span).into()
+        (
+            PyStmt::FnDef(name.into(), args, body, PyDecorators::new()),
+            self.span,
+        )
+            .into()
     }
 
     pub fn class_def<'src>(
@@ -71,7 +75,11 @@ impl PyAstBuilder {
         bases: Vec<PyCallItem<'src>>,
         body: PyBlock<'src>,
     ) -> SPyStmt<'src> {
-        (PyStmt::ClassDef(name.into(), bases, body), self.span).into()
+        (
+            PyStmt::ClassDef(name.into(), bases, body, PyDecorators::new()),
+            self.span,
+        )
+            .into()
     }
 
     pub fn del<'src>(&self, targets: Vec<SPyExpr<'src>>) -> SPyStmt<'src> {

@@ -31,6 +31,19 @@ pub struct PyMatchCase<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub struct PyDecorators<'a>(pub Vec<SPyExpr<'a>>);
+
+impl<'a> PyDecorators<'a> {
+    pub fn new() -> Self {
+        PyDecorators(Vec::new())
+    }
+
+    pub fn push(&mut self, decorator: SPyExpr<'a>) {
+        self.0.push(decorator);
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum PyStmt<'a> {
     Expr(SPyExpr<'a>),
     If(SPyExpr<'a>, PyBlock<'a>, Option<PyBlock<'a>>),
@@ -43,8 +56,18 @@ pub enum PyStmt<'a> {
     Nonlocal(Vec<PyIdent<'a>>),
     Import(Vec<PyImportAlias<'a>>),
     ImportFrom(Option<PyIdent<'a>>, Vec<PyImportAlias<'a>>, usize),
-    FnDef(PyIdent<'a>, Vec<PyArgDefItem<'a>>, PyBlock<'a>),
-    ClassDef(PyIdent<'a>, Vec<PyCallItem<'a>>, PyBlock<'a>),
+    FnDef(
+        PyIdent<'a>,
+        Vec<PyArgDefItem<'a>>,
+        PyBlock<'a>,
+        PyDecorators<'a>,
+    ),
+    ClassDef(
+        PyIdent<'a>,
+        Vec<PyCallItem<'a>>,
+        PyBlock<'a>,
+        PyDecorators<'a>,
+    ),
     While(SPyExpr<'a>, PyBlock<'a>),
     For(SPyExpr<'a>, SPyExpr<'a>, PyBlock<'a>),
     Try(PyBlock<'a>, Vec<PyExceptHandler<'a>>, Option<PyBlock<'a>>),

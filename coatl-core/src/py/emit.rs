@@ -546,7 +546,14 @@ impl SPyStmt<'_> {
                 }
                 ctx.emit_endl();
             }
-            PyStmt::FnDef(name, args, body) => {
+            PyStmt::FnDef(name, args, body, decorators) => {
+                for d in &mut decorators.0 {
+                    ctx.emit_indent();
+                    ctx.emit("@");
+                    d.emit_to(ctx, HIGH_PREC)?;
+                    ctx.emit_endl();
+                }
+
                 ctx.emit_indent();
                 ctx.emit("def ");
                 ctx.emit(&name);
@@ -561,7 +568,14 @@ impl SPyStmt<'_> {
                 ctx.emit_endl();
                 body.emit_to(ctx, 1)?;
             }
-            PyStmt::ClassDef(name, bases, body) => {
+            PyStmt::ClassDef(name, bases, body, decorators) => {
+                for d in &mut decorators.0 {
+                    ctx.emit_indent();
+                    ctx.emit("@");
+                    d.emit_to(ctx, HIGH_PREC)?;
+                    ctx.emit_endl();
+                }
+
                 ctx.emit_indent();
                 ctx.emit("class ");
                 ctx.emit(&name);

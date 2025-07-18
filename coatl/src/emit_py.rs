@@ -107,10 +107,10 @@ impl<'src> PyBlockExt<'src> for PyBlock<'src> {
     }
 }
 
-trait PyArgDefExit<'src> {
+trait PyArgDefExt<'src> {
     fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject>;
 }
-impl<'src> PyArgDefExit<'src> for Vec<PyArgDefItem<'src>> {
+impl<'src> PyArgDefExt<'src> for Vec<PyArgDefItem<'src>> {
     fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject> {
         let mut py_args = Vec::new();
         let mut py_defaults = Vec::new();
@@ -147,6 +147,21 @@ impl<'src> PyArgDefExit<'src> for Vec<PyArgDefItem<'src>> {
                 py_defaults,            // defaults
             ),
         )
+    }
+}
+
+trait PyDecoratorsExt<'src> {
+    fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject>;
+}
+impl<'src> PyDecoratorsExt<'src> for PyDecorators<'src> {
+    fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject> {
+        let mut decorators = Vec::new();
+        for decorator in &self.0 {
+            let decorator_ast = decorator.emit_py(ctx)?;
+            decorators.push(decorator_ast);
+        }
+
+        Ok(PyList::new(ctx.py, decorators)?.unbind().into_any())
     }
 }
 
@@ -234,18 +249,18 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                     &self.tl_span,
                 )
             }
-            PyStmt::FnDef(name, args, body) => {
+            PyStmt::FnDef(name, args, body, decorators) => {
                 let arguments = args.emit_py(ctx)?;
-
                 let body_ast = body.emit_py(ctx)?;
-                let decorators = Vec::<PyObject>::new();
+                let decorators = decorators.emit_py(ctx)?;
+
                 ctx.ast_node(
                     "FunctionDef",
                     (name.as_ref(), arguments, body_ast, decorators),
                     &self.tl_span,
                 )
             }
-            PyStmt::ClassDef(name, bases, body) => {
+            PyStmt::ClassDef(name, bases, body, decorators) => {
                 let mut bases_ast = Vec::new();
                 let mut keywords_ast = Vec::new();
 
@@ -270,7 +285,7 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                 }
 
                 let body_ast = body.emit_py(ctx)?;
-                let decorators = Vec::<PyObject>::new();
+                let decorators = decorators.emit_py(ctx)?;
                 ctx.ast_node(
                     "ClassDef",
                     (name.as_ref(), bases_ast, keywords_ast, body_ast, decorators),
