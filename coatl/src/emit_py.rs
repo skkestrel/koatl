@@ -50,7 +50,7 @@ impl<'py, 'src> PyCtx<'py, 'src> {
             .last()
             .map_or(0, |line| line.len());
 
-        (line, col)
+        (line + 1, col)
     }
 
     fn ast_cls<A>(&self, name: &str, args: A) -> PyTlResult<PyObject>
