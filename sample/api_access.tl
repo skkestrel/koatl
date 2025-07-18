@@ -15,26 +15,28 @@ API_RESPONSE = [
     ]
 ]
 
-map_err = f => value => value.(coalesces) then value.(f) else value
+map_err = f => value => value.(is_ok) then value.(f) else value
 
 get_user_details = (data, user_id) =>
-    user = @(try data[user_id] | map_err(e => ValueError(f"User {user_id} not found.")))
+    user = @(try data[user_id] except KeyError
+        | map_err(e => KeyError(f"User {user_id} not found.")))
 
     profile = try user["profile"]
 
-    profile.(coalesces) then:
-        print(f"Profile not found: {profile}")
+    profile.(is_ok) then:
+        print(f"Profile not found.")
     else:
-        print(f"Name: {(try profile["name"]) ?? "N/A"}")
+        print(f"Name: {try profile["name"] ?? "N/A"}")
 
         contact = try profile["contact"]
-        contact.(coalesces) then:
+
+        contact.(is_ok) then:
             print(f"Contact not found: {profile}")
         else:
-            print(f"Email: {(try contact["email"]) ?? "N/A"}")
-            print(f"Phone: {(try contact["phone"]) ?? "N/A"}")
+            print(f"Email: {try contact["email"] ?? "N/A"}")
+            print(f"Phone: {try contact["phone"] ?? "N/A"}")
 
-    orders = (try user["orders"]) ?? []
+    orders = try user["orders"] ?? []
     n_orders = @(try len(orders) | map_err(e => ValueError("Orders is malformed.")))
 
     print(
@@ -44,7 +46,7 @@ get_user_details = (data, user_id) =>
             "No orders found."
     )
 
-    return "Success"
+    return True
   | do()
 
 get_user_details(API_RESPONSE, "user_a") | repr | print

@@ -258,7 +258,7 @@ where
         Err(Rich::custom(self.span_since(&start), "expected a symbol"))
     }
 
-    fn parse_number(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
+    fn parse_number(&mut self) -> TResult<'src, (Spanned<Token<'src>>, bool)> {
         let start = self.cursor();
 
         let c = self.peek();
@@ -267,31 +267,16 @@ where
             return Err(Rich::custom(self.span_since(&start), "expected a number"));
         };
 
-        let mut first_dot_cursor = self.input.save();
         let mut digits_before_dot = false;
         let mut digits_after_dot = false;
         let mut after_dot = false;
-        let mut just_saw_dot = false;
 
         while let Some(c) = self.peek() {
+            if self.look_ahead(|x| x.parse_seq("..")).is_ok() {
+                break;
+            }
+
             if c == '.' {
-                if just_saw_dot {
-                    // handle 10.. properly
-                    self.input.rewind(first_dot_cursor);
-                    break;
-                }
-
-                if after_dot {
-                    // don't allow 10.1.1
-                    return Err(Rich::custom(
-                        self.span_since(&start),
-                        "unexpected second dot",
-                    ));
-                } else {
-                    first_dot_cursor = self.input.save();
-                }
-
-                just_saw_dot = true;
                 after_dot = true;
             } else {
                 if !(c.is_ascii_digit() || c == '_') {
@@ -305,8 +290,6 @@ where
                 if !after_dot && c.is_ascii_digit() {
                     digits_before_dot = true;
                 }
-
-                just_saw_dot = false;
             }
 
             self.next();
@@ -320,8 +303,11 @@ where
         }
 
         Ok((
-            Token::Num(self.slice_since(&start)),
-            self.span_since(&start),
+            (
+                Token::Num(self.slice_since(&start)),
+                self.span_since(&start),
+            ),
+            after_dot,
         ))
     }
 
@@ -716,9 +702,14 @@ where
                 } else {
                     let tok;
 
-                    // TODO improve number parsing - 0.1.1 should fail at this level
+                    if let Ok((token, after_dot)) = self.try_parse(TokenizeCtx::parse_number) {
+                        if after_dot && self.peek() == Some('.') {
+                            return Err(Rich::custom(
+                                self.span_since(&self.cursor()),
+                                "unexpected '.'",
+                            ));
+                        }
 
-                    if let Ok(token) = self.try_parse(TokenizeCtx::parse_number) {
                         tok = token;
                     } else if let Ok(token) = self.try_parse(TokenizeCtx::parse_ident_or_token) {
                         tok = token;

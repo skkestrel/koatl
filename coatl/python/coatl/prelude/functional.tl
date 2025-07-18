@@ -1,6 +1,8 @@
 import builtins.iter
 import functools.wraps
 
+export is_ok = __coalesces
+
 export do = () =>
     f =>
         (*args, **kwargs) =>
@@ -9,7 +11,7 @@ export do = () =>
             try:
                 x = next(gen)
                 while True:
-                    if x.(coalesces):
+                    if x.(is_ok):
                         return x
 
                     x = gen.send(x)

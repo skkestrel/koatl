@@ -1,8 +1,15 @@
+"""
+This module initializes the environment for coatl.
+It sets up the meta-finder hook to enable importing .tl files,
+and also declares functions that are required for certain tl features to work,
+such as coalescing and module exports.
+"""
+
 from . import meta_finder
 meta_finder.install_hook()
 del meta_finder
 
-def set_exports(package_name, globals_dict, exports, module_star_exports):
+def __set_exports(package_name, globals_dict, exports, module_star_exports):
     import importlib
 
     exports = set(exports)
@@ -22,5 +29,7 @@ def set_exports(package_name, globals_dict, exports, module_star_exports):
 
     globals_dict["__all__"] = tuple(exports)
 
-def coalesces(x):
+def __coalesces(x):
     return x is None or isinstance(x, BaseException)
+
+__all__ = ["__coalesces", "__set_exports"]

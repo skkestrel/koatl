@@ -1377,7 +1377,7 @@ fn transform_postfix_expr<'src, 'ast>(
 
         let guard_if_expr = |e| {
             a.if_expr(
-                a.call(a.load_ident("coalesces"), vec![a.call_arg(lhs.clone())]),
+                a.call(a.load_ident("__coalesces"), vec![a.call_arg(lhs.clone())]),
                 lhs.clone(),
                 e,
             )
@@ -1714,7 +1714,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                         let expr = a.if_expr(
                             a.call(
-                                a.load_ident("coalesces"),
+                                a.load_ident("__coalesces"),
                                 vec![a.call_arg(lhs.expr.clone())],
                             ),
                             rhs.expr,
