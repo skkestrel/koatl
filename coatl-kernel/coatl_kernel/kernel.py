@@ -2,7 +2,7 @@ from ipykernel.ipkernel import IPythonKernel
 from IPython.core.inputtransformer2 import leading_empty_lines, leading_indent
 from coatl.notebook import source_code_transformer, import_prelude
 from coatl.notebook.magic import coatl_cell_magic
-
+from .shell import CoatlShell
 
 class CoatlKernel(IPythonKernel):
     implementation = 'Coatl'
@@ -15,6 +15,8 @@ class CoatlKernel(IPythonKernel):
         'file_extension': '.tl',
     }
 
+    shell_class = CoatlShell
+
     @property
     def banner(self):
         if self.shell:
@@ -24,12 +26,7 @@ class CoatlKernel(IPythonKernel):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        # if leading_empty_lines in itm.cleanup_transforms:
-        #     itm.cleanup_transforms.remove(leading_empty_lines)
-        # if leading_indent in itm.cleanup_transforms:
-            # itm.cleanup_transforms.remove(leading_indent)
-
-        # these depend on the python tokenizer which doesn't work
+        # TODO: these depend on the python tokenizer which don't work
 
         # itm.token_transformers.insert(0, CoatlMagicAssign)
         # itm.token_transformers.insert(1, CoatlEscapedCommand)
@@ -39,8 +36,6 @@ class CoatlKernel(IPythonKernel):
 
         itm.do_token_transforms = lambda lines: lines
         itm.line_transforms.insert(0, coatl_cell_magic)
-
-        self.shell.input_transformers_post.append(source_code_transformer)
 
         import_prelude(self.shell.user_ns)
 

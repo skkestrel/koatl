@@ -14,15 +14,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let src = std::fs::read_to_string(&filename).unwrap();
 
     match transpile(&src, TranspileOptions::module()) {
-        Ok(code) => match cmd.as_str() {
+        Ok(ctx) => match cmd.as_str() {
             "trans" => {
-                println!("{}", code);
+                println!("{}", ctx.source);
             }
             "run" => {
                 let mut child = Command::new("python3").stdin(Stdio::piped()).spawn()?;
 
                 if let Some(stdin) = child.stdin.as_mut() {
-                    stdin.write_all(code.as_bytes())?;
+                    stdin.write_all(ctx.source.as_bytes())?;
                 }
 
                 let output = child.wait_with_output()?;

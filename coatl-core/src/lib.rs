@@ -157,13 +157,10 @@ pub fn transpile_to_py_ast<'src>(
     Ok(py_ast)
 }
 
-pub fn transpile(src: &str, options: TranspileOptions) -> TlResult<String> {
+pub fn transpile(src: &str, options: TranspileOptions) -> TlResult<EmitCtx> {
     let mut py_ast = transpile_to_py_ast(src, options)?;
 
-    let mut ctx = EmitCtx {
-        indentation: 0,
-        source: String::new(),
-    };
+    let mut ctx = EmitCtx::new();
     py_ast.emit_to(&mut ctx, 0).map_err(|e| {
         e.0.into_iter()
             .map(|e| TlErr {
@@ -175,7 +172,7 @@ pub fn transpile(src: &str, options: TranspileOptions) -> TlResult<String> {
             .collect::<Vec<_>>()
     })?;
 
-    Ok(ctx.source)
+    Ok(ctx)
 }
 
 pub fn format_errs(errs: &[TlErr], filename: &str, src: &str) -> Vec<u8> {

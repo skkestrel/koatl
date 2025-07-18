@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use parser::ast::Span;
 
 use crate::{py::ast::*, transform::TfResult};
@@ -8,11 +10,22 @@ const HIGH_PREC: f32 = 100.0;
 pub struct EmitCtx {
     pub indentation: usize,
     pub source: String,
+    pub source_line_map: HashMap<usize, Span>,
+    pub lineno: usize,
 }
 
 impl EmitCtx {
-    pub fn emit_spanned<T>(&mut self, value: &mut PySpanned<T>, text: &str) -> () {
-        value.py_span = Some(self.emit(text));
+    pub fn new() -> Self {
+        EmitCtx {
+            lineno: 1,
+            indentation: 0,
+            source: String::new(),
+            source_line_map: HashMap::new(),
+        }
+    }
+
+    pub fn record_source_map(&mut self, span: Span) -> () {
+        self.source_line_map.insert(self.lineno, span);
     }
 
     pub fn emit(&mut self, text: &str) -> Span {
@@ -32,6 +45,7 @@ impl EmitCtx {
     }
 
     fn emit_endl(&mut self) -> Span {
+        self.lineno += 1;
         self.emit("\n")
     }
 }
@@ -377,6 +391,7 @@ impl PyBlock<'_> {
 impl SPyStmt<'_> {
     pub fn emit_to(&mut self, ctx: &mut EmitCtx) -> TfResult<()> {
         let start_span = ctx.source.len();
+        ctx.record_source_map(self.tl_span);
 
         match &mut self.value {
             PyStmt::Expr(expr) => {
@@ -638,10 +653,7 @@ mod tests {
             a.binary(PyBinaryOp::Add, a.load_ident("y"), a.load_ident("z")),
         );
 
-        let mut ctx = EmitCtx {
-            indentation: 0,
-            source: String::new(),
-        };
+        let mut ctx = EmitCtx::new();
 
         expr.emit_to(&mut ctx, LOW_PREC).unwrap();
         assert_eq!(ctx.source, "x * (y + z)");
