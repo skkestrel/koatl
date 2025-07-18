@@ -94,7 +94,6 @@ where
 
     let stmts = stmt
         .clone()
-        .then_ignore(just(Token::Eol))
         .repeated()
         .collect::<Vec<_>>()
         .map(Block::Stmts)
@@ -851,18 +850,19 @@ where
 
     stmt.define(
         choice((
-            module_stmt,
-            assign_stmt,
-            expr_stmt.clone(),
-            while_stmt.clone(),
-            for_stmt.clone(),
-            return_stmt,
-            assert_stmt,
-            raise_stmt,
-            break_stmt.clone(),
-            continue_stmt.clone(),
-            import_stmt,
-            try_stmt,
+            expr_stmt.clone().then_ignore(just(Token::Eol)),
+            assign_stmt.then_ignore(just(Token::Eol)),
+            //
+            module_stmt.then_ignore(just(Token::Eol)),
+            while_stmt.clone().then_ignore(just(Token::Eol)),
+            for_stmt.clone().then_ignore(just(Token::Eol)),
+            return_stmt.then_ignore(just(Token::Eol)),
+            assert_stmt.then_ignore(just(Token::Eol)),
+            raise_stmt.then_ignore(just(Token::Eol)),
+            break_stmt.clone().then_ignore(just(Token::Eol)),
+            continue_stmt.clone().then_ignore(just(Token::Eol)),
+            import_stmt.then_ignore(just(Token::Eol)),
+            try_stmt.then_ignore(just(Token::Eol)),
         ))
         .labelled("statement")
         .spanned()
@@ -871,8 +871,9 @@ where
 
     inline_stmt.define(
         choice((
-            inline_assign_stmt,
             expr_stmt,
+            inline_assign_stmt,
+            //
             while_stmt,
             for_stmt,
             inline_return_stmt,
