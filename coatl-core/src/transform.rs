@@ -6,8 +6,6 @@ use crate::{
 };
 use parser::ast::*;
 
-// TODO add decorators to keep namespace clean
-
 #[derive(Debug)]
 pub struct TfErr {
     pub message: String,
@@ -619,7 +617,7 @@ fn transform_assignment<'src, 'ast>(
                 decorators
                     .into_iter()
                     .map(|x| {
-                        let t = x.transform(ctx)?;
+                        let t = x.transform_with_placeholder_guard(ctx)?;
                         stmts.extend(t.pre_stmts);
                         Ok(t.expr)
                     })
@@ -627,7 +625,7 @@ fn transform_assignment<'src, 'ast>(
             ))
         };
 
-        if let Expr::Fn(arglist, body) = &rhs.0 {
+        if let Expr::Fn(arglist, body) = &cur_node {
             let decorators = py_decorators()?;
             return Ok((
                 make_fn_def(
@@ -640,7 +638,7 @@ fn transform_assignment<'src, 'ast>(
                 )?,
                 vec![(*ident).into()],
             ));
-        } else if let Expr::Class(bases, body) = &rhs.0 {
+        } else if let Expr::Class(bases, body) = &cur_node {
             let decorators = py_decorators()?;
             return Ok((
                 make_class_def(ctx, (*ident).into(), &bases, &body, decorators, span)?,

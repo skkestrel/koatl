@@ -251,7 +251,10 @@ where
             list.clone(),
             mapping,
             fstr,
-            block_or_inline_stmt
+            sexpr
+                .clone()
+                .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
+            block
                 .clone()
                 .map(|b| Expr::Block(Box::new(b)))
                 .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")))
