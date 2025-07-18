@@ -12,7 +12,15 @@ maturin develop -m ./Coatl.toml
 # maturin build --release -m coatl/Cargo.toml
 
 pytest
-python3 -m coatl ../sample/hello_world.tl
+coatl ../sample/sunset_timer.tl
+```
+
+# Installing the kernel
+
+```
+cd coatl-kernel
+pip install .
+coatl
 ```
 
 # Building cli tool
@@ -21,12 +29,4 @@ python3 -m coatl ../sample/hello_world.tl
 cargo test
 cargo build
 target/debug/coatl trans sample/hello_world.tl
-```
-
-# Installing the kernel
-
-```
-cd coatl-kernel
-pip install .
-jupyter-console --kernel=coatl
 ```

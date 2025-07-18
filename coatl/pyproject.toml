@@ -12,6 +12,9 @@ classifiers = [
 ]
 dynamic = ["version"]
 
+[project.scripts]
+coatl = "coatl.__main__:main"
+
 [tool.maturin]
 features = ["pyo3/extension-module"]
 python-source = "python"
