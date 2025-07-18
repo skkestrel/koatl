@@ -1,5 +1,4 @@
-use coatl_core::parser::ast::*;
-use coatl_core::py::ast::*;
+use coatl_core::{linecol::LineColCache, parser::ast::*, py::ast::*};
 
 use pyo3::{
     call::PyCallArgs,
@@ -26,9 +25,11 @@ impl From<PyErr> for PyTlErr {
 
 pub type PyTlResult<T> = Result<T, PyTlErr>;
 
+#[allow(dead_code)]
 struct PyCtx<'py, 'src> {
     py: Python<'py>,
     source: &'src str,
+    line_cache: LineColCache,
     ast_module: Bound<'py, PyModule>,
 }
 
@@ -36,21 +37,16 @@ impl<'py, 'src> PyCtx<'py, 'src> {
     fn new(py: Python<'py>, source: &'src str) -> PyTlResult<Self> {
         let ast_module = py.import("ast")?;
 
-        Ok(PyCtx {
+        Ok(Self {
             py,
             source,
             ast_module,
+            line_cache: LineColCache::new(source),
         })
     }
 
     fn linecol(&self, cursor: usize) -> (usize, usize) {
-        let line = self.source[..cursor].lines().count();
-        let col = self.source[..cursor]
-            .lines()
-            .last()
-            .map_or(0, |line| line.len());
-
-        (line + 1, col)
+        self.line_cache.linecol(cursor)
     }
 
     fn ast_cls<A>(&self, name: &str, args: A) -> PyTlResult<PyObject>

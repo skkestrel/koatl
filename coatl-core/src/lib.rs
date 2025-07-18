@@ -1,3 +1,4 @@
+pub mod linecol;
 pub mod parser;
 pub mod py;
 pub mod transform;

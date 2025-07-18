@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 
-use crate::py::{ast::*, util::PyAstBuilder};
+use crate::{
+    linecol::LineColCache,
+    py::{ast::*, util::PyAstBuilder},
+};
 use parser::ast::*;
 
 // TODO simplify function defs when no aux statements
@@ -56,11 +59,13 @@ impl TfErrBuilder {
 
 pub type TfResult<T> = Result<T, TfErrs>;
 
+#[allow(dead_code)]
 struct TfCtx<'src> {
     source: &'src str,
     exports: Vec<PyIdent<'src>>,
     module_star_exports: Vec<PyIdent<'src>>,
 
+    line_cache: LineColCache,
     placeholder_ctx_stack: Vec<PlaceholderCtx>,
 }
 
@@ -68,6 +73,7 @@ impl<'src> TfCtx<'src> {
     fn new(source: &'src str) -> TfResult<Self> {
         Ok(TfCtx {
             source,
+            line_cache: LineColCache::new(source),
             exports: Vec::new(),
             module_star_exports: Vec::new(),
             placeholder_ctx_stack: Vec::new(),
@@ -75,13 +81,7 @@ impl<'src> TfCtx<'src> {
     }
 
     fn linecol(&self, cursor: usize) -> (usize, usize) {
-        let line = self.source[..cursor].lines().count();
-        let col = self.source[..cursor]
-            .lines()
-            .last()
-            .map_or(0, |line| line.len());
-
-        (line + 1, col)
+        self.line_cache.linecol(cursor)
     }
 
     fn temp_var_name(&self, typ: &str, cursor: usize) -> String {

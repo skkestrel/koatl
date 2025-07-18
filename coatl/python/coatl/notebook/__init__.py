@@ -7,12 +7,7 @@ import ast
 
 def source_code_transformer(lines):
     source = "".join(lines)
-
-    try:
-        py_ast = transpile(source, mode="interactive")
-    except SyntaxError as e:
-        raise SyntaxError(e.msg.decode("utf8")) from None
-
+    py_ast = transpile(source, mode="interactive")
     transformed_source = ast.unparse(py_ast)
 
     lines = [line + '\n' for line in transformed_source.splitlines()]

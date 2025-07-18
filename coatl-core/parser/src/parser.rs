@@ -86,25 +86,38 @@ where
     let just_symbol = |s: &'static str| just(Token::Symbol(s));
 
     let mut stmt = chumsky::recursive::Recursive::declare();
+    let mut inline_stmt = chumsky::recursive::Recursive::declare();
     let mut atom = chumsky::recursive::Recursive::declare();
     let mut postfix = chumsky::recursive::Recursive::declare();
     let mut unary = chumsky::recursive::Recursive::declare();
     let mut sexpr = chumsky::recursive::Recursive::declare();
 
-    let sstmt = stmt.clone().spanned();
-
-    let block = sstmt
+    let stmts = stmt
         .clone()
+        .then_ignore(just(Token::Eol))
         .repeated()
-        .collect()
-        .delimited_by(just_symbol("BEGIN_BLOCK"), just_symbol("END_BLOCK"))
+        .collect::<Vec<_>>()
         .map(Block::Stmts)
+        .spanned()
+        .labelled("statement-list")
         .boxed();
 
-    let sblock = block.clone().spanned().boxed();
+    let block = stmts
+        .clone()
+        .delimited_by(just_symbol("BEGIN_BLOCK"), just_symbol("END_BLOCK"))
+        .boxed();
 
-    let block_or_expr = choice((block.clone(), sexpr.clone().map(Block::Expr))).boxed();
-    let sblock_or_expr = block_or_expr.clone().spanned().boxed();
+    let block_or_expr = choice((block.clone(), sexpr.clone().map(Block::Expr).spanned())).boxed();
+
+    let block_or_inline_stmt = choice((
+        block.clone(),
+        inline_stmt
+            .clone()
+            .map(|x| Block::Stmts(vec![x]))
+            .spanned()
+            .boxed(),
+    ))
+    .boxed();
 
     let literal = select! {
         Token::Num(s) => Literal::Num(Cow::Borrowed(s)),
@@ -207,7 +220,7 @@ where
     let fstr = fstr_begin
         .spanned()
         .then(
-            sblock_or_expr
+            block_or_expr
                 .clone()
                 .spanned()
                 .then(fstr_continue.spanned())
@@ -239,7 +252,7 @@ where
             list.clone(),
             mapping,
             fstr,
-            sblock_or_expr
+            block_or_inline_stmt
                 .clone()
                 .map(|b| Expr::Block(Box::new(b)))
                 .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")))
@@ -525,12 +538,12 @@ where
             group((
                 just(Token::Kw("then"))
                     .then(just(START_BLOCK).or_not())
-                    .ignore_then(sblock_or_expr.clone()),
+                    .ignore_then(block_or_inline_stmt.clone()),
                 just(Token::Eol)
                     .or_not()
                     .then(just(Token::Kw("else")))
                     .then(just(START_BLOCK).or_not())
-                    .ignore_then(sblock_or_expr.clone())
+                    .ignore_then(block_or_inline_stmt.clone())
                     .or_not(),
             ))
             .or_not(),
@@ -549,7 +562,7 @@ where
     let mut fn_ = chumsky::recursive::Recursive::declare();
     let fn_body = just_symbol("=>")
         .ignore_then(choice((
-            sblock.clone(),
+            block_or_inline_stmt.clone(),
             fn_.clone().map(|x| Block::Expr(x)).spanned().boxed(),
         )))
         .boxed();
@@ -596,13 +609,13 @@ where
     let classic_if = just(Token::Kw("if"))
         .ignore_then(group((
             sexpr.clone().then_ignore(just(START_BLOCK)),
-            sblock_or_expr.clone(),
+            block_or_inline_stmt.clone(),
             group((
                 just(Token::Eol).or_not(),
                 just(Token::Kw("else")),
                 just(START_BLOCK),
             ))
-            .ignore_then(sblock_or_expr.clone())
+            .ignore_then(block_or_inline_stmt.clone())
             .or_not(),
         )))
         .map(|(cond, if_, else_)| Expr::If(Box::new(cond), Box::new(if_), else_.map(Box::new)))
@@ -613,7 +626,7 @@ where
     let case_ = sexpr
         .clone()
         .then_ignore(just(START_BLOCK))
-        .then(sblock_or_expr.clone())
+        .then(block_or_inline_stmt.clone())
         .then_ignore(just(Token::Eol))
         .map(|(pattern, body)| (pattern, Box::new(body)))
         .labelled("match-case")
@@ -651,7 +664,7 @@ where
             .or_not(),
         )
         .then_ignore(just(START_BLOCK))
-        .then(sblock.clone())
+        .then(block_or_inline_stmt.clone())
         .map(|(arglist, block)| Expr::Class(arglist.unwrap_or_else(|| Vec::new()), Box::new(block)))
         .spanned()
         .labelled("class")
@@ -666,7 +679,6 @@ where
 
     let expr_stmt = nary_list
         .clone()
-        .then_ignore(just(Token::Eol))
         .map(Stmt::Expr)
         .labelled("expression statement")
         .boxed();
@@ -684,16 +696,19 @@ where
         nary_list.clone(),
     ))
     .map(|(modifiers, lhs, rhs)| Stmt::Assign(lhs, rhs, modifiers))
-    .then_ignore(just(Token::Eol))
     .labelled("assignment statement")
     .boxed();
+
+    let inline_assign_stmt = group((sexpr.clone().then_ignore(just_symbol("=")), sexpr.clone()))
+        .map(|(lhs, rhs)| Stmt::Assign(lhs, rhs, vec![]))
+        .labelled("inline assignment statement")
+        .boxed();
 
     let while_stmt = just(Token::Kw("while"))
         .ignore_then(sexpr.clone())
         .then_ignore(just(START_BLOCK))
-        .then(sblock.clone())
+        .then(block_or_inline_stmt.clone())
         .map(|(cond, body)| Stmt::While(cond, body))
-        .then_ignore(just(Token::Eol))
         .labelled("while statement")
         .boxed();
 
@@ -707,7 +722,7 @@ where
             .or_not(),
         )
         .boxed()
-        .then(just(START_BLOCK).ignore_then(sblock.clone()))
+        .then(just(START_BLOCK).ignore_then(block_or_inline_stmt.clone()))
         .map(|(opt, body)| {
             if let Some((typ, name)) = opt {
                 ExceptHandler { typ, name, body }
@@ -725,19 +740,18 @@ where
     let finally_block = one_of([Token::Eol])
         .then(just(Token::Kw("finally")))
         .then(just(START_BLOCK))
-        .ignore_then(sblock.clone())
+        .ignore_then(block_or_inline_stmt.clone())
         .labelled("finally block")
         .boxed();
 
     let try_stmt = just(Token::Kw("try"))
         .then(just(START_BLOCK))
         .ignore_then(group((
-            sblock_or_expr.clone(),
+            block_or_inline_stmt.clone(),
             except_block.repeated().collect(),
             finally_block.or_not(),
         )))
         .map(|(body, excepts, finally)| Stmt::Try(body, excepts, finally))
-        .then_ignore(just(Token::Eol))
         .labelled("try statement")
         .boxed();
 
@@ -745,43 +759,49 @@ where
         .ignore_then(group((
             binding_target.clone().then_ignore(just(Token::Kw("in"))),
             sexpr.clone().then_ignore(just(START_BLOCK)),
-            sblock.clone(),
+            block_or_inline_stmt.clone(),
         )))
-        .then_ignore(just(Token::Eol))
         .map(|(decl, iter, body)| Stmt::For(decl, iter, body))
         .labelled("for statement")
         .boxed();
 
     let return_stmt = just(Token::Kw("return"))
         .ignore_then(nary_list.clone())
-        .then_ignore(just(Token::Eol))
         .map(Stmt::Return)
         .labelled("return statement")
+        .boxed();
+
+    let inline_return_stmt = just(Token::Kw("return"))
+        .ignore_then(sexpr.clone())
+        .map(Stmt::Return)
+        .labelled("inline return statement")
         .boxed();
 
     let assert_stmt = just(Token::Kw("assert"))
         .ignore_then(sexpr.clone())
         .then(just_symbol(",").ignore_then(sexpr.clone()).or_not())
-        .then_ignore(just(Token::Eol))
         .map(|(x, y)| Stmt::Assert(x, y))
         .labelled("assert statement")
         .boxed();
 
     let raise_stmt = just(Token::Kw("raise"))
         .ignore_then(nary_list.clone())
-        .then_ignore(just(Token::Eol))
         .map(Stmt::Raise)
         .labelled("raise statement")
         .boxed();
 
+    let inline_raise_stmt = just(Token::Kw("raise"))
+        .ignore_then(sexpr.clone())
+        .map(Stmt::Raise)
+        .labelled("inline raise statement")
+        .boxed();
+
     let break_stmt = just(Token::Kw("break"))
-        .ignore_then(just(Token::Eol))
         .map(|_| Stmt::Break)
         .labelled("break statement")
         .boxed();
 
     let continue_stmt = just(Token::Kw("continue"))
-        .ignore_then(just(Token::Eol))
         .map(|_| Stmt::Continue)
         .labelled("continue statement")
         .boxed();
@@ -824,40 +844,48 @@ where
                 reexport: reexport.is_some(),
             })
         })
-        .then_ignore(just(Token::Eol))
         .labelled("import statement")
         .boxed();
 
-    let module_stmt = just(Token::Kw("module"))
-        .then_ignore(just(Token::Eol))
-        .map(|_| Stmt::Module);
+    let module_stmt = just(Token::Kw("module")).map(|_| Stmt::Module);
 
     stmt.define(
         choice((
             module_stmt,
-            expr_stmt,
             assign_stmt,
-            while_stmt,
-            for_stmt,
+            expr_stmt.clone(),
+            while_stmt.clone(),
+            for_stmt.clone(),
             return_stmt,
             assert_stmt,
             raise_stmt,
-            break_stmt,
-            continue_stmt,
+            break_stmt.clone(),
+            continue_stmt.clone(),
             import_stmt,
             try_stmt,
         ))
         .labelled("statement")
+        .spanned()
         .boxed(),
     );
 
-    stmt.spanned()
-        .repeated()
-        .collect::<Vec<_>>()
-        .map(Block::Stmts)
+    inline_stmt.define(
+        choice((
+            inline_assign_stmt,
+            expr_stmt,
+            while_stmt,
+            for_stmt,
+            inline_return_stmt,
+            inline_raise_stmt,
+            break_stmt,
+            continue_stmt,
+        ))
+        .labelled("inline-statement")
         .spanned()
-        .labelled("program")
-        .boxed()
+        .boxed(),
+    );
+
+    stmts.labelled("program")
 }
 
 pub fn parse_tokens<'tokens, 'src: 'tokens>(

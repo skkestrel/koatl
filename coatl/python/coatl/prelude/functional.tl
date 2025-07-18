@@ -2,6 +2,7 @@ import builtins.iter
 import functools.wraps
 
 export is_ok = __coalesces
+export untry = x => isinstance(x, BaseException) then raise x else x
 
 export do = () =>
     f =>

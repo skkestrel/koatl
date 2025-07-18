@@ -28,4 +28,5 @@ target/debug/coatl trans sample/hello_world.tl
 ```
 cd coatl-kernel
 pip install .
+jupyter-console --kernel=coatl
 ```
