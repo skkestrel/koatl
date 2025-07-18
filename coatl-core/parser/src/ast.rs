@@ -179,7 +179,7 @@ pub enum Expr<'a> {
     MappedAttribute(Box<SExpr<'a>>, SIdent<'a>),
     MappedThen(Box<SExpr<'a>>, Box<SExpr<'a>>),
 
-    Checked(Box<SExpr<'a>>),
+    Checked(Box<SExpr<'a>>, Option<Box<SExpr<'a>>>),
 
     Fn(Vec<ArgDefItem<'a>>, Box<SBlock<'a>>),
     Fstr(Spanned<String>, Vec<(SFmtExpr<'a>, Spanned<String>)>),

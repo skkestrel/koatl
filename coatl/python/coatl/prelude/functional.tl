@@ -9,8 +9,8 @@ export do = () =>
             try:
                 x = next(gen)
                 while True:
-                    if x === None:
-                        return None
+                    if x.(coalesces):
+                        return x
 
                     x = gen.send(x)
             except StopIteration as e:

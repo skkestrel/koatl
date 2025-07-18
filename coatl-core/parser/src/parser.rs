@@ -236,7 +236,7 @@ where
             ident.clone().map(Expr::Ident).spanned(),
             literal,
             placeholder,
-            list,
+            list.clone(),
             mapping,
             fstr,
             sblock_or_expr
@@ -402,7 +402,7 @@ where
     }
 
     let binary0 = make_binary_op(
-        unary,
+        unary.clone(),
         select! {
             Token::Symbol("**") => BinaryOp::Exp,
         },
@@ -430,7 +430,7 @@ where
     );
 
     let binary3 = make_binary_op(
-        binary2,
+        binary2.clone(),
         select! {
             Token::Symbol("<") => BinaryOp::Lt,
             Token::Symbol("<=") => BinaryOp::Leq,
@@ -444,8 +444,20 @@ where
         false,
     );
 
+    let checked_ = just(Token::Kw("try"))
+        .ignore_then(binary2.clone())
+        .then(
+            just(Token::Kw("except"))
+                .ignore_then(list.or(unary))
+                .or_not(),
+        )
+        .map(|(expr, typs)| Expr::Checked(Box::new(expr), typs.map(Box::new)))
+        .spanned()
+        .labelled("checked")
+        .boxed();
+
     let binary4 = make_binary_op(
-        binary3,
+        binary3.or(checked_),
         select! {
             Token::Symbol("??") => BinaryOp::Coalesce,
         },
@@ -507,6 +519,33 @@ where
     .labelled("argument-def-list")
     .boxed();
 
+    let if_ = slices
+        .clone()
+        .then(
+            group((
+                just(Token::Kw("then"))
+                    .then(just(START_BLOCK).or_not())
+                    .ignore_then(sblock_or_expr.clone()),
+                just(Token::Eol)
+                    .or_not()
+                    .then(just(Token::Kw("else")))
+                    .then(just(START_BLOCK).or_not())
+                    .ignore_then(sblock_or_expr.clone())
+                    .or_not(),
+            ))
+            .or_not(),
+        )
+        .map_with(|(cond, if_cases), e| {
+            if let Some((if_, else_)) = if_cases {
+                (
+                    Expr::If(Box::new(cond), Box::new(if_), else_.map(Box::new)),
+                    e.span(),
+                )
+            } else {
+                cond
+            }
+        });
+
     let mut fn_ = chumsky::recursive::Recursive::declare();
     let fn_body = just_symbol("=>")
         .ignore_then(choice((
@@ -515,7 +554,7 @@ where
         )))
         .boxed();
 
-    let unary_fn = slices
+    let unary_fn = if_
         .clone()
         .then(fn_body.clone().or_not())
         .map_with(|(x, body), e| {
@@ -543,37 +582,9 @@ where
         .boxed();
 
     fn_.define(choice((nary_fn, unary_fn)).labelled("fn-or-binary").boxed());
-    // fn_.define(unary_fn.labelled("fn-or-binary").boxed());
-
-    let if_ = fn_
-        .clone()
-        .then(
-            group((
-                just(Token::Kw("then"))
-                    .then(just(START_BLOCK).or_not())
-                    .ignore_then(sblock_or_expr.clone()),
-                just(Token::Eol)
-                    .or_not()
-                    .then(just(Token::Kw("else")))
-                    .then(just(START_BLOCK).or_not())
-                    .ignore_then(sblock_or_expr.clone())
-                    .or_not(),
-            ))
-            .or_not(),
-        )
-        .map_with(|(cond, if_cases), e| {
-            if let Some((if_, else_)) = if_cases {
-                (
-                    Expr::If(Box::new(cond), Box::new(if_), else_.map(Box::new)),
-                    e.span(),
-                )
-            } else {
-                cond
-            }
-        });
 
     let binary6 = make_binary_op(
-        if_,
+        fn_,
         select! {
             Token::Symbol("|") => BinaryOp::Pipe,
         },
@@ -646,15 +657,8 @@ where
         .labelled("class")
         .boxed();
 
-    let checked_ = just(Token::Kw("try"))
-        .ignore_then(sexpr.clone())
-        .map(|expr| Expr::Checked(Box::new(expr)))
-        .spanned()
-        .labelled("checked")
-        .boxed();
-
     sexpr.define(
-        choice((checked_, class_, classic_if, match_, binary))
+        choice((class_, classic_if, match_, binary))
             .labelled("expression")
             .as_context()
             .boxed(),

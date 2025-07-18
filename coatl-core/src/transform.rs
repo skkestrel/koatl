@@ -758,11 +758,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                         stmts.extend(expr.pre_stmts);
                         expr.expr
                     } else {
-                        (
-                            PyExpr::Ident("BaseException".into(), PyAccessCtx::Load),
-                            *span,
-                        )
-                            .into()
+                        (PyExpr::Ident("Exception".into(), PyAccessCtx::Load), *span).into()
                     };
 
                     let ident_node = if let Some(ident) = &except.name {
@@ -1554,7 +1550,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
         }
 
         match &expr {
-            Expr::Checked(expr) => {
+            Expr::Checked(expr, matcher) => {
                 let a = PyAstBuilder::new(*span);
                 let t = expr.transform(ctx)?;
                 let var_name = ctx.temp_var_name("chk", span.start);
@@ -1569,9 +1565,18 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 ));
 
                 let mut stmts = PyBlock::new();
+
+                let exc_types = if let Some(matcher) = matcher {
+                    let t = matcher.transform(ctx)?;
+                    stmts.extend(t.pre_stmts);
+                    Some(t.expr)
+                } else {
+                    None
+                };
+
                 stmts.push(a.try_(
                     try_body,
-                    vec![a.except_handler(None, Some("__e"), catch_body)],
+                    vec![a.except_handler(exc_types, Some("__e"), catch_body)],
                     None,
                 ));
 
