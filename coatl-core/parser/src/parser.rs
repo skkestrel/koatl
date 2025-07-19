@@ -260,8 +260,6 @@ where
     .labelled("nary-list")
     .boxed();
 
-    let binding_target = nary_list.clone();
-
     let mapping = enumeration(choice((
         just_symbol("**")
             .ignore_then(unary.clone())
@@ -702,13 +700,7 @@ where
 
     // Statements
 
-    let expr_stmt = nary_list
-        .clone()
-        .map(Stmt::Expr)
-        .labelled("expression statement")
-        .boxed();
-
-    let assign_stmt = group((
+    let expr_or_assign_stmt = group((
         choice((
             just(Token::Kw("export")).to(AssignModifier::Export),
             just(Token::Kw("global")).to(AssignModifier::Global),
@@ -717,23 +709,38 @@ where
         .repeated()
         .collect()
         .boxed(),
-        binding_target.clone().then_ignore(just_symbol("=")),
         nary_list.clone(),
+        just_symbol("=").ignore_then(nary_list.clone()).or_not(),
     ))
-    .map(|(modifiers, lhs, rhs)| Stmt::Assign(lhs, rhs, modifiers))
-    .labelled("assignment statement")
+    .map(|(modifiers, lhs, rhs)| {
+        if let Some(rhs) = rhs {
+            Stmt::Assign(lhs, rhs, modifiers)
+        } else {
+            Stmt::Expr(lhs, modifiers)
+        }
+    })
     .boxed();
 
-    let inline_expr_stmt = sexpr
-        .clone()
-        .map(Stmt::Expr)
-        .labelled("expression statement")
-        .boxed();
-
-    let inline_assign_stmt = group((sexpr.clone().then_ignore(just_symbol("=")), sexpr.clone()))
-        .map(|(lhs, rhs)| Stmt::Assign(lhs, rhs, vec![]))
-        .labelled("inline assignment statement")
-        .boxed();
+    let inline_expr_or_assign_stmt = group((
+        choice((
+            just(Token::Kw("export")).to(AssignModifier::Export),
+            just(Token::Kw("global")).to(AssignModifier::Global),
+            just(Token::Kw("nonlocal")).to(AssignModifier::Nonlocal),
+        ))
+        .repeated()
+        .collect()
+        .boxed(),
+        sexpr.clone(),
+        just_symbol("=").ignore_then(sexpr.clone()).or_not(),
+    ))
+    .map(|(modifiers, lhs, rhs)| {
+        if let Some(rhs) = rhs {
+            Stmt::Assign(lhs, rhs, modifiers)
+        } else {
+            Stmt::Expr(lhs, modifiers)
+        }
+    })
+    .boxed();
 
     let while_stmt = just(Token::Kw("while"))
         .ignore_then(sexpr.clone())
@@ -788,7 +795,7 @@ where
 
     let for_stmt = just(Token::Kw("for"))
         .ignore_then(group((
-            binding_target.clone().then_ignore(just(Token::Kw("in"))),
+            nary_list.clone().then_ignore(just(Token::Kw("in"))),
             sexpr.clone().then_ignore(just(START_BLOCK)),
             block_or_inline_stmt.clone(),
         )))
@@ -882,9 +889,7 @@ where
 
     stmt.define(
         choice((
-            expr_stmt.then_ignore(just(Token::Eol)),
-            assign_stmt.then_ignore(just(Token::Eol)),
-            //
+            expr_or_assign_stmt.then_ignore(just(Token::Eol)),
             module_stmt.then_ignore(just(Token::Eol)),
             while_stmt.clone().then_ignore(just(Token::Eol)),
             for_stmt.clone().then_ignore(just(Token::Eol)),
@@ -903,9 +908,7 @@ where
 
     inline_stmt.define(
         choice((
-            inline_assign_stmt,
-            inline_expr_stmt,
-            //
+            inline_expr_or_assign_stmt,
             while_stmt,
             for_stmt,
             inline_return_stmt,

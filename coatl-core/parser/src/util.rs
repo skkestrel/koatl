@@ -10,12 +10,13 @@ impl AstBuilder {
     }
 
     // Statement builders
-    pub fn expr<'src>(&self, expr: SExpr<'src>) -> SStmt<'src> {
-        (Stmt::Expr(expr), self.span)
-    }
 
     pub fn ident<'src>(&self, name: &'src str) -> SExpr<'src> {
         (Expr::Ident((name.into(), self.span)), self.span)
+    }
+
+    pub fn expr<'src>(&self, expr: SExpr<'src>) -> SStmt<'src> {
+        (Stmt::Expr(expr, vec![]), self.span)
     }
 
     pub fn assign<'src>(&self, target: SExpr<'src>, value: SExpr<'src>) -> SStmt<'src> {

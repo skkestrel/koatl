@@ -187,16 +187,25 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
 
                 if treat_final_as_expr {
                     match &final_stmt.0 {
-                        Stmt::Expr(expr) => match expr.transform_with_placeholder_guard(ctx) {
-                            Ok(expr_with_aux) => {
-                                py_stmts.extend(expr_with_aux.pre_stmts);
-                                final_ = BlockFinal::Expr(expr_with_aux.expr);
+                        Stmt::Expr(expr, modifiers) => {
+                            if !modifiers.is_empty() {
+                                return Err(TfErrBuilder::default()
+                                    .message("Modifiers are not allowed on expression statements")
+                                    .span(final_stmt.1)
+                                    .build_errs());
                             }
-                            Err(e) => {
-                                errs.extend(e.0);
-                                ok = false;
+
+                            match expr.transform_with_placeholder_guard(ctx) {
+                                Ok(expr_with_aux) => {
+                                    py_stmts.extend(expr_with_aux.pre_stmts);
+                                    final_ = BlockFinal::Expr(expr_with_aux.expr);
+                                }
+                                Err(e) => {
+                                    errs.extend(e.0);
+                                    ok = false;
+                                }
                             }
-                        },
+                        }
                         _ => {
                             match &final_stmt.0 {
                                 Stmt::Return(..)
@@ -234,7 +243,8 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
                     })
                 } else {
                     // TODO this clone is bad - refactor AST ownership?
-                    let f = (Stmt::Expr(sexpr.clone()), sexpr.1);
+
+                    let f = (Stmt::Expr(sexpr.clone(), vec![]), sexpr.1);
                     let stmts = f.transform(ctx, is_top_level)?;
 
                     Ok(PyBlockWithFinal {
@@ -674,19 +684,28 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
         let (stmt, span) = self;
 
         match &stmt {
-            Stmt::Expr(expr) => match &expr.0 {
-                Expr::If(cond, then_block, else_block) => {
-                    transform_if_stmt(ctx, cond, then_block, else_block, span)
+            Stmt::Expr(expr, modifiers) => {
+                if !modifiers.is_empty() {
+                    return Err(TfErrBuilder::default()
+                        .message("Modifiers are not allowed on expression statements")
+                        .span(*span)
+                        .build_errs());
                 }
-                Expr::Match(subject, cases) => transform_match_stmt(ctx, subject, cases, span),
-                _ => {
-                    let expr = expr.transform_with_placeholder_guard(ctx)?;
-                    let mut stmts = expr.pre_stmts;
-                    stmts.push((PyStmt::Expr(expr.expr), *span).into());
 
-                    Ok(stmts)
+                match &expr.0 {
+                    Expr::If(cond, then_block, else_block) => {
+                        transform_if_stmt(ctx, cond, then_block, else_block, span)
+                    }
+                    Expr::Match(subject, cases) => transform_match_stmt(ctx, subject, cases, span),
+                    _ => {
+                        let expr = expr.transform_with_placeholder_guard(ctx)?;
+                        let mut stmts = expr.pre_stmts;
+                        stmts.push((PyStmt::Expr(expr.expr), *span).into());
+
+                        Ok(stmts)
+                    }
                 }
-            },
+            }
             Stmt::Assert(expr, msg) => {
                 let expr_node = expr.transform_with_placeholder_guard(ctx)?;
                 let msg = msg
