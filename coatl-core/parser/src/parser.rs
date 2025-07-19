@@ -77,14 +77,88 @@ where
 }
 
 const START_BLOCK: Token = Token::Symbol(":");
+type TExtra<'tokens, 'src> = extra::Err<Rich<'tokens, Token<'src>, Span>>;
+
+pub fn just_symbol<'tokens, 'src: 'tokens, I>(
+    symbol: &'static str,
+) -> impl Parser<'tokens, I, Token<'src>, TExtra<'tokens, 'src>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
+{
+    just(Token::Symbol(symbol))
+}
+
+pub fn function<'tokens, 'src: 'tokens, TInput, PL, PR, PIdent, PExpr>(
+    unary_lhs: PL,
+    block_or_inline_stmt: PR,
+    ident: PIdent,
+    expr: PExpr,
+) -> impl Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone
+where
+    TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
+    PL: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PR: Parser<'tokens, TInput, SBlock<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PIdent: Parser<'tokens, TInput, SIdent<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PExpr: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+{
+    recursive(|fn_| {
+        let fn_body = just_symbol("=>")
+            .ignore_then(choice((
+                block_or_inline_stmt.clone(),
+                fn_.clone().map(|x| Block::Expr(x)).spanned().boxed(),
+            )))
+            .boxed();
+
+        let unary_fn = unary_lhs
+            .clone()
+            .then(fn_body.clone().or_not())
+            .map_with(|(x, body), e| {
+                if let Some(body) = body {
+                    (
+                        Expr::Fn(vec![ArgDefItem::Arg(x, None)], Box::new(body)),
+                        e.span(),
+                    )
+                } else {
+                    x
+                }
+            })
+            .labelled("unary-fn")
+            .as_context()
+            .boxed();
+
+        let arg_list = enumeration(choice((
+            just_symbol("*")
+                .ignore_then(ident.clone())
+                .map(|x| ArgDefItem::ArgSpread(x)),
+            just_symbol("**")
+                .ignore_then(ident.clone())
+                .map(ArgDefItem::KwargSpread),
+            expr.clone()
+                .then(just_symbol("=").ignore_then(expr.clone()).or_not())
+                .map(|(key, value)| ArgDefItem::Arg(key, value)),
+        )))
+        .labelled("argument-def-list")
+        .boxed();
+
+        let nary_fn = arg_list
+            .clone()
+            .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
+            .then(fn_body)
+            .map(|(args, body)| Expr::Fn(args, Box::new(body)))
+            .spanned()
+            .labelled("nary-fn")
+            .as_context()
+            .boxed();
+
+        choice((nary_fn, unary_fn)).labelled("fn")
+    })
+}
 
 pub fn parser<'tokens, 'src: 'tokens, TInput>()
 -> impl Parser<'tokens, TInput, SBlock<'src>, extra::Err<Rich<'tokens, Token<'src>, Span>>>
 where
     TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
 {
-    let just_symbol = |s: &'static str| just(Token::Symbol(s));
-
     let mut stmt = chumsky::recursive::Recursive::declare();
     let mut inline_stmt = chumsky::recursive::Recursive::declare();
     let mut atom = chumsky::recursive::Recursive::declare();
@@ -175,10 +249,7 @@ where
             ListItem::Item(expr) if rest.is_empty() && last_comma.is_none() => {
                 return expr;
             }
-            ListItem::Item(..) => {
-                items.push(first);
-            }
-            ListItem::Spread(..) => {
+            ListItem::Item(..) | ListItem::Spread(..) => {
                 items.push(first);
             }
         }
@@ -187,7 +258,6 @@ where
         (Expr::List(items), e.span())
     })
     .labelled("nary-list")
-    .as_context()
     .boxed();
 
     let binding_target = nary_list.clone();
@@ -243,29 +313,6 @@ where
         .labelled("f-string")
         .boxed();
 
-    let case_ = sexpr
-        .clone()
-        .then_ignore(just(START_BLOCK))
-        .then(block_or_inline_stmt.clone())
-        .then_ignore(just(Token::Eol))
-        .map(|(pattern, body)| (pattern, Box::new(body)))
-        .labelled("match-case")
-        .boxed();
-
-    let match_ = just(Token::Kw("match"))
-        .ignore_then(sexpr.clone())
-        .then_ignore(just(START_BLOCK))
-        .then(
-            case_
-                .repeated()
-                .collect::<Vec<_>>()
-                .delimited_by_with_eol(just_symbol("BEGIN_BLOCK"), just_symbol("END_BLOCK")),
-        )
-        .map(|(scrutinee, cases)| Expr::Match(Box::new(scrutinee), cases))
-        .spanned()
-        .labelled("match")
-        .boxed();
-
     let class_ = just(Token::Kw("class"))
         .ignore_then(
             enumeration(
@@ -290,10 +337,27 @@ where
         .labelled("class")
         .boxed();
 
+    let classic_if = just(Token::Kw("if"))
+        .ignore_then(group((
+            sexpr.clone().then_ignore(just(START_BLOCK)),
+            block_or_inline_stmt.clone(),
+            group((
+                just(Token::Eol).or_not(),
+                just(Token::Kw("else")),
+                just(START_BLOCK),
+            ))
+            .ignore_then(block_or_inline_stmt.clone())
+            .or_not(),
+        )))
+        .map(|(cond, if_, else_)| Expr::If(Box::new(cond), Box::new(if_), else_.map(Box::new)))
+        .spanned()
+        .labelled("if")
+        .boxed();
+
     atom.define(
         choice((
             ident.clone().map(Expr::Ident).spanned(),
-            match_, // match and class are atoms because they expect DEDENT at the end
+            classic_if,
             class_,
             literal,
             placeholder,
@@ -465,8 +529,15 @@ where
         }
     }
 
-    let binary0 = make_binary_op(
+    let fn_ = function(
         unary.clone(),
+        block_or_inline_stmt.clone(),
+        ident.clone(),
+        sexpr.clone(),
+    );
+
+    let binary0 = make_binary_op(
+        fn_.clone(),
         select! {
             Token::Symbol("**") => BinaryOp::Exp,
         },
@@ -568,23 +639,32 @@ where
 
     let slices = choice((slice0, slice1));
 
-    let arg_list = enumeration(choice((
-        just_symbol("*")
-            .ignore_then(ident.clone())
-            .map(|x| ArgDefItem::ArgSpread(x)),
-        just_symbol("**")
-            .ignore_then(ident.clone())
-            .map(ArgDefItem::KwargSpread),
-        sexpr
-            .clone()
-            .then(just_symbol("=").ignore_then(sexpr.clone()).or_not())
-            .map(|(key, value)| ArgDefItem::Arg(key, value)),
-    )))
-    .labelled("argument-def-list")
-    .boxed();
-
-    let if_ = slices
+    let case_ = sexpr
         .clone()
+        .then_ignore(just(START_BLOCK))
+        .then(block_or_inline_stmt.clone())
+        .map(|(pattern, body)| (pattern, Box::new(body)))
+        .labelled("match-case")
+        .boxed();
+
+    let match_ = slices
+        .then(
+            just(Token::Kw("match"))
+                .then(just(START_BLOCK).or_not())
+                .ignore_then(enumeration(case_))
+                .or_not(),
+        )
+        .map_with(|(scrutinee, cases), e| {
+            if let Some(cases) = cases {
+                (Expr::Match(Box::new(scrutinee), cases), e.span())
+            } else {
+                scrutinee
+            }
+        })
+        .labelled("match")
+        .boxed();
+
+    let if_ = match_
         .then(
             group((
                 just(Token::Kw("then"))
@@ -610,79 +690,23 @@ where
             }
         });
 
-    let mut fn_ = chumsky::recursive::Recursive::declare();
-    let fn_body = just_symbol("=>")
-        .ignore_then(choice((
-            block_or_inline_stmt.clone(),
-            fn_.clone().map(|x| Block::Expr(x)).spanned().boxed(),
-        )))
-        .boxed();
-
-    let unary_fn = if_
-        .clone()
-        .then(fn_body.clone().or_not())
-        .map_with(|(x, body), e| {
-            if let Some(body) = body {
-                (
-                    Expr::Fn(vec![ArgDefItem::Arg(x, None)], Box::new(body)),
-                    e.span(),
-                )
-            } else {
-                x
-            }
-        })
-        .labelled("unary-fn")
-        .as_context()
-        .boxed();
-
-    let nary_fn = arg_list
-        .clone()
-        .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
-        .then(fn_body)
-        .map(|(args, body)| Expr::Fn(args, Box::new(body)))
-        .spanned()
-        .labelled("nary-fn")
-        .as_context()
-        .boxed();
-
-    fn_.define(choice((nary_fn, unary_fn)).labelled("fn-or-binary").boxed());
-
-    let classic_if = just(Token::Kw("if"))
-        .ignore_then(group((
-            sexpr.clone().then_ignore(just(START_BLOCK)),
-            block_or_inline_stmt.clone(),
-            group((
-                just(Token::Eol).or_not(),
-                just(Token::Kw("else")),
-                just(START_BLOCK),
-            ))
-            .ignore_then(block_or_inline_stmt.clone())
-            .or_not(),
-        )))
-        .map(|(cond, if_, else_)| Expr::If(Box::new(cond), Box::new(if_), else_.map(Box::new)))
-        .spanned()
-        .labelled("if")
-        .boxed();
-
     let binary6 = make_binary_op(
-        choice((fn_, classic_if)),
+        if_,
         select! {
             Token::Symbol("|") => BinaryOp::Pipe,
         },
         false,
     );
 
-    let binary = binary6.boxed();
+    sexpr.define(binary6.labelled("expression").as_context().boxed());
 
-    sexpr.define(binary.labelled("expression").as_context().boxed());
+    // Statements
 
     let expr_stmt = nary_list
         .clone()
         .map(Stmt::Expr)
         .labelled("expression statement")
         .boxed();
-
-    let stmt_rhs = choice((nary_list.clone(), sexpr.clone())).boxed();
 
     let assign_stmt = group((
         choice((
@@ -694,11 +718,17 @@ where
         .collect()
         .boxed(),
         binding_target.clone().then_ignore(just_symbol("=")),
-        stmt_rhs.clone(),
+        nary_list.clone(),
     ))
     .map(|(modifiers, lhs, rhs)| Stmt::Assign(lhs, rhs, modifiers))
     .labelled("assignment statement")
     .boxed();
+
+    let inline_expr_stmt = sexpr
+        .clone()
+        .map(Stmt::Expr)
+        .labelled("expression statement")
+        .boxed();
 
     let inline_assign_stmt = group((sexpr.clone().then_ignore(just_symbol("=")), sexpr.clone()))
         .map(|(lhs, rhs)| Stmt::Assign(lhs, rhs, vec![]))
@@ -767,7 +797,7 @@ where
         .boxed();
 
     let return_stmt = just(Token::Kw("return"))
-        .ignore_then(stmt_rhs.clone())
+        .ignore_then(nary_list.clone())
         .map(Stmt::Return)
         .labelled("return statement")
         .boxed();
@@ -786,7 +816,7 @@ where
         .boxed();
 
     let raise_stmt = just(Token::Kw("raise"))
-        .ignore_then(stmt_rhs.clone())
+        .ignore_then(nary_list.clone())
         .map(Stmt::Raise)
         .labelled("raise statement")
         .boxed();
@@ -852,7 +882,7 @@ where
 
     stmt.define(
         choice((
-            expr_stmt.clone().then_ignore(just(Token::Eol)),
+            expr_stmt.then_ignore(just(Token::Eol)),
             assign_stmt.then_ignore(just(Token::Eol)),
             //
             module_stmt.then_ignore(just(Token::Eol)),
@@ -873,8 +903,8 @@ where
 
     inline_stmt.define(
         choice((
-            expr_stmt,
             inline_assign_stmt,
+            inline_expr_stmt,
             //
             while_stmt,
             for_stmt,

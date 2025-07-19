@@ -1048,7 +1048,13 @@ fn transform_match_expr<'src, 'ast>(
         .into();
 
     let mut py_cases = vec![];
+    let mut has_default_case = false;
+
     for (pattern, block) in cases {
+        if let Expr::Ident(..) = &pattern.0 {
+            has_default_case = true;
+        }
+
         let pattern = pattern.transform_with_placeholder_guard(ctx)?;
         aux_stmts.extend(pattern.pre_stmts);
 
@@ -1069,6 +1075,13 @@ fn transform_match_expr<'src, 'ast>(
             pattern: pattern.expr,
             body: block_stmts,
         });
+    }
+
+    if !has_default_case {
+        return Err(TfErrBuilder::default()
+            .message("match-expr must have a default case")
+            .span(*span)
+            .build_errs());
     }
 
     aux_stmts.push((PyStmt::Match(subject.expr, py_cases), *span).into());

@@ -661,6 +661,7 @@ impl SPyStmt<'_> {
                 py_spanned.emit_to(ctx, LOW_PREC)?;
                 ctx.emit(":");
                 ctx.emit_endl();
+                ctx.indentation += 1;
                 for case in py_match_cases {
                     ctx.emit_indent();
                     ctx.emit("case ");
@@ -669,6 +670,7 @@ impl SPyStmt<'_> {
                     ctx.emit_endl();
                     case.body.emit_to(ctx, 1)?;
                 }
+                ctx.indentation -= 1;
             }
         }
 
