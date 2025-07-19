@@ -253,12 +253,12 @@ impl AstBuilder {
     // Exception handler builder
     pub fn except_handler<'src>(
         &self,
-        typ: Option<SExpr<'src>>,
+        types: Option<ExceptTypes<'src>>,
         name: Option<&'src str>,
         body: SBlock<'src>,
     ) -> ExceptHandler<'src> {
         ExceptHandler {
-            typ,
+            types,
             name: name.map(|n| (n.into(), self.span)),
             body,
         }

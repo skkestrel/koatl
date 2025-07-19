@@ -217,6 +217,13 @@ where
     .labelled("identifier")
     .boxed();
 
+    let ident_expr = ident
+        .clone()
+        .map(Expr::Ident)
+        .spanned()
+        .labelled("identifier-expression")
+        .boxed();
+
     let placeholder = select! {
         Token::Symbol("$") => Expr::Placeholder,
     }
@@ -364,7 +371,7 @@ where
 
     atom.define(
         choice((
-            ident.clone().map(Expr::Ident).spanned(),
+            ident_expr.clone(),
             classic_if,
             class_,
             literal,
@@ -589,11 +596,27 @@ where
         false,
     );
 
+    let qualified_ident = ident_expr
+        .clone()
+        .foldl_with(
+            just_symbol(".").ignore_then(ident.clone()).repeated(),
+            |lhs, rhs, e| (Expr::Attribute(Box::new(lhs), rhs), e.span()),
+        )
+        .boxed();
+
+    let except_types = choice((
+        qualified_ident.clone().map(ExceptTypes::Single),
+        enumeration(qualified_ident.clone(), just_symbol(","))
+            .delimited_by(just_symbol("["), just_symbol("]"))
+            .map(ExceptTypes::Multiple),
+    ))
+    .boxed();
+
     let checked_ = just(Token::Kw("try"))
         .ignore_then(binary2.clone())
         .then(
             just(Token::Kw("except"))
-                .ignore_then(list.or(unary))
+                .ignore_then(except_types.clone())
                 .or_not(),
         )
         .map(|(expr, typs)| Expr::Checked(Box::new(expr), typs.map(Box::new)))
@@ -767,7 +790,7 @@ where
         .then(just(Token::Kw("except")))
         .ignore_then(
             group((
-                choice((sexpr.clone().map(Some), just_symbol("*").map(|_| None))),
+                except_types.clone(),
                 just(Token::Kw("as")).ignore_then(ident.clone()).or_not(),
             ))
             .or_not(),
@@ -775,11 +798,15 @@ where
         .boxed()
         .then(just(START_BLOCK).ignore_then(block_or_inline_stmt.clone()))
         .map(|(opt, body)| {
-            if let Some((typ, name)) = opt {
-                ExceptHandler { typ, name, body }
+            if let Some((types, name)) = opt {
+                ExceptHandler {
+                    types: Some(types),
+                    name,
+                    body,
+                }
             } else {
                 ExceptHandler {
-                    typ: None,
+                    types: None,
                     name: None,
                     body,
                 }

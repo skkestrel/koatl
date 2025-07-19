@@ -235,8 +235,8 @@ impl SPyExpr<'_> {
                         ctx.emit(", ");
                     }
                     match item {
-                        PyTupleItem::Item(expr) => expr.emit_to(ctx, LOW_PREC)?,
-                        PyTupleItem::Spread(expr) => {
+                        PyListItem::Item(expr) => expr.emit_to(ctx, LOW_PREC)?,
+                        PyListItem::Spread(expr) => {
                             ctx.emit("*");
                             expr.emit_to(ctx, HIGH_PREC)?;
                         }
@@ -246,6 +246,25 @@ impl SPyExpr<'_> {
                     ctx.emit(",");
                 }
                 ctx.emit(")");
+            }
+            PyExpr::List(items) => {
+                ctx.emit("[");
+                for (i, item) in items.iter_mut().enumerate() {
+                    if i > 0 {
+                        ctx.emit(", ");
+                    }
+                    match item {
+                        PyListItem::Item(expr) => expr.emit_to(ctx, LOW_PREC)?,
+                        PyListItem::Spread(expr) => {
+                            ctx.emit("*");
+                            expr.emit_to(ctx, HIGH_PREC)?;
+                        }
+                    }
+                }
+                if items.len() == 1 {
+                    ctx.emit(",");
+                }
+                ctx.emit("]");
             }
             PyExpr::Dict(items) => {
                 ctx.emit("{");

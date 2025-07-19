@@ -530,14 +530,33 @@ impl<'src> PyExprExt<'src> for SPyExpr<'src> {
                     &self.tl_span,
                 )?
             }
+            PyExpr::List(items) => {
+                let mut elts = Vec::new();
+                for item in items {
+                    match item {
+                        PyListItem::Item(expr) => {
+                            elts.push(expr.emit_py(ctx)?);
+                        }
+                        PyListItem::Spread(expr) => {
+                            let starred = ctx.ast_node(
+                                "Starred",
+                                (expr.emit_py(ctx)?, ctx.ast_cls("Load", ())?),
+                                &self.tl_span,
+                            )?;
+                            elts.push(starred);
+                        }
+                    }
+                }
+                ctx.ast_node("List", (elts, ctx.ast_cls("Load", ())?), &self.tl_span)?
+            }
             PyExpr::Tuple(items) => {
                 let mut elts = Vec::new();
                 for item in items {
                     match item {
-                        PyTupleItem::Item(expr) => {
+                        PyListItem::Item(expr) => {
                             elts.push(expr.emit_py(ctx)?);
                         }
-                        PyTupleItem::Spread(expr) => {
+                        PyListItem::Spread(expr) => {
                             let starred = ctx.ast_node(
                                 "Starred",
                                 (expr.emit_py(ctx)?, ctx.ast_cls("Load", ())?),

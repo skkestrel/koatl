@@ -276,7 +276,7 @@ fn destructure_list<'src, 'ast>(
         a.assign(
             a.ident(list_var.clone(), PyAccessCtx::Store),
             a.call(
-                a.load_ident("tuple"),
+                a.load_ident("list"),
                 vec![a.call_arg(a.load_ident(cursor_var.clone()))],
             ),
         ),
@@ -817,10 +817,8 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 let mut excepts_ast = vec![];
 
                 for except in excepts {
-                    let type_node = if let Some(typ) = &except.typ {
-                        let expr = typ.transform_with_placeholder_guard(ctx)?;
-                        stmts.extend(expr.pre_stmts);
-                        expr.expr
+                    let except_types = if let Some(types) = &except.types {
+                        types.transform(ctx, span)?
                     } else {
                         (PyExpr::Ident("Exception".into(), PyAccessCtx::Load), *span).into()
                     };
@@ -834,7 +832,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     let body_block = except.body.transform_with_final_stmt(ctx)?;
 
                     let except_ast = PyExceptHandler {
-                        typ: Some(type_node),
+                        typ: Some(except_types),
                         name: ident_node,
                         body: body_block,
                     };
@@ -1397,12 +1395,12 @@ fn transform_subscript_items<'src, 'ast>(
                         ListItem::Item(expr) => {
                             let e = expr.transform_with_deep_placeholder_guard(ctx)?;
                             aux_stmts.extend(e.pre_stmts);
-                            Ok(PyTupleItem::Item(e.expr))
+                            Ok(PyListItem::Item(e.expr))
                         }
                         ListItem::Spread(expr) => {
                             let e = expr.transform_with_deep_placeholder_guard(ctx)?;
                             aux_stmts.extend(e.pre_stmts);
-                            Ok(PyTupleItem::Spread(e.expr))
+                            Ok(PyListItem::Spread(e.expr))
                         }
                     })
                     .collect::<TfResult<Vec<_>>>()?,
@@ -1593,6 +1591,48 @@ fn transform_postfix_expr<'src, 'ast>(
     })
 }
 
+trait ExceptTypesExt<'src> {
+    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>, span: &Span) -> TfResult<SPyExpr<'src>>;
+}
+
+impl<'src> ExceptTypesExt<'src> for ExceptTypes<'src> {
+    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>, span: &Span) -> TfResult<SPyExpr<'src>> {
+        match self {
+            ExceptTypes::Single(typ) => {
+                let typ_node = typ.transform(ctx)?;
+                if !typ_node.pre_stmts.is_empty() {
+                    return Err(TfErrBuilder::default()
+                        .message("Internal error: Type in except clause cannot have pre-statements")
+                        .span(typ_node.expr.tl_span)
+                        .build_errs());
+                }
+
+                Ok(typ_node.expr)
+            }
+            ExceptTypes::Multiple(types) => {
+                let mut type_nodes = vec![];
+
+                for typ in types {
+                    let typ_node = typ.transform(ctx)?;
+
+                    if !typ_node.pre_stmts.is_empty() {
+                        return Err(TfErrBuilder::default()
+                            .message(
+                                "Internal error: Type in except clause cannot have pre-statements",
+                            )
+                            .span(typ_node.expr.tl_span)
+                            .build_errs());
+                    }
+
+                    type_nodes.push(PyListItem::Item(typ_node.expr));
+                }
+
+                Ok((PyExpr::Tuple(type_nodes), *span).into())
+            }
+        }
+    }
+}
+
 trait SExprExt<'src> {
     fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyExprWithPre<'src>>;
 
@@ -1710,7 +1750,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
         }
 
         match &expr {
-            Expr::Checked(expr, matcher) => {
+            Expr::Checked(expr, exc_types) => {
                 let a = PyAstBuilder::new(*span);
                 let t = expr.transform(ctx)?;
                 let var_name = ctx.temp_var_name("chk", span.start);
@@ -1726,10 +1766,9 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                 let mut stmts = PyBlock::new();
 
-                let exc_types = if let Some(matcher) = matcher {
-                    let t = matcher.transform(ctx)?;
-                    stmts.extend(t.pre_stmts);
-                    Some(t.expr)
+                let exc_types = if let Some(exc_types) = exc_types {
+                    let t = exc_types.transform(ctx, span)?;
+                    Some(t)
                 } else {
                     None
                 };
@@ -1932,13 +1971,13 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                         };
                         aux_stmts.extend(e.pre_stmts);
                         items.push(match expr {
-                            ListItem::Spread(_) => PyTupleItem::Spread(e.expr),
-                            ListItem::Item(_) => PyTupleItem::Item(e.expr),
+                            ListItem::Spread(_) => PyListItem::Spread(e.expr),
+                            ListItem::Item(_) => PyListItem::Item(e.expr),
                         });
                     }
 
                     return Ok(PyExprWithPre {
-                        expr: (PyExpr::Tuple(items), *span).into(),
+                        expr: (PyExpr::List(items), *span).into(),
                         pre_stmts: aux_stmts,
                     });
                 });

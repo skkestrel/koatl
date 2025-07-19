@@ -6,7 +6,7 @@ pub mod transform;
 use parser::ast::{Block, Span};
 use parser::{TokenList, parse_tokens, tokenize};
 
-use crate::py::ast::{PyImportAlias, PyLiteral, PyTupleItem};
+use crate::py::ast::{PyImportAlias, PyListItem, PyLiteral};
 use crate::py::util::PyAstBuilder;
 use crate::py::{ast::PyBlock, emit::EmitCtx};
 use crate::transform::{TransformOutput, transform_ast};
@@ -134,7 +134,7 @@ pub fn transpile_to_py_ast<'src>(
                                 .exports
                                 .iter()
                                 .map(|x| {
-                                    PyTupleItem::Item(a.literal(PyLiteral::Str(x.clone())))
+                                    PyListItem::Item(a.literal(PyLiteral::Str(x.clone())))
                                 })
                                 .collect(),
                         ),
@@ -145,7 +145,7 @@ pub fn transpile_to_py_ast<'src>(
                                 .module_star_exports
                                 .iter()
                                 .map(|x| {
-                                    PyTupleItem::Item(a.literal(PyLiteral::Str(x.clone())))
+                                    PyListItem::Item(a.literal(PyLiteral::Str(x.clone())))
                                 })
                                 .collect(),
                         ),

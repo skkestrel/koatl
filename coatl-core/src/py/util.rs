@@ -230,8 +230,8 @@ impl PyAstBuilder {
             .into()
     }
 
-    pub fn tuple<'src>(&self, items: Vec<PyTupleItem<'src>>) -> SPyExpr<'src> {
-        (PyExpr::Tuple(items), self.span).into()
+    pub fn tuple<'src>(&self, items: Vec<PyListItem<'src>>) -> SPyExpr<'src> {
+        (PyExpr::List(items), self.span).into()
     }
 
     pub fn dict<'src>(&self, items: Vec<PyDictItem<'src>>) -> SPyExpr<'src> {
@@ -298,12 +298,12 @@ impl PyAstBuilder {
     }
 
     // Utility builders for tuple items
-    pub fn tuple_item<'src>(&self, expr: SPyExpr<'src>) -> PyTupleItem<'src> {
-        PyTupleItem::Item(expr)
+    pub fn tuple_item<'src>(&self, expr: SPyExpr<'src>) -> PyListItem<'src> {
+        PyListItem::Item(expr)
     }
 
-    pub fn tuple_spread<'src>(&self, expr: SPyExpr<'src>) -> PyTupleItem<'src> {
-        PyTupleItem::Spread(expr)
+    pub fn tuple_spread<'src>(&self, expr: SPyExpr<'src>) -> PyListItem<'src> {
+        PyListItem::Spread(expr)
     }
 
     // Utility builders for dict items

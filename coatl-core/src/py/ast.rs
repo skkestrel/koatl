@@ -177,7 +177,7 @@ pub enum PyArgDefItem<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub enum PyTupleItem<'a> {
+pub enum PyListItem<'a> {
     Item(SPyExpr<'a>),
     Spread(SPyExpr<'a>),
 }
@@ -209,7 +209,8 @@ pub enum PyExpr<'a> {
     IfExpr(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
     Lambda(Vec<PyArgDefItem<'a>>, Box<SPyExpr<'a>>),
 
-    Tuple(Vec<PyTupleItem<'a>>),
+    List(Vec<PyListItem<'a>>),
+    Tuple(Vec<PyListItem<'a>>),
     Dict(Vec<PyDictItem<'a>>),
     Slice(
         Option<Box<SPyExpr<'a>>>,

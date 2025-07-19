@@ -60,7 +60,7 @@ pub struct ImportStmt<'a> {
 
 #[derive(Debug, Clone)]
 pub struct ExceptHandler<'a> {
-    pub typ: Option<SExpr<'a>>,
+    pub types: Option<ExceptTypes<'a>>,
     pub name: Option<SIdent<'a>>,
     pub body: SBlock<'a>,
 }
@@ -151,6 +151,12 @@ pub enum Block<'a> {
 pub type SBlock<'a> = Spanned<Block<'a>>;
 
 #[derive(Debug, Clone)]
+pub enum ExceptTypes<'src> {
+    Single(SExpr<'src>),
+    Multiple(Vec<SExpr<'src>>),
+}
+
+#[derive(Debug, Clone)]
 pub enum Expr<'a> {
     Literal(SLiteral<'a>),
     Ident(SIdent<'a>),
@@ -180,7 +186,7 @@ pub enum Expr<'a> {
     MappedAttribute(Box<SExpr<'a>>, SIdent<'a>),
     MappedThen(Box<SExpr<'a>>, Box<SExpr<'a>>),
 
-    Checked(Box<SExpr<'a>>, Option<Box<SExpr<'a>>>),
+    Checked(Box<SExpr<'a>>, Option<Box<ExceptTypes<'a>>>),
 
     Fn(Vec<ArgDefItem<'a>>, Box<SBlock<'a>>),
     Fstr(Spanned<String>, Vec<(SFmtExpr<'a>, Spanned<String>)>),
