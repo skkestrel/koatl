@@ -6,22 +6,26 @@ use crate::ast::*;
 use crate::lexer::*;
 use chumsky::{extra::ParserExtra, input::ValueInput, prelude::*};
 
-fn enumeration<'tokens, 'src: 'tokens, I, O: 'tokens, E, ItemParser>(
+fn enumeration<'tokens, 'src: 'tokens, I, O: 'tokens, OS: 'tokens, E, ItemParser, SepParser>(
     item_parser: ItemParser,
+    optional_separator: SepParser,
 ) -> impl Parser<'tokens, I, Vec<O>, E> + Clone
 where
     I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
     E: ParserExtra<'tokens, I, Error = Rich<'tokens, Token<'src>, Span>>,
     ItemParser: Parser<'tokens, I, O, E> + Clone + 'tokens,
+    SepParser: Parser<'tokens, I, OS, E> + Clone + 'tokens,
 {
     choice((
         item_parser
             .clone()
             .separated_by(choice((
-                just(Token::Symbol(","))
+                optional_separator
+                    .clone()
                     .then(just(Token::Eol).or_not())
                     .ignored(),
-                just(Token::Symbol(","))
+                optional_separator
+                    .clone()
                     .or_not()
                     .then(just(Token::Eol))
                     .ignored(),
@@ -34,7 +38,7 @@ where
             )
             .labelled("block enumeration"),
         item_parser
-            .separated_by(just(Token::Symbol(",")))
+            .separated_by(optional_separator)
             .allow_trailing()
             .collect()
             .labelled("inline enumeration"),
@@ -89,7 +93,7 @@ where
 }
 
 pub fn function<'tokens, 'src: 'tokens, TInput, PL, PR, PIdent, PExpr>(
-    unary_lhs: PL,
+    monic_lhs: PL,
     block_or_inline_stmt: PR,
     ident: PIdent,
     expr: PExpr,
@@ -109,7 +113,7 @@ where
             )))
             .boxed();
 
-        let unary_fn = unary_lhs
+        let monic_fn = monic_lhs
             .clone()
             .then(fn_body.clone().or_not())
             .map_with(|(x, body), e| {
@@ -123,20 +127,22 @@ where
                 }
             })
             .labelled("unary-fn")
-            .as_context()
             .boxed();
 
-        let arg_list = enumeration(choice((
-            just_symbol("*")
-                .ignore_then(ident.clone())
-                .map(|x| ArgDefItem::ArgSpread(x)),
-            just_symbol("**")
-                .ignore_then(ident.clone())
-                .map(ArgDefItem::KwargSpread),
-            expr.clone()
-                .then(just_symbol("=").ignore_then(expr.clone()).or_not())
-                .map(|(key, value)| ArgDefItem::Arg(key, value)),
-        )))
+        let arg_list = enumeration(
+            choice((
+                just_symbol("*")
+                    .ignore_then(ident.clone())
+                    .map(|x| ArgDefItem::ArgSpread(x)),
+                just_symbol("**")
+                    .ignore_then(ident.clone())
+                    .map(ArgDefItem::KwargSpread),
+                expr.clone()
+                    .then(just_symbol("=").ignore_then(expr.clone()).or_not())
+                    .map(|(key, value)| ArgDefItem::Arg(key, value)),
+            )),
+            just_symbol(","),
+        )
         .labelled("argument-def-list")
         .boxed();
 
@@ -150,7 +156,7 @@ where
             .as_context()
             .boxed();
 
-        choice((nary_fn, unary_fn)).labelled("fn")
+        choice((nary_fn, monic_fn)).labelled("fn")
     })
 }
 
@@ -226,7 +232,7 @@ where
     ))
     .boxed();
 
-    let list = enumeration(list_item.clone())
+    let list = enumeration(list_item.clone(), just_symbol(","))
         .delimited_by_with_eol(just_symbol("["), just_symbol("]"))
         .map(Expr::List)
         .labelled("list")
@@ -260,16 +266,19 @@ where
     .labelled("nary-list")
     .boxed();
 
-    let mapping = enumeration(choice((
-        just_symbol("**")
-            .ignore_then(unary.clone())
-            .map(MappingItem::Spread),
-        sexpr
-            .clone()
-            .then_ignore(just(START_BLOCK))
-            .then(sexpr.clone())
-            .map(|(key, value)| MappingItem::Item(key, value)),
-    )))
+    let mapping = enumeration(
+        choice((
+            just_symbol("**")
+                .ignore_then(unary.clone())
+                .map(MappingItem::Spread),
+            sexpr
+                .clone()
+                .then_ignore(just(START_BLOCK))
+                .then(sexpr.clone())
+                .map(|(key, value)| MappingItem::Item(key, value)),
+        )),
+        just_symbol(","),
+    )
     .delimited_by_with_eol(just(Token::Symbol("[")), just(Token::Symbol("]")))
     .map(Expr::Mapping)
     .labelled("mapping")
@@ -324,6 +333,7 @@ where
                 ))
                 .spanned()
                 .boxed(),
+                just_symbol(","),
             )
             .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")))
             .or_not(),
@@ -399,6 +409,7 @@ where
         ))
         .spanned()
         .boxed(),
+        just_symbol(","),
     )
     .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")))
     .map(Postfix::Call)
@@ -414,6 +425,7 @@ where
             sexpr.clone().map(ListItem::Item),
         ))
         .boxed(),
+        just_symbol(","),
     )
     .delimited_by_with_eol(just(Token::Symbol("[")), just(Token::Symbol("]")))
     .map(Postfix::Subscript)
@@ -640,8 +652,9 @@ where
     let case_ = sexpr
         .clone()
         .then_ignore(just(START_BLOCK))
+        .or_not()
         .then(block_or_inline_stmt.clone())
-        .map(|(pattern, body)| (pattern, Box::new(body)))
+        .map(|(pattern, body)| (pattern, body))
         .labelled("match-case")
         .boxed();
 
@@ -649,7 +662,7 @@ where
         .then(
             just(Token::Kw("match"))
                 .then(just(START_BLOCK).or_not())
-                .ignore_then(enumeration(case_))
+                .ignore_then(enumeration(case_, just(Token::Kw("else"))))
                 .or_not(),
         )
         .map_with(|(scrutinee, cases), e| {
@@ -861,6 +874,7 @@ where
                     ident
                         .clone()
                         .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not()),
+                    just_symbol(","),
                 )
                 .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
                 .map(ImportList::Leaves)

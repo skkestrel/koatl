@@ -167,7 +167,7 @@ pub enum Expr<'a> {
     Binary(BinaryOp, Box<SExpr<'a>>, Box<SExpr<'a>>),
 
     If(Box<SExpr<'a>>, Box<SBlock<'a>>, Option<Box<SBlock<'a>>>),
-    Match(Box<SExpr<'a>>, Vec<(SExpr<'a>, Box<SBlock<'a>>)>),
+    Match(Box<SExpr<'a>>, Vec<(Option<SExpr<'a>>, SBlock<'a>)>),
     Class(Vec<SCallItem<'a>>, Box<SBlock<'a>>),
 
     Call(Box<SExpr<'a>>, Vec<SCallItem<'a>>),

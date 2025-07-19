@@ -1019,23 +1019,28 @@ fn transform_if_expr<'src, 'ast>(
 }
 
 fn transform_match_stmt<'src, 'ast>(
-    ast: &mut TfCtx<'src>,
+    ctx: &mut TfCtx<'src>,
     subject: &'ast SExpr<'src>,
-    cases: &'ast [(SExpr<'src>, Box<SBlock<'src>>)],
+    cases: &'ast [(Option<SExpr<'src>>, SBlock<'src>)],
     span: &Span,
 ) -> TfResult<PyBlock<'src>> {
-    let subject = subject.transform_with_placeholder_guard(ast)?;
+    let subject = subject.transform_with_placeholder_guard(ctx)?;
     let mut aux_stmts = subject.pre_stmts;
 
     let mut py_cases = vec![];
     for (pattern, block) in cases {
-        let pattern = pattern.transform_with_placeholder_guard(ast)?;
-        aux_stmts.extend(pattern.pre_stmts);
+        let pattern = if let Some(pattern) = pattern {
+            let t = pattern.transform_with_placeholder_guard(ctx)?;
+            aux_stmts.extend(t.pre_stmts);
+            t.expr
+        } else {
+            (PyExpr::Ident("_".into(), PyAccessCtx::Load), *span).into()
+        };
 
-        let py_block = block.transform_with_final_stmt(ast)?;
+        let py_block = block.transform_with_final_stmt(ctx)?;
 
         py_cases.push(PyMatchCase {
-            pattern: pattern.expr,
+            pattern,
             body: py_block,
         });
     }
@@ -1048,7 +1053,7 @@ fn transform_match_stmt<'src, 'ast>(
 fn transform_match_expr<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     subject: &'ast SExpr<'src>,
-    cases: &'ast [(SExpr<'src>, Box<SBlock<'src>>)],
+    cases: &'ast [(Option<SExpr<'src>>, SBlock<'src>)],
     span: &Span,
 ) -> TfResult<PyExprWithPre<'src>> {
     let subject = subject.transform_with_placeholder_guard(ctx)?;
@@ -1069,13 +1074,25 @@ fn transform_match_expr<'src, 'ast>(
     let mut py_cases = vec![];
     let mut has_default_case = false;
 
-    for (pattern, block) in cases {
-        if let Expr::Ident(..) = &pattern.0 {
+    for (i, (pattern, block)) in cases.iter().enumerate() {
+        let pattern = if let Some(pattern) = pattern {
+            let t = pattern.transform_with_placeholder_guard(ctx)?;
+            aux_stmts.extend(t.pre_stmts);
+            t.expr
+        } else {
+            if i != cases.len() - 1 {
+                return Err(TfErrBuilder::default()
+                    .message("match-expr default case must be the last case")
+                    .span(block.1)
+                    .build_errs());
+            }
+
+            (PyExpr::Ident("_".into(), PyAccessCtx::Load), *span).into()
+        };
+
+        if let PyExpr::Ident(..) = pattern.value {
             has_default_case = true;
         }
-
-        let pattern = pattern.transform_with_placeholder_guard(ctx)?;
-        aux_stmts.extend(pattern.pre_stmts);
 
         let py_block = block.transform_with_final_expr(ctx)?;
         let mut block_stmts = py_block.stmts;
@@ -1091,7 +1108,7 @@ fn transform_match_expr<'src, 'ast>(
         }
 
         py_cases.push(PyMatchCase {
-            pattern: pattern.expr,
+            pattern,
             body: block_stmts,
         });
     }
