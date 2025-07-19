@@ -489,6 +489,14 @@ fn destructure<'src, 'ast>(
             decls.extend(bindings.declarations);
             assign_to = bindings.assign_to;
         }
+        Expr::Tuple(items) => {
+            // TODO differentiate from list?
+            let bindings = destructure_list(ctx, target, items, decl_only)?;
+
+            post_stmts.extend(bindings.post_stmts);
+            decls.extend(bindings.declarations);
+            assign_to = bindings.assign_to;
+        }
         Expr::Mapping(items) => {
             let bindings = destructure_mapping(ctx, target, items, decl_only)?;
 
@@ -1633,6 +1641,37 @@ impl<'src> ExceptTypesExt<'src> for ExceptTypes<'src> {
     }
 }
 
+trait ListItemsExt<'src> {
+    fn transform<'ast>(
+        &'ast self,
+        ctx: &mut TfCtx<'src>,
+    ) -> TfResult<(Vec<PyListItem<'src>>, PyBlock<'src>)>;
+}
+
+impl<'src> ListItemsExt<'src> for Vec<ListItem<'src>> {
+    fn transform<'ast>(
+        &'ast self,
+        ctx: &mut TfCtx<'src>,
+    ) -> TfResult<(Vec<PyListItem<'src>>, PyBlock<'src>)> {
+        let mut aux_stmts = PyBlock::new();
+        let mut items = vec![];
+
+        for expr in self {
+            let e = match expr {
+                ListItem::Spread(expr) => expr.transform_with_deep_placeholder_guard(ctx)?,
+                ListItem::Item(expr) => expr.transform_with_deep_placeholder_guard(ctx)?,
+            };
+            aux_stmts.extend(e.pre_stmts);
+            items.push(match expr {
+                ListItem::Spread(_) => PyListItem::Spread(e.expr),
+                ListItem::Item(_) => PyListItem::Item(e.expr),
+            });
+        }
+
+        Ok((items, aux_stmts))
+    }
+}
+
 trait SExprExt<'src> {
     fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyExprWithPre<'src>>;
 
@@ -1957,27 +1996,20 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             }
             Expr::List(exprs) => {
                 return placeholder_guard(ctx, span, |ctx| {
-                    let mut aux_stmts = PyBlock::new();
-                    let mut items = vec![];
-
-                    for expr in exprs {
-                        let e = match expr {
-                            ListItem::Spread(expr) => {
-                                expr.transform_with_deep_placeholder_guard(ctx)?
-                            }
-                            ListItem::Item(expr) => {
-                                expr.transform_with_deep_placeholder_guard(ctx)?
-                            }
-                        };
-                        aux_stmts.extend(e.pre_stmts);
-                        items.push(match expr {
-                            ListItem::Spread(_) => PyListItem::Spread(e.expr),
-                            ListItem::Item(_) => PyListItem::Item(e.expr),
-                        });
-                    }
+                    let (items, aux_stmts) = exprs.transform(ctx)?;
 
                     return Ok(PyExprWithPre {
                         expr: (PyExpr::List(items), *span).into(),
+                        pre_stmts: aux_stmts,
+                    });
+                });
+            }
+            Expr::Tuple(exprs) => {
+                return placeholder_guard(ctx, span, |ctx| {
+                    let (items, aux_stmts) = exprs.transform(ctx)?;
+
+                    return Ok(PyExprWithPre {
+                        expr: (PyExpr::Tuple(items), *span).into(),
                         pre_stmts: aux_stmts,
                     });
                 });

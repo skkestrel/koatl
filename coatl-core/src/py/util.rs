@@ -231,6 +231,10 @@ impl PyAstBuilder {
     }
 
     pub fn tuple<'src>(&self, items: Vec<PyListItem<'src>>) -> SPyExpr<'src> {
+        (PyExpr::Tuple(items), self.span).into()
+    }
+
+    pub fn list<'src>(&self, items: Vec<PyListItem<'src>>) -> SPyExpr<'src> {
         (PyExpr::List(items), self.span).into()
     }
 

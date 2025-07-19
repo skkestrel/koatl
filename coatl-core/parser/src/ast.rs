@@ -161,6 +161,7 @@ pub enum Expr<'a> {
     Literal(SLiteral<'a>),
     Ident(SIdent<'a>),
     Placeholder,
+    Tuple(Vec<ListItem<'a>>),
     List(Vec<ListItem<'a>>),
     Mapping(Vec<MappingItem<'a>>),
     Slice(

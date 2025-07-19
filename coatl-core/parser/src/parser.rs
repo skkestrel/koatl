@@ -247,7 +247,7 @@ where
         .spanned()
         .boxed();
 
-    let nary_list = group((
+    let nary_tuple = group((
         list_item.clone(),
         just_symbol(",")
             .ignore_then(list_item)
@@ -268,9 +268,9 @@ where
         }
         items.extend(rest);
 
-        (Expr::List(items), e.span())
+        (Expr::Tuple(items), e.span())
     })
-    .labelled("nary-list")
+    .labelled("nary-tuple")
     .boxed();
 
     let mapping = enumeration(
@@ -369,28 +369,45 @@ where
         .labelled("if")
         .boxed();
 
+    let block_expr = just(Token::Kw("block"))
+        .then(just(START_BLOCK))
+        .ignore_then(block_or_inline_stmt.clone())
+        .map(|x| Expr::Block(Box::new(x)))
+        .spanned()
+        .labelled("block");
+
     atom.define(
         choice((
             ident_expr.clone(),
             classic_if,
             class_,
+            block_expr,
             literal,
             placeholder,
             list.clone(),
             mapping,
             fstr,
-            sexpr
+            just_symbol("(")
+                .then(just_symbol(")"))
+                .map(|_| Expr::Tuple(vec![]))
+                .spanned(),
+            nary_tuple
                 .clone()
                 .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
-            block
-                .clone()
-                .map(|b| Expr::Block(Box::new(b)))
-                .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")))
-                .spanned(),
         ))
         .labelled("atom")
         .boxed(),
     );
+
+    let qualified_ident = ident_expr
+        .clone()
+        .foldl_with(
+            just_symbol(".").ignore_then(ident.clone()).repeated(),
+            |lhs, rhs, e| (Expr::Attribute(Box::new(lhs), rhs), e.span()),
+        )
+        .boxed();
+
+    let match_pattern = choice(());
 
     enum Postfix<'a> {
         Call(Vec<SCallItem<'a>>),
@@ -596,14 +613,6 @@ where
         false,
     );
 
-    let qualified_ident = ident_expr
-        .clone()
-        .foldl_with(
-            just_symbol(".").ignore_then(ident.clone()).repeated(),
-            |lhs, rhs, e| (Expr::Attribute(Box::new(lhs), rhs), e.span()),
-        )
-        .boxed();
-
     let except_types = choice((
         qualified_ident.clone().map(ExceptTypes::Single),
         enumeration(qualified_ident.clone(), just_symbol(","))
@@ -745,8 +754,8 @@ where
         .repeated()
         .collect()
         .boxed(),
-        nary_list.clone(),
-        just_symbol("=").ignore_then(nary_list.clone()).or_not(),
+        nary_tuple.clone(),
+        just_symbol("=").ignore_then(nary_tuple.clone()).or_not(),
     ))
     .map(|(modifiers, lhs, rhs)| {
         if let Some(rhs) = rhs {
@@ -835,7 +844,7 @@ where
 
     let for_stmt = just(Token::Kw("for"))
         .ignore_then(group((
-            nary_list.clone().then_ignore(just(Token::Kw("in"))),
+            nary_tuple.clone().then_ignore(just(Token::Kw("in"))),
             sexpr.clone().then_ignore(just(START_BLOCK)),
             block_or_inline_stmt.clone(),
         )))
@@ -844,7 +853,7 @@ where
         .boxed();
 
     let return_stmt = just(Token::Kw("return"))
-        .ignore_then(nary_list.clone())
+        .ignore_then(nary_tuple.clone())
         .map(Stmt::Return)
         .labelled("return statement")
         .boxed();
@@ -863,7 +872,7 @@ where
         .boxed();
 
     let raise_stmt = just(Token::Kw("raise"))
-        .ignore_then(nary_list.clone())
+        .ignore_then(nary_tuple.clone())
         .map(Stmt::Raise)
         .labelled("raise statement")
         .boxed();

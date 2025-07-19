@@ -261,9 +261,6 @@ impl SPyExpr<'_> {
                         }
                     }
                 }
-                if items.len() == 1 {
-                    ctx.emit(",");
-                }
                 ctx.emit("]");
             }
             PyExpr::Dict(items) => {
