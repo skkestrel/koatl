@@ -6,7 +6,7 @@ pub mod transform;
 use parser::ast::{Block, Span};
 use parser::{TokenList, parse_tokens, tokenize};
 
-use crate::py::ast::{PyImportAlias, PyListItem, PyLiteral};
+use crate::py::ast::{PyAccessCtx, PyImportAlias, PyListItem, PyLiteral};
 use crate::py::util::PyAstBuilder;
 use crate::py::{ast::PyBlock, emit::EmitCtx};
 use crate::transform::{TransformOutput, transform_ast};
@@ -137,6 +137,7 @@ pub fn transpile_to_py_ast<'src>(
                                     PyListItem::Item(a.literal(PyLiteral::Str(x.clone())))
                                 })
                                 .collect(),
+                            PyAccessCtx::Load
                         ),
                     ),
                     a.call_arg(
@@ -148,6 +149,7 @@ pub fn transpile_to_py_ast<'src>(
                                     PyListItem::Item(a.literal(PyLiteral::Str(x.clone())))
                                 })
                                 .collect(),
+                            PyAccessCtx::Load
                         ),
                 ),
             ],

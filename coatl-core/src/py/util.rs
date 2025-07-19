@@ -230,12 +230,12 @@ impl PyAstBuilder {
             .into()
     }
 
-    pub fn tuple<'src>(&self, items: Vec<PyListItem<'src>>) -> SPyExpr<'src> {
-        (PyExpr::Tuple(items), self.span).into()
+    pub fn tuple<'src>(&self, items: Vec<PyListItem<'src>>, access: PyAccessCtx) -> SPyExpr<'src> {
+        (PyExpr::Tuple(items, access), self.span).into()
     }
 
-    pub fn list<'src>(&self, items: Vec<PyListItem<'src>>) -> SPyExpr<'src> {
-        (PyExpr::List(items), self.span).into()
+    pub fn list<'src>(&self, items: Vec<PyListItem<'src>>, access: PyAccessCtx) -> SPyExpr<'src> {
+        (PyExpr::List(items, access), self.span).into()
     }
 
     pub fn dict<'src>(&self, items: Vec<PyDictItem<'src>>) -> SPyExpr<'src> {

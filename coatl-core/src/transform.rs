@@ -264,19 +264,76 @@ fn destructure_list<'src, 'ast>(
     decl_only: bool,
 ) -> TfResult<DestructureBindings<'src>> {
     let cursor_var = ctx.temp_var_name("des_curs", target.1.start);
-    let list_var = ctx.temp_var_name("des_list", target.1.start);
+
+    // a, b, *c = cursor_var
+
+    let a = PyAstBuilder::new(target.1);
+    let mut post_stmts = PyBlock::new();
+
+    let mut lhs_items = vec![];
+    let mut decls = vec![];
+    let mut seen_spread = false;
+
+    for item in items.iter() {
+        match item {
+            ListItem::Item(expr) => {
+                let item_bindings = destructure(ctx, expr, decl_only)?;
+                lhs_items.push(PyListItem::Item(item_bindings.assign_to));
+                post_stmts.extend(item_bindings.post_stmts);
+                decls.extend(item_bindings.declarations);
+            }
+            ListItem::Spread(expr) => {
+                if seen_spread {
+                    return Err(TfErrBuilder::default()
+                        .message("Destructuring assignment with multiple spreads is not allowed")
+                        .span(target.1)
+                        .build_errs());
+                }
+                seen_spread = true;
+
+                let item_bindings = destructure(ctx, expr, decl_only)?;
+                lhs_items.push(PyListItem::Spread(item_bindings.assign_to));
+                post_stmts.extend(item_bindings.post_stmts);
+                decls.extend(item_bindings.declarations);
+            }
+        }
+    }
+
+    let mut stmts = PyBlock::new();
+    stmts.push(a.assign(
+        a.list(lhs_items, PyAccessCtx::Store),
+        a.load_ident(cursor_var.clone()),
+    ));
+
+    stmts.extend(post_stmts);
+
+    Ok(DestructureBindings {
+        post_stmts: stmts,
+        assign_to: a.ident(cursor_var, PyAccessCtx::Store),
+        declarations: decls,
+    })
+}
+
+fn destructure_tuple<'src, 'ast>(
+    ctx: &mut TfCtx<'src>,
+    target: &'ast SExpr<'src>,
+    items: &'ast [ListItem<'src>],
+    decl_only: bool,
+) -> TfResult<DestructureBindings<'src>> {
+    let cursor_var = ctx.temp_var_name("des_curs", target.1.start);
+    let tuple_var = ctx.temp_var_name("des_tuple", target.1.start);
     let len_var = ctx.temp_var_name("des_len", target.1.start);
 
-    // list_var = list(cursor_var)
+    // list_var = tuple(cursor_var)
     // len_var = len(list_var)
 
     let a = PyAstBuilder::new(target.1);
 
     let mut stmts = PyBlock(vec![
         a.assign(
-            a.ident(list_var.clone(), PyAccessCtx::Store),
+            a.ident(tuple_var.clone(), PyAccessCtx::Store),
             a.call(
-                a.load_ident("list"),
+                a.load_ident("tuple"),
                 vec![a.call_arg(a.load_ident(cursor_var.clone()))],
             ),
         ),
@@ -284,7 +341,7 @@ fn destructure_list<'src, 'ast>(
             a.ident(len_var.clone(), PyAccessCtx::Store),
             a.call(
                 a.load_ident("len"),
-                vec![a.call_arg(a.load_ident(list_var.clone()))],
+                vec![a.call_arg(a.load_ident(tuple_var.clone()))],
             ),
         ),
     ]);
@@ -294,7 +351,7 @@ fn destructure_list<'src, 'ast>(
 
     // a = list_var[0]
     // b = list_var[1]
-    // c = list_var[i:len_var-n_single_spreads]
+    // c = list_var[i:len_var-n_single_spreads_left]
 
     let mut seen_spread = false;
     let mut i = 0;
@@ -310,7 +367,7 @@ fn destructure_list<'src, 'ast>(
                     a.assign(
                         item_bindings.assign_to,
                         a.subscript(
-                            a.load_ident(list_var.clone()),
+                            a.load_ident(tuple_var.clone()),
                             a.num(
                                 (if seen_spread {
                                     -((items.len() - i - 1) as i32)
@@ -334,20 +391,20 @@ fn destructure_list<'src, 'ast>(
                 }
                 seen_spread = true;
 
-                let item_bindings = destructure(ctx, expr, decl_only)?;
+                let item_bindings = destructure(ctx, expr, true)?;
                 post_stmts.extend(item_bindings.post_stmts);
                 decls.extend(item_bindings.declarations);
 
                 stmts.push(a.assign(
                     item_bindings.assign_to,
                     a.subscript(
-                        a.load_ident(list_var.clone()),
+                        a.load_ident(tuple_var.clone()),
                         a.slice(
                             Some(a.num(i.to_string())),
                             Some(a.binary(
                                 PyBinaryOp::Sub,
                                 a.load_ident(len_var.clone()),
-                                a.num((items.len() - 2).to_string()),
+                                a.num((items.len() - 1 - i).to_string()),
                             )),
                             None,
                         ),
@@ -425,7 +482,7 @@ fn destructure_mapping<'src, 'ast>(
     }
 
     if let Some(spread_var) = spread_var {
-        let item_bindings = destructure(ctx, spread_var, decl_only)?;
+        let item_bindings = destructure(ctx, spread_var, true)?;
 
         post_stmts.extend(item_bindings.post_stmts);
         decls.extend(item_bindings.declarations);
@@ -490,8 +547,7 @@ fn destructure<'src, 'ast>(
             assign_to = bindings.assign_to;
         }
         Expr::Tuple(items) => {
-            // TODO differentiate from list?
-            let bindings = destructure_list(ctx, target, items, decl_only)?;
+            let bindings = destructure_tuple(ctx, target, items, decl_only)?;
 
             post_stmts.extend(bindings.post_stmts);
             decls.extend(bindings.declarations);
@@ -1412,6 +1468,7 @@ fn transform_subscript_items<'src, 'ast>(
                         }
                     })
                     .collect::<TfResult<Vec<_>>>()?,
+                PyAccessCtx::Load,
             ),
             *span,
         )
@@ -1635,7 +1692,7 @@ impl<'src> ExceptTypesExt<'src> for ExceptTypes<'src> {
                     type_nodes.push(PyListItem::Item(typ_node.expr));
                 }
 
-                Ok((PyExpr::Tuple(type_nodes), *span).into())
+                Ok((PyExpr::Tuple(type_nodes, PyAccessCtx::Load), *span).into())
             }
         }
     }
@@ -1999,7 +2056,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     let (items, aux_stmts) = exprs.transform(ctx)?;
 
                     return Ok(PyExprWithPre {
-                        expr: (PyExpr::List(items), *span).into(),
+                        expr: (PyExpr::List(items, PyAccessCtx::Load), *span).into(),
                         pre_stmts: aux_stmts,
                     });
                 });
@@ -2009,7 +2066,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     let (items, aux_stmts) = exprs.transform(ctx)?;
 
                     return Ok(PyExprWithPre {
-                        expr: (PyExpr::Tuple(items), *span).into(),
+                        expr: (PyExpr::Tuple(items, PyAccessCtx::Load), *span).into(),
                         pre_stmts: aux_stmts,
                     });
                 });

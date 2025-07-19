@@ -255,21 +255,34 @@ where
             .collect::<Vec<_>>(),
         just_symbol(",").to(1).or_not(),
     ))
-    .map_with(|(first, rest, last_comma), e| -> SExpr {
-        let mut items = Vec::<ListItem>::new();
+    .try_map_with(
+        |(first, rest, last_comma), e| -> Result<SExpr, Rich<'tokens, Token<'src>, Span>> {
+            let mut items = Vec::<ListItem>::new();
 
-        match first {
-            ListItem::Item(expr) if rest.is_empty() && last_comma.is_none() => {
-                return expr;
-            }
-            ListItem::Item(..) | ListItem::Spread(..) => {
-                items.push(first);
-            }
-        }
-        items.extend(rest);
+            match first {
+                ListItem::Item(expr) if rest.is_empty() && last_comma.is_none() => {
+                    return Ok(expr);
+                }
+                // ListItem::Spread(expr) if rest.is_empty() && last_comma.is_none() => {
+                //     // should this be an error?
 
-        (Expr::Tuple(items), e.span())
-    })
+                //     return Err(Rich::custom(
+                //         first.1,
+                //         "Spread operator must be in a list or tuple",
+                //     ));
+                // }
+                ListItem::Item(..) => {
+                    items.push(first);
+                }
+                ListItem::Spread(..) => {
+                    items.push(first);
+                }
+            }
+            items.extend(rest);
+
+            Ok((Expr::Tuple(items), e.span()))
+        },
+    )
     .labelled("nary-tuple")
     .boxed();
 

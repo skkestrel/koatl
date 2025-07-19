@@ -209,8 +209,8 @@ pub enum PyExpr<'a> {
     IfExpr(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
     Lambda(Vec<PyArgDefItem<'a>>, Box<SPyExpr<'a>>),
 
-    List(Vec<PyListItem<'a>>),
-    Tuple(Vec<PyListItem<'a>>),
+    List(Vec<PyListItem<'a>>, PyAccessCtx),
+    Tuple(Vec<PyListItem<'a>>, PyAccessCtx),
     Dict(Vec<PyDictItem<'a>>),
     Slice(
         Option<Box<SPyExpr<'a>>>,

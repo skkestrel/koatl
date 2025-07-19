@@ -228,7 +228,7 @@ impl SPyExpr<'_> {
             PyExpr::Ident(id, _ctx) => {
                 ctx.emit(&id);
             }
-            PyExpr::Tuple(items) => {
+            PyExpr::Tuple(items, _ctx) => {
                 ctx.emit("(");
                 for (i, item) in items.iter_mut().enumerate() {
                     if i > 0 {
@@ -247,7 +247,7 @@ impl SPyExpr<'_> {
                 }
                 ctx.emit(")");
             }
-            PyExpr::List(items) => {
+            PyExpr::List(items, _ctx) => {
                 ctx.emit("[");
                 for (i, item) in items.iter_mut().enumerate() {
                     if i > 0 {

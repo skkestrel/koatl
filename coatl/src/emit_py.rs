@@ -530,7 +530,7 @@ impl<'src> PyExprExt<'src> for SPyExpr<'src> {
                     &self.tl_span,
                 )?
             }
-            PyExpr::List(items) => {
+            PyExpr::List(items, access) => {
                 let mut elts = Vec::new();
                 for item in items {
                     match item {
@@ -540,16 +540,16 @@ impl<'src> PyExprExt<'src> for SPyExpr<'src> {
                         PyListItem::Spread(expr) => {
                             let starred = ctx.ast_node(
                                 "Starred",
-                                (expr.emit_py(ctx)?, ctx.ast_cls("Load", ())?),
+                                (expr.emit_py(ctx)?, access.emit_py(ctx)?),
                                 &self.tl_span,
                             )?;
                             elts.push(starred);
                         }
                     }
                 }
-                ctx.ast_node("List", (elts, ctx.ast_cls("Load", ())?), &self.tl_span)?
+                ctx.ast_node("List", (elts, access.emit_py(ctx)?), &self.tl_span)?
             }
-            PyExpr::Tuple(items) => {
+            PyExpr::Tuple(items, access) => {
                 let mut elts = Vec::new();
                 for item in items {
                     match item {
@@ -559,14 +559,14 @@ impl<'src> PyExprExt<'src> for SPyExpr<'src> {
                         PyListItem::Spread(expr) => {
                             let starred = ctx.ast_node(
                                 "Starred",
-                                (expr.emit_py(ctx)?, ctx.ast_cls("Load", ())?),
+                                (expr.emit_py(ctx)?, access.emit_py(ctx)?),
                                 &self.tl_span,
                             )?;
                             elts.push(starred);
                         }
                     }
                 }
-                ctx.ast_node("Tuple", (elts, ctx.ast_cls("Load", ())?), &self.tl_span)?
+                ctx.ast_node("Tuple", (elts, access.emit_py(ctx)?), &self.tl_span)?
             }
             PyExpr::Dict(items) => {
                 let mut keys = Vec::new();
