@@ -1566,13 +1566,15 @@ fn transform_postfix_expr<'src, 'ast>(
         Expr::Subscript(obj, _) => (false, obj),
         Expr::Call(obj, _) => (false, obj),
         Expr::Then(obj, _) => (false, obj),
+        Expr::Extension(obj, _) => (false, obj),
         Expr::MappedAttribute(obj, _) => (true, obj),
         Expr::MappedSubscript(obj, _) => (true, obj),
         Expr::MappedCall(obj, _) => (true, obj),
         Expr::MappedThen(obj, _) => (true, obj),
+        Expr::MappedExtension(obj, _) => (true, obj),
         _ => {
             return Err(TfErrBuilder::default()
-                .message("Internal error: Postfix expressions can only be attributes, subscripts, calls, or mapped expressions")
+                .message("Internal error: Postfix expressions can only be attributes, subscripts, calls, or extensions")
                 .span(expr.1)
                 .build_errs());
         }
@@ -1641,9 +1643,31 @@ fn transform_postfix_expr<'src, 'ast>(
                 aux.extend(rhs_node.pre_stmts);
                 guard_if_expr(a.call(rhs_node.expr, vec![PyCallItem::Arg(lhs.clone())]))
             }
+            Expr::Extension(_, rhs) => {
+                let rhs_node = rhs.transform_with_placeholder_guard(ctx)?;
+                aux.extend(rhs_node.pre_stmts);
+                let lambda_args = vec![a.arg_def_spread("args"), a.kwarg_def_spread("kwargs")];
+                let call_args = vec![
+                    a.call_arg(lhs),
+                    a.call_arg_spread(a.load_ident("args")),
+                    a.call_kwarg_spread(a.load_ident("kwargs")),
+                ];
+                a.lambda(lambda_args, a.call(rhs_node.expr, call_args))
+            }
+            Expr::MappedExtension(_, rhs) => {
+                let rhs_node = rhs.transform_with_placeholder_guard(ctx)?;
+                aux.extend(rhs_node.pre_stmts);
+                let lambda_args = vec![a.arg_def_spread("args"), a.kwarg_def_spread("kwargs")];
+                let call_args = vec![
+                    a.call_arg(lhs.clone()),
+                    a.call_arg_spread(a.load_ident("args")),
+                    a.call_kwarg_spread(a.load_ident("kwargs")),
+                ];
+                guard_if_expr(a.lambda(lambda_args, a.call(rhs_node.expr, call_args)))
+            }
             _ => {
                 return Err(TfErrBuilder::default()
-                .message("Internal error: Postfix expressions can only be attributes, subscripts, calls, or mapped expressions")
+                .message("Internal error: Postfix expressions can only be attributes, subscripts, calls, or extensions")
                 .span(expr.1)
                 .build_errs());
             }
@@ -1925,7 +1949,9 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             | Expr::Subscript(..)
             | Expr::MappedSubscript(..)
             | Expr::Then(..)
-            | Expr::MappedThen(..) => transform_postfix_expr(ctx, self, access_ctx),
+            | Expr::MappedThen(..)
+            | Expr::Extension(..)
+            | Expr::MappedExtension(..) => transform_postfix_expr(ctx, self, access_ctx),
             Expr::If(cond, then_block, else_block) => {
                 transform_if_expr(ctx, cond, then_block, else_block, span)
             }

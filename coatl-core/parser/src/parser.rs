@@ -425,11 +425,12 @@ where
     enum Postfix<'a> {
         Call(Vec<SCallItem<'a>>),
         Subscript(Vec<ListItem<'a>>),
+        Extension(SExpr<'a>),
         Then(SExpr<'a>),
         Attribute(SIdent<'a>),
     }
 
-    let call = enumeration(
+    let call_args = enumeration(
         choice((
             just_symbol("*")
                 .ignore_then(unary.clone())
@@ -448,11 +449,14 @@ where
         .boxed(),
         just_symbol(","),
     )
-    .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")))
-    .map(Postfix::Call)
-    .labelled("argument-list")
-    .as_context()
-    .boxed();
+    .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")));
+
+    let call = call_args
+        .clone()
+        .map(Postfix::Call)
+        .labelled("argument-list")
+        .as_context()
+        .boxed();
 
     let subscript = enumeration(
         choice((
@@ -482,7 +486,23 @@ where
                 .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
                 .map(Postfix::Then),
         )
-        .labelled("generalized-attr")
+        .labelled("attr")
+        .boxed();
+
+    let extension = just_symbol("!")
+        .ignore_then(ident_expr.clone())
+        .map(Postfix::Extension)
+        .labelled("extension")
+        .boxed();
+
+    let expr_extension = just_symbol("!")
+        .ignore_then(
+            sexpr
+                .clone()
+                .delimited_by_with_eol(just_symbol("("), just_symbol(")")),
+        )
+        .map(Postfix::Extension)
+        .labelled("extension")
         .boxed();
 
     postfix.define(
@@ -491,7 +511,14 @@ where
                 just_symbol("?")
                     .to(1)
                     .or_not()
-                    .then(choice((call, subscript, attribute, then)))
+                    .then(choice((
+                        call,
+                        subscript,
+                        attribute,
+                        then,
+                        extension,
+                        expr_extension,
+                    )))
                     .repeated(),
                 |expr, (coal, op), e| -> SExpr {
                     (
@@ -501,6 +528,9 @@ where
                                 Postfix::Subscript(args) => Expr::Subscript(Box::new(expr), args),
                                 Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
                                 Postfix::Then(rhs) => Expr::Then(Box::new(expr), Box::new(rhs)),
+                                Postfix::Extension(rhs) => {
+                                    Expr::Extension(Box::new(expr), Box::new(rhs))
+                                }
                             }
                         } else {
                             match op {
@@ -513,6 +543,9 @@ where
                                 }
                                 Postfix::Then(rhs) => {
                                     Expr::MappedThen(Box::new(expr), Box::new(rhs))
+                                }
+                                Postfix::Extension(rhs) => {
+                                    Expr::MappedExtension(Box::new(expr), Box::new(rhs))
                                 }
                             }
                         },

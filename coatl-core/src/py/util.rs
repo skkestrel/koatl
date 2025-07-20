@@ -263,6 +263,14 @@ impl PyAstBuilder {
         (PyExpr::YieldFrom(Box::new(value)), self.span).into()
     }
 
+    pub fn lambda<'src>(
+        &self,
+        args: Vec<PyArgDefItem<'src>>,
+        body: SPyExpr<'src>,
+    ) -> SPyExpr<'src> {
+        (PyExpr::Lambda(args, Box::new(body)), self.span).into()
+    }
+
     // Utility builders for call items
     pub fn call_arg<'src>(&self, expr: SPyExpr<'src>) -> PyCallItem<'src> {
         PyCallItem::Arg(expr)

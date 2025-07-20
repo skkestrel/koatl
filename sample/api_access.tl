@@ -23,14 +23,14 @@ get_user_details = (data, user_id) =>
 
     profile = try user["profile"]
 
-    profile.(is_ok) then:
+    profile!is_ok() then:
         print(f"Profile not found.")
     else:
         print(f"Name: {try profile["name"] ?? "N/A"}")
 
         contact = try profile["contact"]
 
-        contact.(is_ok) then:
+        contact!is_ok() then:
             print(f"Contact not found: {profile}")
         else:
             print(f"Email: {try contact["email"] ?? "N/A"}")
