@@ -37,7 +37,7 @@ pub enum UnaryOp {
     YieldFrom,
 }
 
-pub type Ident<'a> = &'a str;
+pub type Ident<'a> = Cow<'a, str>;
 pub type SIdent<'a> = Spanned<Ident<'a>>;
 
 #[derive(Debug, Clone)]
@@ -58,13 +58,6 @@ pub struct ImportStmt<'a> {
     pub reexport: bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct ExceptHandler<'a> {
-    pub types: Option<ExceptTypes<'a>>,
-    pub name: Option<SIdent<'a>>,
-    pub body: SBlock<'a>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AssignModifier {
     Export,
@@ -83,9 +76,9 @@ pub enum Stmt<'a> {
     While(SExpr<'a>, SBlock<'a>),
     For(SPattern<'a>, SExpr<'a>, SBlock<'a>),
     Import(ImportStmt<'a>),
-    Try(SBlock<'a>, Vec<ExceptHandler<'a>>, Option<SBlock<'a>>),
+    Try(SBlock<'a>, Vec<MatchCase<'a>>, Option<SBlock<'a>>),
     Assert(SExpr<'a>, Option<SExpr<'a>>),
-    Raise(SExpr<'a>),
+    Raise(Option<SExpr<'a>>),
     Break,
     Continue,
     Err,
@@ -106,7 +99,7 @@ pub type SLiteral<'a> = Spanned<Literal<'a>>;
 #[derive(Debug, Clone)]
 pub struct FmtExpr<'a> {
     pub block: SBlock<'a>,
-    pub fmt: Option<&'a str>,
+    pub fmt: Option<Ident<'a>>,
 }
 
 pub type SFmtExpr<'a> = Spanned<FmtExpr<'a>>;
@@ -151,12 +144,6 @@ pub enum Block<'a> {
 pub type SBlock<'a> = Spanned<Block<'a>>;
 
 #[derive(Debug, Clone)]
-pub enum ExceptTypes<'src> {
-    Single(SExpr<'src>),
-    Multiple(Vec<SExpr<'src>>),
-}
-
-#[derive(Debug, Clone)]
 pub struct MatchCase<'src> {
     pub pattern: Option<SPattern<'src>>,
     pub guard: Option<SExpr<'src>>,
@@ -197,7 +184,7 @@ pub enum Expr<'a> {
     MappedThen(Box<SExpr<'a>>, Box<SExpr<'a>>),
     MappedExtension(Box<SExpr<'a>>, Box<SExpr<'a>>),
 
-    Checked(Box<SExpr<'a>>, Option<Box<ExceptTypes<'a>>>),
+    Checked(Box<SExpr<'a>>, Option<Box<SPattern<'a>>>),
 
     Fn(Vec<ArgDefItem<'a>>, Box<SBlock<'a>>),
     Fstr(Spanned<String>, Vec<(SFmtExpr<'a>, Spanned<String>)>),

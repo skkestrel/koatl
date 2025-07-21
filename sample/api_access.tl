@@ -18,7 +18,7 @@ API_RESPONSE = [
 map_err = f => value => value.(is_ok) then value.(f) else value
 
 get_user_details = (data, user_id) =>
-    user = @(try data[user_id] except KeyError
+    user = @(try data[user_id] except KeyError()
         | map_err(e => KeyError(f"User {user_id} not found.")))
 
     profile = try user["profile"]

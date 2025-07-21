@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::ast::*;
 
 pub struct AstBuilder {
@@ -11,7 +13,7 @@ impl AstBuilder {
 
     // Statement builders
 
-    pub fn ident<'src>(&self, name: &'src str) -> SExpr<'src> {
+    pub fn ident<'src>(&self, name: impl Into<Cow<'src, str>>) -> SExpr<'src> {
         (Expr::Ident((name.into(), self.span)), self.span)
     }
 
@@ -60,13 +62,13 @@ impl AstBuilder {
     pub fn try_<'src>(
         &self,
         body: SBlock<'src>,
-        handlers: Vec<ExceptHandler<'src>>,
+        handlers: Vec<MatchCase<'src>>,
         orelse: Option<SBlock<'src>>,
     ) -> SStmt<'src> {
         (Stmt::Try(body, handlers, orelse), self.span)
     }
 
-    pub fn raise<'src>(&self, expr: SExpr<'src>) -> SStmt<'src> {
+    pub fn raise<'src>(&self, expr: Option<SExpr<'src>>) -> SStmt<'src> {
         (Stmt::Raise(expr), self.span)
     }
 
@@ -79,8 +81,8 @@ impl AstBuilder {
     }
 
     // Expression builders
-    pub fn literal<'src>(&self, lit: SLiteral<'src>) -> SExpr<'src> {
-        (Expr::Literal(lit), self.span)
+    pub fn literal<'src>(&self, lit: Literal<'src>) -> SExpr<'src> {
+        (Expr::Literal((lit, self.span)), self.span)
     }
 
     pub fn unary<'src>(&self, op: UnaryOp, operand: SExpr<'src>) -> SExpr<'src> {
@@ -139,7 +141,11 @@ impl AstBuilder {
         (Expr::Subscript(Box::new(value), slice), self.span)
     }
 
-    pub fn attribute<'src>(&self, value: SExpr<'src>, attr: &'src str) -> SExpr<'src> {
+    pub fn attribute<'src>(
+        &self,
+        value: SExpr<'src>,
+        attr: impl Into<Cow<'src, str>>,
+    ) -> SExpr<'src> {
         (
             Expr::Attribute(Box::new(value), (attr.into(), self.span)),
             self.span,
@@ -176,14 +182,14 @@ impl AstBuilder {
     }
 
     // Literal builders
-    pub fn num<'src>(&self, value: &'src str) -> SExpr<'src> {
+    pub fn num<'src>(&self, value: impl Into<Cow<'src, str>>) -> SExpr<'src> {
         (
             Expr::Literal((Literal::Num(value.into()), self.span)),
             self.span,
         )
     }
 
-    pub fn str<'src>(&self, value: &'src str) -> SExpr<'src> {
+    pub fn str<'src>(&self, value: impl Into<Cow<'src, str>>) -> SExpr<'src> {
         (
             Expr::Literal((Literal::Str(value.into()), self.span)),
             self.span,
@@ -212,7 +218,11 @@ impl AstBuilder {
         (CallItem::Arg(expr), self.span)
     }
 
-    pub fn call_kwarg<'src>(&self, name: &'src str, value: SExpr<'src>) -> SCallItem<'src> {
+    pub fn call_kwarg<'src>(
+        &self,
+        name: impl Into<Cow<'src, str>>,
+        value: SExpr<'src>,
+    ) -> SCallItem<'src> {
         (CallItem::Kwarg((name.into(), self.span), value), self.span)
     }
 
@@ -233,34 +243,34 @@ impl AstBuilder {
         (ArgDefItem::Arg(arg, Some(default)), self.span)
     }
 
-    pub fn arg_spread<'src>(&self, name: &'src str) -> SArgItem<'src> {
+    pub fn arg_spread<'src>(&self, name: impl Into<Cow<'src, str>>) -> SArgItem<'src> {
         (ArgDefItem::ArgSpread((name.into(), self.span)), self.span)
     }
 
-    pub fn kwarg_spread<'src>(&self, name: &'src str) -> SArgItem<'src> {
+    pub fn kwarg_spread<'src>(&self, name: impl Into<Cow<'src, str>>) -> SArgItem<'src> {
         (ArgDefItem::KwargSpread((name.into(), self.span)), self.span)
     }
 
     // Format expression builder
-    pub fn fmt_expr<'src>(&self, block: SBlock<'src>, fmt: Option<&'src str>) -> SFmtExpr<'src> {
-        (FmtExpr { block, fmt }, self.span)
-    }
-
-    // Exception handler builder
-    pub fn except_handler<'src>(
+    pub fn fmt_expr<'src>(
         &self,
-        types: Option<ExceptTypes<'src>>,
-        name: Option<&'src str>,
-        body: SBlock<'src>,
-    ) -> ExceptHandler<'src> {
-        ExceptHandler {
-            types,
-            name: name.map(|n| (n.into(), self.span)),
-            body,
-        }
+        block: SBlock<'src>,
+        fmt: Option<impl Into<Cow<'src, str>>>,
+    ) -> SFmtExpr<'src> {
+        (
+            FmtExpr {
+                block,
+                fmt: fmt.map(|f| f.into()),
+            },
+            self.span,
+        )
     }
 
-    pub fn import_star<'src>(&self, trunk: Vec<&'src str>, level: usize) -> ImportStmt<'src> {
+    pub fn import_star<'src>(
+        &self,
+        trunk: Vec<impl Into<Cow<'src, str>>>,
+        level: usize,
+    ) -> ImportStmt<'src> {
         ImportStmt {
             trunk: trunk.into_iter().map(|t| (t.into(), self.span)).collect(),
             imports: ImportList::Star,
@@ -271,8 +281,8 @@ impl AstBuilder {
 
     pub fn import_<'src>(
         &self,
-        trunk: Vec<&'src str>,
-        leaves: Vec<(&'src str, Option<&'src str>)>,
+        trunk: Vec<impl Into<Cow<'src, str>>>,
+        leaves: Vec<(impl Into<Cow<'src, str>>, Option<impl Into<Cow<'src, str>>>)>,
         level: usize,
     ) -> ImportStmt<'src> {
         ImportStmt {

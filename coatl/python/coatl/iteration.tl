@@ -1,2 +1,0 @@
-iter = class:
-    None

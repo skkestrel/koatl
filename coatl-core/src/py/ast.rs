@@ -51,7 +51,7 @@ pub enum PyStmt<'a> {
     Match(SPyExpr<'a>, Vec<PyMatchCase<'a>>),
     Assign(SPyExpr<'a>, SPyExpr<'a>),
     Return(SPyExpr<'a>),
-    Raise(SPyExpr<'a>),
+    Raise(Option<SPyExpr<'a>>),
     Assert(SPyExpr<'a>, Option<SPyExpr<'a>>),
     Global(Vec<PyIdent<'a>>),
     Nonlocal(Vec<PyIdent<'a>>),

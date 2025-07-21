@@ -27,8 +27,14 @@ pub struct TlErr {
 
 pub type TlResult<T> = Result<T, Vec<TlErr>>;
 
+pub enum FinalStatement {
+    Expr,
+    Stmt,
+    ExprFallBackToStmt,
+}
+
 pub struct TranspileOptions {
-    pub treat_final_as_expr: bool,
+    pub final_statement: FinalStatement,
     pub inject_prelude: bool,
     pub inject_runtime: bool,
     pub set_exports: bool,
@@ -37,7 +43,7 @@ pub struct TranspileOptions {
 impl TranspileOptions {
     pub fn script() -> Self {
         TranspileOptions {
-            treat_final_as_expr: false,
+            final_statement: FinalStatement::Stmt,
             inject_prelude: true,
             inject_runtime: true,
             set_exports: false,
@@ -46,7 +52,7 @@ impl TranspileOptions {
 
     pub fn interactive() -> Self {
         let mut opt = TranspileOptions::script();
-        opt.treat_final_as_expr = true;
+        opt.final_statement = FinalStatement::ExprFallBackToStmt;
         opt.inject_prelude = false;
         opt.inject_runtime = false;
         opt
@@ -54,7 +60,7 @@ impl TranspileOptions {
 
     pub fn module() -> Self {
         TranspileOptions {
-            treat_final_as_expr: false,
+            final_statement: FinalStatement::Stmt,
             inject_prelude: true,
             inject_runtime: true,
             set_exports: true,
@@ -74,8 +80,14 @@ pub fn transpile_to_py_ast<'src>(
 ) -> TlResult<PyBlock<'src>> {
     let tl_ast = parse_tl(src)?;
 
-    let output: TransformOutput<'src> = transform_ast(&src, &tl_ast, options.treat_final_as_expr)
-        .map_err(|e| {
+    let output: TransformOutput<'src> = match options.final_statement {
+        FinalStatement::Expr => transform_ast(&src, &tl_ast, true),
+        FinalStatement::Stmt => transform_ast(&src, &tl_ast, false),
+        FinalStatement::ExprFallBackToStmt => {
+            transform_ast(&src, &tl_ast, true).or_else(|_| transform_ast(&src, &tl_ast, false))
+        }
+    }
+    .map_err(|e| {
         e.0.into_iter()
             .map(|e| TlErr {
                 kind: TlErrKind::Transform,

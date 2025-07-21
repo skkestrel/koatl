@@ -25,7 +25,7 @@ impl PyAstBuilder {
         (PyStmt::Return(expr), self.span).into()
     }
 
-    pub fn raise<'src>(&self, expr: SPyExpr<'src>) -> SPyStmt<'src> {
+    pub fn raise<'src>(&self, expr: Option<SPyExpr<'src>>) -> SPyStmt<'src> {
         (PyStmt::Raise(expr), self.span).into()
     }
 

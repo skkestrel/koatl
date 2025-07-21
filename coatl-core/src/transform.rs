@@ -4,7 +4,7 @@ use crate::{
     linecol::LineColCache,
     py::{ast::*, util::PyAstBuilder},
 };
-use parser::ast::*;
+use parser::{ast::*, util::AstBuilder};
 
 #[derive(Debug)]
 pub struct TfErr {
@@ -698,19 +698,19 @@ fn transform_assignment<'src, 'ast>(
             return Ok((
                 make_fn_def(
                     ctx,
-                    (*ident).into(),
+                    ident.clone(),
                     FnDefArgs::ArgList(arglist),
                     FnDefBody::Block(body),
                     decorators,
                     span,
                 )?,
-                vec![(*ident).into()],
+                vec![ident.clone()],
             ));
         } else if let Expr::Class(bases, body) = &cur_node {
             let decorators = py_decorators()?;
             return Ok((
-                make_class_def(ctx, (*ident).into(), &bases, &body, decorators, span)?,
-                vec![(*ident).into()],
+                make_class_def(ctx, ident.clone(), &bases, &body, decorators, span)?,
+                vec![ident.clone()],
             ));
         };
     };
@@ -762,7 +762,9 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     Expr::If(cond, then_block, else_block) => {
                         transform_if_stmt(ctx, cond, then_block, else_block, span)
                     }
-                    Expr::Match(subject, cases) => transform_match_stmt(ctx, subject, cases, span),
+                    Expr::Match(subject, cases) => {
+                        Ok(transform_match_stmt(ctx, subject, cases, span)?.0)
+                    }
                     _ => {
                         let expr = expr.transform_with_placeholder_guard(ctx)?;
                         let mut stmts = expr.pre;
@@ -817,10 +819,17 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 Ok(stmts)
             }
             Stmt::Raise(expr) => {
-                let expr_node = expr.transform_with_placeholder_guard(ctx)?;
-                let mut stmts = expr_node.pre;
+                let mut stmts = PyBlock::new();
+                let expr_node = expr
+                    .as_ref()
+                    .map(|x| {
+                        let t = x.transform(ctx)?;
+                        stmts.extend(t.pre);
+                        Ok(t.value)
+                    })
+                    .transpose()?;
 
-                stmts.push((PyStmt::Raise(expr_node.value), *span).into());
+                stmts.push((PyStmt::Raise(expr_node), *span).into());
 
                 Ok(stmts)
             }
@@ -882,33 +891,10 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     .transpose()?;
 
                 let mut stmts = PyBlock::new();
-                let mut excepts_ast = vec![];
 
-                for except in excepts {
-                    let except_types = if let Some(types) = &except.types {
-                        types.transform(ctx, span)?
-                    } else {
-                        (PyExpr::Ident("Exception".into(), PyAccessCtx::Load), *span).into()
-                    };
+                let excepts = matching_except_handler(ctx, excepts, span)?;
 
-                    let ident_node = if let Some(ident) = &except.name {
-                        Some(ident.0.into())
-                    } else {
-                        None
-                    };
-
-                    let body_block = except.body.transform_with_final_stmt(ctx)?;
-
-                    let except_ast = PyExceptHandler {
-                        typ: Some(except_types),
-                        name: ident_node,
-                        body: body_block,
-                    };
-
-                    excepts_ast.push(except_ast);
-                }
-
-                stmts.push((PyStmt::Try(body_block, excepts_ast, finally_block), *span).into());
+                stmts.push((PyStmt::Try(body_block, vec![excepts], finally_block), *span).into());
 
                 Ok(stmts)
             }
@@ -949,8 +935,8 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     ImportList::Leaves(imports) => {
                         for (ident, alias) in imports {
                             aliases.push(PyImportAlias {
-                                name: ident.0.into(),
-                                as_name: alias.as_ref().map(|a| a.0.into()),
+                                name: ident.0.clone(),
+                                as_name: alias.as_ref().map(|a| a.0.clone()),
                             });
                         }
 
@@ -1113,13 +1099,14 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
 
         let (pattern, span) = self;
         let capture_slot = |v: &Option<SIdent<'src>>| {
-            v.and_then(|x| if x.0 == "_" { None } else { Some(x.0.into()) })
+            v.clone()
+                .and_then(|x| if x.0 == "_" { None } else { Some(x.0) })
         };
 
         let transformed = match pattern {
             Pattern::As(pattern, ident) => PyPattern::As(
                 Some(Box::new(attach(pattern.transform(ctx)?))),
-                Some(ident.0.into()),
+                Some(ident.0.clone()),
             ),
             Pattern::Literal(literal) => match literal.0 {
                 Literal::Num(..) | Literal::Str(..) => {
@@ -1129,7 +1116,18 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                     PyPattern::Singleton(literal.0.transform(ctx)?)
                 }
             },
-            Pattern::Capture(v) => PyPattern::As(None, capture_slot(v)),
+            Pattern::Capture(v) => {
+                if v.as_ref()
+                    .is_some_and(|x| char::is_uppercase(x.0.chars().nth(0).unwrap_or('_')))
+                {
+                    return Err(TfErrBuilder::default()
+                        .message("Capture patterns must start with a lowercase letter; to match a type, add '()'")
+                        .span(*span)
+                        .build_errs());
+                }
+
+                PyPattern::As(None, capture_slot(v))
+            }
             Pattern::Value(v) => {
                 let v_node = bind_pre(&mut pre, v.transform(ctx)?);
 
@@ -1223,7 +1221,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                             values.push(attach(value.transform(ctx)?));
                         }
                         PatternClassItem::Kw(key, value) => {
-                            kvps.push((key.0.into(), attach(value.transform(ctx)?)));
+                            kvps.push((key.0.clone(), attach(value.transform(ctx)?)));
                         }
                     }
                 }
@@ -1245,17 +1243,15 @@ fn create_throwing_matcher<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     pattern: &'ast SPattern<'src>,
 ) -> TfResult<(PyBlock<'src>, PyIdent<'src>)> {
-    // TODO need to do a more sophisticated check if pattern is a default pattern here
-
-    if let Pattern::Capture(Some(id)) = pattern.0 {
-        return Ok((PyBlock::new(), id.0.into()));
+    if let Pattern::Capture(Some(id)) = &pattern.0 {
+        return Ok((PyBlock::new(), id.0.clone()));
     }
 
     let cursor = ctx.temp_var_name("matcher", pattern.1.start);
 
     let a = PyAstBuilder::new(pattern.1);
     let success = PyBlock(vec![a.pass()]);
-    let fail = PyBlock(vec![a.raise(a.call(
+    let fail = PyBlock(vec![a.raise(Some(a.call(
         a.load_ident("MatchError"),
         vec![a.call_arg(a.fstr(vec![
             a.fstr_str("failed to match value "),
@@ -1265,7 +1261,7 @@ fn create_throwing_matcher<'src, 'ast>(
                 &ctx.source[pattern.1.start..pattern.1.end]
             )),
         ]))],
-    ))]);
+    )))]);
 
     Ok((
         create_matcher(ctx, a.load_ident(cursor.clone()), pattern, success, fail)?,
@@ -1280,9 +1276,7 @@ fn create_matcher<'src, 'ast>(
     on_success: PyBlock<'src>,
     on_fail: PyBlock<'src>,
 ) -> TfResult<PyBlock<'src>> {
-    // TODO need to do a more sophisticated check if pattern is a default pattern here
-
-    if let Pattern::Capture(Some(_)) = pattern.0 {
+    if is_default_pattern(pattern) {
         return Ok(on_success);
     }
 
@@ -1314,12 +1308,17 @@ fn transform_match_stmt<'src, 'ast>(
     subject: &'ast SExpr<'src>,
     cases: &'ast [MatchCase<'src>],
     span: &Span,
-) -> TfResult<PyBlock<'src>> {
+) -> TfResult<(PyBlock<'src>, bool)> {
     let subject = subject.transform_with_placeholder_guard(ctx)?;
     let mut pre = subject.pre;
+    let mut has_default_case = false;
 
     let mut py_cases = vec![];
     for case in cases {
+        if case.pattern.as_ref().is_none_or(is_default_pattern) && case.guard.is_none() {
+            has_default_case = true;
+        }
+
         let pattern = if let Some(pattern) = &case.pattern {
             bind_pre(&mut pre, pattern.transform(ctx)?)
         } else {
@@ -1346,7 +1345,7 @@ fn transform_match_stmt<'src, 'ast>(
 
     pre.push((PyStmt::Match(subject.value, py_cases), *span).into());
 
-    Ok(pre)
+    Ok((pre, has_default_case))
 }
 
 fn transform_match_expr<'src, 'ast>(
@@ -1374,6 +1373,12 @@ fn transform_match_expr<'src, 'ast>(
     let mut has_default_case = false;
 
     for case in cases {
+        if case.pattern.as_ref().is_none_or(is_default_pattern) && case.guard.is_none() {
+            has_default_case = true;
+        }
+
+        // TODO verify binding same names
+
         let pattern = if let Some(pattern) = &case.pattern {
             bind_pre(&mut pre, pattern.transform(ctx)?)
         } else {
@@ -1388,12 +1393,6 @@ fn transform_match_expr<'src, 'ast>(
         } else {
             None
         };
-
-        if let PyPattern::As(None, _) = pattern.value {
-            if case.guard.is_none() {
-                has_default_case = true;
-            }
-        }
 
         let py_block = case.body.transform_with_final_expr(ctx)?;
         let mut block_stmts = py_block.stmts;
@@ -1459,7 +1458,7 @@ fn make_class_def<'src, 'ast>(
             CallItem::Kwarg(name, expr) => {
                 let expr_node = expr.transform_with_placeholder_guard(ctx)?;
                 stmts.extend(expr_node.pre);
-                PyCallItem::Kwarg(name.0.into(), expr_node.value)
+                PyCallItem::Kwarg(name.0.clone(), expr_node.value)
             }
             _ => {
                 return Err(TfErrBuilder::default()
@@ -1474,7 +1473,7 @@ fn make_class_def<'src, 'ast>(
 
     stmts.push(
         (
-            PyStmt::ClassDef(name.into(), bases_nodes, block, decorators),
+            PyStmt::ClassDef(name, bases_nodes, block, decorators),
             *span,
         )
             .into(),
@@ -1518,8 +1517,8 @@ fn make_arglist<'src, 'ast>(
                         post.extend(matcher);
                         PyArgDefItem::Arg(cursor, default)
                     }
-                    ArgDefItem::ArgSpread(name) => PyArgDefItem::ArgSpread(name.0.into()),
-                    ArgDefItem::KwargSpread(name) => PyArgDefItem::KwargSpread(name.0.into()),
+                    ArgDefItem::ArgSpread(name) => PyArgDefItem::ArgSpread(name.0.clone()),
+                    ArgDefItem::KwargSpread(name) => PyArgDefItem::KwargSpread(name.0.clone()),
                 };
                 args_vec.push(arg);
             }
@@ -1639,7 +1638,7 @@ fn transform_call_items<'src, 'ast>(
                 started_kwargs = true;
                 let e = expr.transform_with_deep_placeholder_guard(ctx)?;
                 aux_stmts.extend(e.pre);
-                call_items.push(PyCallItem::Kwarg((*name).into(), e.value));
+                call_items.push(PyCallItem::Kwarg(name.clone(), e.value));
             }
             CallItem::ArgSpread(expr) => {
                 if started_kwargs {
@@ -1864,9 +1863,9 @@ fn transform_postfix_expr<'src, 'ast>(
                 aux.extend(t.0);
                 guard_if_expr(a.subscript(lhs.clone(), t.1, access_ctx))
             }
-            Expr::Attribute(_, attr) => a.attribute(lhs, attr.0, access_ctx),
+            Expr::Attribute(_, attr) => a.attribute(lhs, attr.0.clone(), access_ctx),
             Expr::MappedAttribute(_, attr) => {
-                guard_if_expr(a.attribute(lhs.clone(), attr.0, access_ctx))
+                guard_if_expr(a.attribute(lhs.clone(), attr.0.clone(), access_ctx))
             }
             Expr::Then(_, rhs) => {
                 let rhs_node = rhs.transform_with_placeholder_guard(ctx)?;
@@ -1915,46 +1914,48 @@ fn transform_postfix_expr<'src, 'ast>(
     })
 }
 
-trait ExceptTypesExt<'src> {
-    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>, span: &Span) -> TfResult<SPyExpr<'src>>;
+fn is_default_pattern<'src>(pattern: &SPattern<'src>) -> bool {
+    match &pattern.0 {
+        Pattern::Capture(_) => true,
+        Pattern::As(pattern, _) => is_default_pattern(pattern),
+        Pattern::Or(items) => items.iter().any(is_default_pattern),
+        _ => false,
+    }
 }
 
-impl<'src> ExceptTypesExt<'src> for ExceptTypes<'src> {
-    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>, span: &Span) -> TfResult<SPyExpr<'src>> {
-        match self {
-            ExceptTypes::Single(typ) => {
-                let typ_node = typ.transform(ctx)?;
-                if !typ_node.pre.is_empty() {
-                    return Err(TfErrBuilder::default()
-                        .message("Internal error: Type in except clause cannot have pre-statements")
-                        .span(typ_node.value.tl_span)
-                        .build_errs());
-                }
+fn matching_except_handler<'src>(
+    ctx: &mut TfCtx<'src>,
+    handlers: &Vec<MatchCase<'src>>,
+    span: &Span,
+) -> TfResult<PyExceptHandler<'src>> {
+    let a = PyAstBuilder::new(*span);
+    let b = AstBuilder::new(*span);
+    let mut block = PyBlock::new();
 
-                Ok(typ_node.value)
-            }
-            ExceptTypes::Multiple(types) => {
-                let mut type_nodes = vec![];
+    let (mut match_stmt, has_default) = transform_match_stmt(ctx, &b.ident("__e"), handlers, span)?;
 
-                for typ in types {
-                    let typ_node = typ.transform(ctx)?;
-
-                    if !typ_node.pre.is_empty() {
-                        return Err(TfErrBuilder::default()
-                            .message(
-                                "Internal error: Type in except clause cannot have pre-statements",
-                            )
-                            .span(typ_node.value.tl_span)
-                            .build_errs());
-                    }
-
-                    type_nodes.push(PyListItem::Item(typ_node.value));
-                }
-
-                Ok((PyExpr::Tuple(type_nodes, PyAccessCtx::Load), *span).into())
-            }
+    if let PyStmt::Match(_, cases) = &mut match_stmt.0.last_mut().unwrap().value {
+        if !has_default {
+            cases.push(PyMatchCase {
+                pattern: (PyPattern::As(None, None), *span).into(),
+                guard: None,
+                body: PyBlock(vec![a.raise(None)]),
+            });
         }
+    } else {
+        return Err(TfErrBuilder::default()
+            .message("Internal error: Expected a match statement")
+            .span(*span)
+            .build_errs());
     }
+
+    block.extend(match_stmt);
+
+    Ok(PyExceptHandler {
+        typ: None,
+        name: Some("__e".into()),
+        body: block,
+    })
 }
 
 trait ListItemsExt<'src> {
@@ -2055,6 +2056,8 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
         let value = self.transform(ctx)?;
         aux_stmts.extend(value.pre);
 
+        // TODO skip if value is already ident
+
         let expr = match self.0 {
             Expr::Ident(..) => value.value,
             _ => {
@@ -2122,8 +2125,10 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
         }
 
         match &expr {
-            Expr::Checked(expr, exc_types) => {
+            Expr::Checked(expr, pattern) => {
                 let a = PyAstBuilder::new(*span);
+                let b = AstBuilder::new(*span);
+
                 let t = expr.transform(ctx)?;
                 let var_name = ctx.temp_var_name("chk", span.start);
 
@@ -2138,18 +2143,14 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                 let mut stmts = PyBlock::new();
 
-                let exc_types = if let Some(exc_types) = exc_types {
-                    let t = exc_types.transform(ctx, span)?;
-                    Some(t)
-                } else {
-                    None
+                let handler = MatchCase {
+                    pattern: pattern.as_ref().map(|x| (**x).clone()),
+                    guard: None,
+                    body: b.stmts_block(vec![b.assign(b.ident(var_name.clone()), b.ident("__e"))]),
                 };
 
-                stmts.push(a.try_(
-                    try_body,
-                    vec![a.except_handler(exc_types, Some("__e"), catch_body)],
-                    None,
-                ));
+                let except_handler = matching_except_handler(ctx, &vec![handler], span)?;
+                stmts.push(a.try_(try_body, vec![except_handler], None));
 
                 Ok(SPyExprWithPre {
                     pre: stmts,
@@ -2178,7 +2179,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 pre: PyBlock::new(),
             }),
             Expr::Ident((ident, span)) => Ok(SPyExprWithPre {
-                value: (PyExpr::Ident(Cow::Borrowed(ident), access_ctx), *span).into(),
+                value: (PyExpr::Ident(ident.clone(), access_ctx), *span).into(),
                 pre: PyBlock::new(),
             }),
             Expr::Attribute(..)

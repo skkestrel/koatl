@@ -289,7 +289,7 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                 ctx.ast_node("Return", (expr_ast,), &self.tl_span)
             }
             PyStmt::Raise(expr) => {
-                let expr_ast = expr.emit_py(ctx)?;
+                let expr_ast = expr.as_ref().map(|e| e.emit_py(ctx)).transpose()?;
                 ctx.ast_node("Raise", (expr_ast,), &self.tl_span)
             }
             PyStmt::Assert(test, msg) => {

@@ -16,7 +16,7 @@ export do = () =>
                         return x
 
                     x = gen.send(x)
-            except StopIteration as e:
-                return e.value
+            except StopIteration(value=value):
+                return value
             
           | wraps(f)

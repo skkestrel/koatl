@@ -157,6 +157,7 @@ where
 
     let nary_sequence_pattern = sequence_item
         .separated_by(symbol(","))
+        .at_least(1)
         .collect::<Vec<_>>()
         .then(symbol(",").to(0).or_not())
         .map_with(|(items, last_comma), e| {
@@ -215,11 +216,11 @@ where
 
     let closed_pattern = choice((
         literal_pattern,
+        class_pattern,
         value_pattern.clone(),
         group_pattern,
         sequence_pattern,
         mapping_pattern,
-        class_pattern,
     ))
     .boxed();
 
@@ -238,7 +239,7 @@ where
         });
 
     let as_pattern = or_pattern
-        .then(symbol("as").ignore_then(ident.clone()).or_not())
+        .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not())
         .map_with(|(pattern, as_ident), e| {
             if let Some(as_ident) = as_ident {
                 (Pattern::As(Box::new(pattern), as_ident), e.span())
@@ -378,7 +379,7 @@ where
         .boxed();
 
     let ident = select! {
-        Token::Ident(s) => s,
+        Token::Ident(s) => Cow::Borrowed(s),
     }
     .spanned()
     .labelled("identifier")
@@ -808,19 +809,11 @@ where
         false,
     );
 
-    let except_types = choice((
-        qualified_ident.clone().map(ExceptTypes::Single),
-        enumeration(qualified_ident.clone(), symbol(","))
-            .delimited_by(symbol("["), symbol("]"))
-            .map(ExceptTypes::Multiple),
-    ))
-    .boxed();
-
     let checked_ = just(Token::Kw("try"))
         .ignore_then(binary3.clone())
         .then(
             just(Token::Kw("except"))
-                .ignore_then(except_types.clone())
+                .ignore_then(pattern.clone())
                 .or_not(),
         )
         .map(|(expr, typs)| Expr::Checked(Box::new(expr), typs.map(Box::new)))
@@ -876,7 +869,7 @@ where
     let slices = choice((slice0, slice1));
 
     let case_ = choice((group((
-        pattern.clone(),
+        nary_pattern.clone(),
         just(Token::Kw("if")).ignore_then(binary3.clone()).or_not(),
         symbol("=>").ignore_then(block_or_inline_stmt.clone()),
     ))
@@ -1043,29 +1036,13 @@ where
 
     let except_block = just(Token::Eol)
         .then(just(Token::Kw("except")))
-        .ignore_then(
-            group((
-                except_types.clone(),
-                just(Token::Kw("as")).ignore_then(ident.clone()).or_not(),
-            ))
-            .or_not(),
-        )
+        .ignore_then(nary_pattern.clone().or_not())
         .boxed()
         .then(just(START_BLOCK).ignore_then(block_or_inline_stmt.clone()))
-        .map(|(opt, body)| {
-            if let Some((types, name)) = opt {
-                ExceptHandler {
-                    types: Some(types),
-                    name,
-                    body,
-                }
-            } else {
-                ExceptHandler {
-                    types: None,
-                    name: None,
-                    body,
-                }
-            }
+        .map(|(pattern, body)| MatchCase {
+            pattern,
+            guard: None,
+            body,
         })
         .labelled("except block")
         .boxed();
@@ -1118,13 +1095,13 @@ where
         .boxed();
 
     let raise_stmt = just(Token::Kw("raise"))
-        .ignore_then(nary_tuple.clone())
+        .ignore_then(nary_tuple.clone().or_not())
         .map(Stmt::Raise)
         .labelled("raise statement")
         .boxed();
 
     let inline_raise_stmt = just(Token::Kw("raise"))
-        .ignore_then(sexpr.clone())
+        .ignore_then(sexpr.clone().or_not())
         .map(Stmt::Raise)
         .labelled("inline raise statement")
         .boxed();

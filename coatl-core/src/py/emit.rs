@@ -595,7 +595,9 @@ impl SPyStmt<'_> {
             PyStmt::Raise(expr) => {
                 ctx.emit_indent();
                 ctx.emit("raise ");
-                expr.emit_to(ctx, LOW_PREC)?;
+                if let Some(expr) = expr {
+                    expr.emit_to(ctx, LOW_PREC)?;
+                }
                 ctx.emit_endl();
             }
             PyStmt::Assert(expr, msg) => {
