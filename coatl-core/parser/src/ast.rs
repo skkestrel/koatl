@@ -157,6 +157,13 @@ pub enum ExceptTypes<'src> {
 }
 
 #[derive(Debug, Clone)]
+pub struct MatchCase<'src> {
+    pub pattern: Option<SPattern<'src>>,
+    pub guard: Option<SExpr<'src>>,
+    pub body: SBlock<'src>,
+}
+
+#[derive(Debug, Clone)]
 pub enum Expr<'a> {
     Literal(SLiteral<'a>),
     Ident(SIdent<'a>),
@@ -174,7 +181,7 @@ pub enum Expr<'a> {
     Binary(BinaryOp, Box<SExpr<'a>>, Box<SExpr<'a>>),
 
     If(Box<SExpr<'a>>, Box<SBlock<'a>>, Option<Box<SBlock<'a>>>),
-    Match(Box<SExpr<'a>>, Vec<(Option<SExpr<'a>>, SBlock<'a>)>),
+    Match(Box<SExpr<'a>>, Vec<MatchCase<'a>>),
     Class(Vec<SCallItem<'a>>, Box<SBlock<'a>>),
 
     Call(Box<SExpr<'a>>, Vec<SCallItem<'a>>),
@@ -198,3 +205,35 @@ pub enum Expr<'a> {
 }
 
 pub type SExpr<'a> = Spanned<Expr<'a>>;
+
+#[derive(Debug, Clone)]
+pub enum PatternSequenceItem<'a> {
+    Item(SPattern<'a>),
+    Spread(Option<SIdent<'a>>),
+}
+
+#[derive(Debug, Clone)]
+pub enum PatternMappingItem<'a> {
+    Item(SIdent<'a>, SPattern<'a>),
+    Spread(Option<SIdent<'a>>),
+}
+
+#[derive(Debug, Clone)]
+pub enum PatternClassItem<'a> {
+    Item(SPattern<'a>),
+    Kw(SIdent<'a>, SPattern<'a>),
+}
+
+#[derive(Debug, Clone)]
+pub enum Pattern<'a> {
+    Capture(Option<SIdent<'a>>),
+    Value(SExpr<'a>),
+    As(Box<SPattern<'a>>, SIdent<'a>),
+    Or(Vec<SPattern<'a>>),
+    Literal(SLiteral<'a>),
+    Sequence(Vec<PatternSequenceItem<'a>>),
+    Mapping(Vec<PatternMappingItem<'a>>),
+    Class(SExpr<'a>, Vec<PatternClassItem<'a>>),
+}
+
+pub type SPattern<'a> = Spanned<Pattern<'a>>;

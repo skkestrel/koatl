@@ -154,6 +154,96 @@ impl PyUnaryOp {
     }
 }
 
+impl SPyPattern<'_> {
+    pub fn emit_to(&mut self, ctx: &mut EmitCtx) -> TfResult<()> {
+        let span_start = ctx.source.len();
+
+        match &mut self.value {
+            PyPattern::As(pattern, ident) => {
+                if let Some(pattern) = pattern {
+                    pattern.emit_to(ctx)?;
+                } else {
+                    ctx.emit("_");
+                }
+                if let Some(ident) = ident {
+                    ctx.emit(" as ");
+                    ctx.emit(ident);
+                }
+            }
+            PyPattern::Or(patterns) => {
+                ctx.emit("(");
+                for (i, item) in patterns.iter_mut().enumerate() {
+                    if i > 0 {
+                        ctx.emit(" | ");
+                    }
+                    item.emit_to(ctx)?;
+                }
+                ctx.emit(")");
+            }
+            PyPattern::Sequence(items) => {
+                ctx.emit("[");
+                for (i, item) in items.iter_mut().enumerate() {
+                    if i > 0 {
+                        ctx.emit(", ");
+                    }
+                    match item {
+                        PyPatternSequenceItem::Item(pat) => {
+                            pat.emit_to(ctx)?;
+                        }
+                        PyPatternSequenceItem::Spread(ident) => {
+                            ctx.emit("*");
+                            ctx.emit(ident.as_ref().map(|x| x.as_ref()).unwrap_or("_"));
+                        }
+                    }
+                }
+                ctx.emit("]");
+            }
+            PyPattern::Mapping(items, spread) => {
+                ctx.emit("{");
+                for (key, value) in items {
+                    ctx.emit(key);
+                    ctx.emit(": ");
+                    value.emit_to(ctx)?;
+                    ctx.emit(", ");
+                }
+                if let Some(spread) = spread {
+                    ctx.emit(spread);
+                }
+                ctx.emit("}");
+            }
+            PyPattern::Singleton(literal) => {
+                literal.emit_to(ctx, 0.)?;
+            }
+            PyPattern::Value(v) => v.emit_to(ctx, 0.)?,
+            PyPattern::Class(cls, items, kws) => {
+                // never emit parens
+                cls.emit_to(ctx, LOW_PREC)?;
+                ctx.emit("(");
+                for item in items {
+                    item.emit_to(ctx)?;
+                    ctx.emit(", ");
+                }
+                for (key, value) in kws {
+                    ctx.emit(key);
+                    ctx.emit("=");
+                    value.emit_to(ctx)?;
+                }
+                ctx.emit(")");
+            }
+        };
+
+        let span_end = ctx.source.len();
+
+        self.py_span = Some(Span {
+            context: (),
+            start: span_start,
+            end: span_end,
+        });
+
+        Ok(())
+    }
+}
+
 impl PyBinaryOp {
     pub fn precedence(&self) -> f32 {
         match self {
@@ -193,6 +283,35 @@ impl PyBinaryOp {
             PyBinaryOp::And => "and",
             PyBinaryOp::Or => "or",
         });
+    }
+}
+
+impl PyLiteral<'_> {
+    pub fn emit_to(&mut self, ctx: &mut EmitCtx, prec: f32) -> TfResult<()> {
+        match self {
+            PyLiteral::Num(num) => {
+                if prec > 15. {
+                    ctx.emit("(");
+                    ctx.emit(&num.to_string());
+                    ctx.emit(")");
+                } else {
+                    ctx.emit(&num.to_string());
+                }
+            }
+            PyLiteral::Str(s) => {
+                ctx.emit("\"");
+                ctx.emit_escaped_str(s);
+                ctx.emit("\"");
+            }
+            PyLiteral::Bool(b) => {
+                ctx.emit(if *b { "True" } else { "False" });
+            }
+            PyLiteral::None => {
+                ctx.emit("None");
+            }
+        };
+
+        Ok(())
     }
 }
 
@@ -343,23 +462,7 @@ impl SPyExpr<'_> {
                 ctx.emit("yield from ");
                 expr.emit_to(ctx, LOW_PREC)?;
             }
-            PyExpr::Literal(literal) => match literal {
-                PyLiteral::Num(num) => {
-                    set_prec(15.); // lower than attribute
-                    ctx.emit(&num.to_string());
-                }
-                PyLiteral::Str(s) => {
-                    ctx.emit("\"");
-                    ctx.emit_escaped_str(s);
-                    ctx.emit("\"");
-                }
-                PyLiteral::Bool(b) => {
-                    ctx.emit(if *b { "True" } else { "False" });
-                }
-                PyLiteral::None => {
-                    ctx.emit("None");
-                }
-            },
+            PyExpr::Literal(literal) => literal.emit_to(ctx, parent_precendence)?,
             PyExpr::Fstr(fstr_parts) => {
                 ctx.emit("f\"");
                 for part in fstr_parts.iter_mut() {
@@ -681,7 +784,11 @@ impl SPyStmt<'_> {
                 for case in py_match_cases {
                     ctx.emit_indent();
                     ctx.emit("case ");
-                    case.pattern.emit_to(ctx, LOW_PREC)?;
+                    case.pattern.emit_to(ctx)?;
+                    if case.guard.is_some() {
+                        ctx.emit(" if ");
+                        case.guard.as_mut().unwrap().emit_to(ctx, LOW_PREC)?;
+                    }
                     ctx.emit(":");
                     ctx.emit_endl();
                     case.body.emit_to(ctx, 1)?;

@@ -3,7 +3,7 @@ use coatl_core::{linecol::LineColCache, parser::ast::*, py::ast::*};
 use pyo3::{
     call::PyCallArgs,
     prelude::*,
-    types::{PyDict, PyList},
+    types::{PyBool, PyDict, PyList, PyNone},
 };
 
 #[derive(Debug)]
@@ -162,6 +162,89 @@ impl<'src> PyDecoratorsExt<'src> for PyDecorators<'src> {
         }
 
         Ok(PyList::new(ctx.py, decorators)?.unbind().into_any())
+    }
+}
+
+trait PyPatternExt<'src> {
+    fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject>;
+}
+
+impl<'src> PyPatternExt<'src> for SPyPattern<'src> {
+    fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject> {
+        Ok(match &self.value {
+            PyPattern::As(pattern, ident) => {
+                let pattern_ast = pattern.as_ref().map(|x| x.emit_py(ctx)).transpose()?;
+
+                ctx.ast_node("MatchAs", (pattern_ast, ident.as_ref()), &self.tl_span)?
+            }
+            PyPattern::Value(value) => {
+                ctx.ast_node("MatchValue", (value.emit_py(ctx)?,), &self.tl_span)?
+            }
+            PyPattern::Singleton(value) => {
+                let arg = match &value {
+                    PyLiteral::Bool(b) => PyBool::new(ctx.py, *b).as_any().clone().unbind(),
+                    PyLiteral::None => PyNone::get(ctx.py).as_any().clone().unbind(),
+                    _ => {
+                        return Err(PyTlErr {
+                            message: format!("Unsupported singleton literal: {:?}", value),
+                            py_err: None,
+                            span: Some(self.tl_span),
+                        });
+                    }
+                };
+
+                ctx.ast_node("MatchSingleton", (arg,), &self.tl_span)?
+            }
+            PyPattern::Class(cls, items, kws) => {
+                let mut items_ast = Vec::new();
+                for item in items {
+                    items_ast.push(item.emit_py(ctx)?);
+                }
+                let mut keys = vec![];
+                let mut values = vec![];
+                for (key, value) in kws {
+                    keys.push(key);
+                    values.push(value.emit_py(ctx)?);
+                }
+                ctx.ast_node(
+                    "MatchClass",
+                    (cls.emit_py(&ctx)?, items_ast, keys, values),
+                    &self.tl_span,
+                )?
+            }
+            PyPattern::Sequence(items) => {
+                let mut items_ast = Vec::new();
+                for item in items {
+                    match item {
+                        PyPatternSequenceItem::Item(item) => {
+                            items_ast.push(item.emit_py(ctx)?);
+                        }
+                        PyPatternSequenceItem::Spread(name) => {
+                            items_ast.push(ctx.ast_node("MatchStar", (name,), &self.tl_span)?);
+                        }
+                    }
+                }
+                ctx.ast_node("MatchSequence", (items_ast,), &self.tl_span)?
+            }
+            PyPattern::Mapping(items, rest) => {
+                let mut keys = vec![];
+                let mut values = vec![];
+
+                for (key, value) in items {
+                    keys.push(key);
+                    values.push(value.emit_py(ctx)?);
+                }
+
+                ctx.ast_node("MatchMapping", (keys, values, rest), &self.tl_span)?
+            }
+            PyPattern::Or(patterns) => {
+                let mut patterns_ast = Vec::new();
+                for pattern in patterns {
+                    patterns_ast.push(pattern.emit_py(ctx)?);
+                }
+                ctx.ast_node("MatchOr", (patterns_ast,), &self.tl_span)?
+            }
+        })
     }
 }
 
@@ -366,6 +449,33 @@ impl PyNameCtxExt for PyAccessCtx {
     }
 }
 
+trait PyLiteralExt<'src> {
+    fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>, span: &Span) -> PyTlResult<PyObject>;
+}
+
+impl<'src> PyLiteralExt<'src> for PyLiteral<'src> {
+    fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>, span: &Span) -> PyTlResult<PyObject> {
+        Ok(match self {
+            PyLiteral::Num(num) => match num.parse::<i128>() {
+                Ok(i) => ctx.ast_node("Constant", (i,), span)?,
+                Err(_) => match num.parse::<f64>() {
+                    Ok(f) => ctx.ast_node("Constant", (f,), span)?,
+                    Err(_) => {
+                        return Err(PyTlErr {
+                            message: format!("Invalid number literal: {}", num),
+                            py_err: None,
+                            span: Some(*span),
+                        })
+                    }
+                },
+            },
+            PyLiteral::Bool(b) => ctx.ast_node("Constant", (b,), span)?,
+            PyLiteral::Str(s) => ctx.ast_node("Constant", (s,), span)?,
+            PyLiteral::None => ctx.ast_node("Constant", (ctx.py.None(),), span)?,
+        })
+    }
+}
+
 trait PyExprExt<'src> {
     fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject>;
 }
@@ -373,24 +483,7 @@ trait PyExprExt<'src> {
 impl<'src> PyExprExt<'src> for SPyExpr<'src> {
     fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject> {
         Ok(match &self.value {
-            PyExpr::Literal(lit) => match lit {
-                PyLiteral::Num(num) => match num.parse::<i128>() {
-                    Ok(i) => ctx.ast_node("Constant", (i,), &self.tl_span)?,
-                    Err(_) => match num.parse::<f64>() {
-                        Ok(f) => ctx.ast_node("Constant", (f,), &self.tl_span)?,
-                        Err(_) => {
-                            return Err(PyTlErr {
-                                message: format!("Invalid number literal: {}", num),
-                                py_err: None,
-                                span: Some(self.tl_span),
-                            })
-                        }
-                    },
-                },
-                PyLiteral::Bool(b) => ctx.ast_node("Constant", (b,), &self.tl_span)?,
-                PyLiteral::Str(s) => ctx.ast_node("Constant", (s,), &self.tl_span)?,
-                PyLiteral::None => ctx.ast_node("Constant", (ctx.py.None(),), &self.tl_span)?,
-            },
+            PyExpr::Literal(lit) => lit.emit_py(ctx, &self.tl_span)?,
             PyExpr::Ident(ident, c) => {
                 ctx.ast_node("Name", (ident, c.emit_py(ctx)?), &self.tl_span)?
             }

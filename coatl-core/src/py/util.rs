@@ -369,10 +369,15 @@ impl PyAstBuilder {
     // Utility builders for match cases
     pub fn match_case<'src>(
         &self,
-        pattern: SPyExpr<'src>,
+        pattern: SPyPattern<'src>,
+        guard: Option<SPyExpr<'src>>,
         body: PyBlock<'src>,
     ) -> PyMatchCase<'src> {
-        PyMatchCase { pattern, body }
+        PyMatchCase {
+            pattern,
+            guard,
+            body,
+        }
     }
 
     // Convenience methods for common operations

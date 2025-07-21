@@ -123,11 +123,7 @@ impl AstBuilder {
         )
     }
 
-    pub fn match_<'src>(
-        &self,
-        subject: SExpr<'src>,
-        cases: Vec<(Option<SExpr<'src>>, SBlock<'src>)>,
-    ) -> SExpr<'src> {
+    pub fn match_<'src>(&self, subject: SExpr<'src>, cases: Vec<MatchCase<'src>>) -> SExpr<'src> {
         (Expr::Match(Box::new(subject), cases), self.span)
     }
 

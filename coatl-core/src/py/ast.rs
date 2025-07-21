@@ -26,7 +26,8 @@ pub struct PyExceptHandler<'a> {
 
 #[derive(Debug, Clone)]
 pub struct PyMatchCase<'a> {
-    pub pattern: SPyExpr<'a>,
+    pub guard: Option<SPyExpr<'a>>,
+    pub pattern: SPyPattern<'a>,
     pub body: PyBlock<'a>,
 }
 
@@ -250,3 +251,26 @@ pub enum PyLiteral<'a> {
     Bool(bool),
     None,
 }
+
+#[derive(Debug, Clone)]
+pub enum PyPatternSequenceItem<'a> {
+    Item(SPyPattern<'a>),
+    Spread(Option<PyIdent<'a>>),
+}
+
+#[derive(Debug, Clone)]
+pub enum PyPattern<'a> {
+    Value(SPyExpr<'a>),
+    Singleton(PyLiteral<'a>),
+    As(Option<Box<SPyPattern<'a>>>, Option<PyIdent<'a>>),
+    Or(Vec<SPyPattern<'a>>),
+    Sequence(Vec<PyPatternSequenceItem<'a>>),
+    Mapping(Vec<(PyIdent<'a>, SPyPattern<'a>)>, Option<PyIdent<'a>>),
+    Class(
+        SPyExpr<'a>,
+        Vec<SPyPattern<'a>>,
+        Vec<(PyIdent<'a>, SPyPattern<'a>)>,
+    ),
+}
+
+pub type SPyPattern<'a> = PySpanned<PyPattern<'a>>;

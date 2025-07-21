@@ -32,4 +32,8 @@ def __set_exports(package_name, globals_dict, exports, module_star_exports):
 def __coalesces(x):
     return x is None or isinstance(x, BaseException)
 
-__all__ = ["__coalesces", "__set_exports"]
+def __match_proxy(v):
+    from types import SimpleNamespace
+    return SimpleNamespace(value=v)
+
+__all__ = ["__coalesces", "__set_exports", "__match_proxy"]

@@ -44,7 +44,6 @@ where
             .labelled("inline enumeration"),
     ))
     .labelled("enumeration")
-    .as_context()
     .boxed()
 }
 
@@ -83,13 +82,154 @@ where
 const START_BLOCK: Token = Token::Symbol(":");
 type TExtra<'tokens, 'src> = extra::Err<Rich<'tokens, Token<'src>, Span>>;
 
-pub fn just_symbol<'tokens, 'src: 'tokens, I>(
+pub fn symbol<'tokens, 'src: 'tokens, I>(
     symbol: &'static str,
 ) -> impl Parser<'tokens, I, Token<'src>, TExtra<'tokens, 'src>> + Clone
 where
     I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
 {
     just(Token::Symbol(symbol))
+}
+
+pub fn match_pattern<'tokens, 'src: 'tokens, TInput, PIdent, PQualIdent, PLiteral>(
+    ident: PIdent,
+    qualified_ident: PQualIdent,
+    literal: PLiteral,
+) -> impl Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone
+where
+    TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
+    PIdent: Parser<'tokens, TInput, SIdent<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PQualIdent: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PLiteral: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+{
+    let mut pattern = Recursive::declare();
+
+    let literal_pattern = literal.map(Pattern::Value).spanned().boxed();
+
+    let capture = ident
+        .clone()
+        .map(|x| if x.0 == "_" { None } else { Some(x) })
+        .boxed();
+
+    let capture_pattern = capture.clone().map(Pattern::Capture).spanned().boxed();
+
+    let value_pattern = symbol(".")
+        .or_not()
+        .ignore_then(qualified_ident.clone())
+        .map(Pattern::Value)
+        .spanned()
+        .boxed();
+
+    let group_pattern = pattern
+        .clone()
+        .delimited_by_with_eol(symbol("("), symbol(")"))
+        .boxed();
+
+    let sequence_item = choice((
+        symbol("*")
+            .ignore_then(capture.clone())
+            .map(PatternSequenceItem::Spread),
+        pattern.clone().map(PatternSequenceItem::Item),
+    ))
+    .boxed();
+
+    let sequence_pattern = sequence_item
+        .separated_by(symbol(",").then(just(Token::Eol).or_not()))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .map(Pattern::Sequence)
+        .delimited_by_with_eol(symbol("["), symbol("]"))
+        .spanned()
+        .boxed();
+
+    let mapping_item = choice((
+        symbol("**")
+            .ignore_then(capture.clone())
+            .map(PatternMappingItem::Spread),
+        ident
+            .clone()
+            .then_ignore(symbol(":"))
+            .then(pattern.clone())
+            .map(|(key, value)| PatternMappingItem::Item(key, value)),
+    ));
+
+    let mapping_pattern = mapping_item
+        .separated_by(symbol(",").then(just(Token::Eol).or_not()))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .map(Pattern::Mapping)
+        .delimited_by_with_eol(symbol("["), symbol("]"))
+        .spanned()
+        .boxed();
+
+    let class_item = choice((
+        ident
+            .clone()
+            .then_ignore(symbol("="))
+            .then(pattern.clone())
+            .map(|(key, value)| PatternClassItem::Kw(key, value)),
+        pattern.clone().map(PatternClassItem::Item),
+    ))
+    .boxed();
+
+    let class_pattern = qualified_ident
+        .clone()
+        .then(
+            class_item
+                .separated_by(symbol(","))
+                .allow_trailing()
+                .collect::<Vec<_>>()
+                .delimited_by_with_eol(symbol("("), symbol(")")),
+        )
+        .map(|(a, b)| Pattern::Class(a, b))
+        .spanned()
+        .boxed();
+
+    let closed_pattern = choice((
+        literal_pattern,
+        capture_pattern,
+        group_pattern,
+        sequence_pattern,
+        mapping_pattern,
+        class_pattern,
+    ))
+    .boxed();
+
+    let or_pattern = closed_pattern
+        .clone()
+        .separated_by(symbol("|").then(just(Token::Eol).or_not()))
+        .allow_leading()
+        .collect::<Vec<_>>()
+        .map_with(|x, e| {
+            if x.len() == 1 {
+                x.into_iter().next().unwrap()
+            } else {
+                (Pattern::Or(x), e.span())
+            }
+        });
+
+    let as_pattern = or_pattern
+        .then(symbol("as").ignore_then(ident.clone()).or_not())
+        .map_with(|(pattern, as_ident), e| {
+            if let Some(as_ident) = as_ident {
+                (Pattern::As(Box::new(pattern), as_ident), e.span())
+            } else {
+                pattern
+            }
+        })
+        .boxed();
+
+    pattern.define(
+        choice((
+            as_pattern,
+            value_pattern,
+            closed_pattern,
+            symbol("_").to(Pattern::Capture(None)).spanned(),
+        ))
+        .labelled("pattern"),
+    );
+
+    pattern.labelled("pattern").as_context()
 }
 
 pub fn function<'tokens, 'src: 'tokens, TInput, PL, PR, PIdent, PExpr>(
@@ -106,7 +246,7 @@ where
     PExpr: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
 {
     recursive(|fn_| {
-        let fn_body = just_symbol("=>")
+        let fn_body = symbol("=>")
             .ignore_then(choice((
                 block_or_inline_stmt.clone(),
                 fn_.clone().map(|x| Block::Expr(x)).spanned().boxed(),
@@ -131,24 +271,24 @@ where
 
         let arg_list = enumeration(
             choice((
-                just_symbol("*")
+                symbol("*")
                     .ignore_then(ident.clone())
                     .map(|x| ArgDefItem::ArgSpread(x)),
-                just_symbol("**")
+                symbol("**")
                     .ignore_then(ident.clone())
                     .map(ArgDefItem::KwargSpread),
                 expr.clone()
-                    .then(just_symbol("=").ignore_then(expr.clone()).or_not())
+                    .then(symbol("=").ignore_then(expr.clone()).or_not())
                     .map(|(key, value)| ArgDefItem::Arg(key, value)),
             )),
-            just_symbol(","),
+            symbol(","),
         )
         .labelled("argument-def-list")
         .boxed();
 
         let nary_fn = arg_list
             .clone()
-            .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
+            .delimited_by_with_eol(symbol("("), symbol(")"))
             .then(fn_body)
             .map(|(args, body)| Expr::Fn(args, Box::new(body)))
             .spanned()
@@ -165,12 +305,10 @@ pub fn parser<'tokens, 'src: 'tokens, TInput>()
 where
     TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
 {
-    let mut stmt = chumsky::recursive::Recursive::declare();
-    let mut inline_stmt = chumsky::recursive::Recursive::declare();
-    let mut atom = chumsky::recursive::Recursive::declare();
-    let mut postfix = chumsky::recursive::Recursive::declare();
-    let mut unary = chumsky::recursive::Recursive::declare();
-    let mut sexpr = chumsky::recursive::Recursive::declare();
+    let mut stmt = Recursive::declare();
+    let mut inline_stmt = Recursive::declare();
+    let mut atom = Recursive::declare();
+    let mut sexpr = Recursive::declare();
 
     let stmts = stmt
         .clone()
@@ -183,7 +321,7 @@ where
 
     let block = stmts
         .clone()
-        .delimited_by(just_symbol("BEGIN_BLOCK"), just_symbol("END_BLOCK"))
+        .delimited_by(symbol("BEGIN_BLOCK"), symbol("END_BLOCK"))
         .boxed();
 
     let block_or_expr = choice((block.clone(), sexpr.clone().map(Block::Expr).spanned())).boxed();
@@ -205,10 +343,14 @@ where
         Token::None => Literal::None
     }
     .spanned()
-    .map(Expr::Literal)
-    .labelled("literal")
-    .spanned()
     .boxed();
+
+    let literal_expr = literal
+        .clone()
+        .map(Expr::Literal)
+        .labelled("literal")
+        .spanned()
+        .boxed();
 
     let ident = select! {
         Token::Ident(s) => s,
@@ -232,15 +374,13 @@ where
     .boxed();
 
     let list_item = choice((
-        just_symbol("*")
-            .ignore_then(unary.clone())
-            .map(ListItem::Spread),
+        symbol("*").ignore_then(sexpr.clone()).map(ListItem::Spread),
         sexpr.clone().map(ListItem::Item),
     ))
     .boxed();
 
-    let list = enumeration(list_item.clone(), just_symbol(","))
-        .delimited_by_with_eol(just_symbol("["), just_symbol("]"))
+    let list = enumeration(list_item.clone(), symbol(","))
+        .delimited_by_with_eol(symbol("["), symbol("]"))
         .map(Expr::List)
         .labelled("list")
         .as_context()
@@ -249,11 +389,11 @@ where
 
     let nary_tuple = group((
         list_item.clone(),
-        just_symbol(",")
+        symbol(",")
             .ignore_then(list_item)
             .repeated()
             .collect::<Vec<_>>(),
-        just_symbol(",").to(1).or_not(),
+        symbol(",").to(1).or_not(),
     ))
     .try_map_with(
         |(first, rest, last_comma), e| -> Result<SExpr, Rich<'tokens, Token<'src>, Span>> {
@@ -288,8 +428,8 @@ where
 
     let mapping = enumeration(
         choice((
-            just_symbol("**")
-                .ignore_then(unary.clone())
+            symbol("**")
+                .ignore_then(sexpr.clone())
                 .map(MappingItem::Spread),
             sexpr
                 .clone()
@@ -297,7 +437,7 @@ where
                 .then(sexpr.clone())
                 .map(|(key, value)| MappingItem::Item(key, value)),
         )),
-        just_symbol(","),
+        symbol(","),
     )
     .delimited_by_with_eol(just(Token::Symbol("[")), just(Token::Symbol("]")))
     .map(Expr::Mapping)
@@ -346,14 +486,14 @@ where
                 choice((
                     ident
                         .clone()
-                        .then_ignore(just_symbol("="))
+                        .then_ignore(symbol("="))
                         .then(sexpr.clone())
                         .map(|(key, value)| CallItem::Kwarg(key, value)),
                     sexpr.clone().map(CallItem::Arg),
                 ))
                 .spanned()
                 .boxed(),
-                just_symbol(","),
+                symbol(","),
             )
             .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")))
             .or_not(),
@@ -395,32 +535,29 @@ where
             classic_if,
             class_,
             block_expr,
-            literal,
+            literal_expr.clone(),
             placeholder,
             list.clone(),
             mapping,
             fstr,
-            just_symbol("(")
-                .then(just_symbol(")"))
+            symbol("(")
+                .then(symbol(")"))
                 .map(|_| Expr::Tuple(vec![]))
                 .spanned(),
             nary_tuple
                 .clone()
                 .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
         ))
-        .labelled("atom")
-        .boxed(),
+        .labelled("atom"),
     );
 
     let qualified_ident = ident_expr
         .clone()
         .foldl_with(
-            just_symbol(".").ignore_then(ident.clone()).repeated(),
+            symbol(".").ignore_then(ident.clone()).repeated(),
             |lhs, rhs, e| (Expr::Attribute(Box::new(lhs), rhs), e.span()),
         )
         .boxed();
-
-    let match_pattern = choice(());
 
     enum Postfix<'a> {
         Call(Vec<SCallItem<'a>>),
@@ -432,22 +569,22 @@ where
 
     let call_args = enumeration(
         choice((
-            just_symbol("*")
-                .ignore_then(unary.clone())
+            symbol("*")
+                .ignore_then(sexpr.clone())
                 .map(CallItem::ArgSpread),
-            just_symbol("**")
-                .ignore_then(unary.clone())
+            symbol("**")
+                .ignore_then(sexpr.clone())
                 .map(CallItem::KwargSpread),
             ident
                 .clone()
-                .then_ignore(just_symbol("="))
+                .then_ignore(symbol("="))
                 .then(sexpr.clone())
                 .map(|(key, value)| CallItem::Kwarg(key, value)),
             sexpr.clone().map(CallItem::Arg),
         ))
         .spanned()
         .boxed(),
-        just_symbol(","),
+        symbol(","),
     )
     .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")")));
 
@@ -460,13 +597,11 @@ where
 
     let subscript = enumeration(
         choice((
-            just_symbol("*")
-                .ignore_then(sexpr.clone())
-                .map(ListItem::Spread),
+            symbol("*").ignore_then(sexpr.clone()).map(ListItem::Spread),
             sexpr.clone().map(ListItem::Item),
         ))
         .boxed(),
-        just_symbol(","),
+        symbol(","),
     )
     .delimited_by_with_eol(just(Token::Symbol("[")), just(Token::Symbol("]")))
     .map(Postfix::Subscript)
@@ -474,104 +609,95 @@ where
     .as_context()
     .boxed();
 
-    let attribute = just_symbol(".")
+    let attribute = symbol(".")
         .ignore_then(ident.clone())
         .map(Postfix::Attribute)
         .labelled("attr");
 
-    let then = just_symbol(".")
+    let then = symbol(".")
         .ignore_then(
             sexpr
                 .clone()
-                .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
+                .delimited_by_with_eol(symbol("("), symbol(")"))
                 .map(Postfix::Then),
         )
         .labelled("attr")
         .boxed();
 
-    let extension = just_symbol("!")
+    let extension = symbol("!")
         .ignore_then(ident_expr.clone())
         .map(Postfix::Extension)
         .labelled("extension")
         .boxed();
 
-    let expr_extension = just_symbol("!")
+    let expr_extension = symbol("!")
         .ignore_then(
             sexpr
                 .clone()
-                .delimited_by_with_eol(just_symbol("("), just_symbol(")")),
+                .delimited_by_with_eol(symbol("("), symbol(")")),
         )
         .map(Postfix::Extension)
         .labelled("extension")
         .boxed();
 
-    postfix.define(
-        atom.clone()
-            .foldl_with(
-                just_symbol("?")
-                    .to(1)
-                    .or_not()
-                    .then(choice((
-                        call,
-                        subscript,
-                        attribute,
-                        then,
-                        extension,
-                        expr_extension,
-                    )))
-                    .repeated(),
-                |expr, (coal, op), e| -> SExpr {
-                    (
-                        if coal.is_none() {
-                            match op {
-                                Postfix::Call(args) => Expr::Call(Box::new(expr), args),
-                                Postfix::Subscript(args) => Expr::Subscript(Box::new(expr), args),
-                                Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
-                                Postfix::Then(rhs) => Expr::Then(Box::new(expr), Box::new(rhs)),
-                                Postfix::Extension(rhs) => {
-                                    Expr::Extension(Box::new(expr), Box::new(rhs))
-                                }
+    let postfix = atom
+        .clone()
+        .foldl_with(
+            symbol("?")
+                .to(1)
+                .or_not()
+                .then(choice((
+                    call,
+                    subscript,
+                    attribute,
+                    then,
+                    extension,
+                    expr_extension,
+                )))
+                .repeated(),
+            |expr, (coal, op), e| -> SExpr {
+                (
+                    if coal.is_none() {
+                        match op {
+                            Postfix::Call(args) => Expr::Call(Box::new(expr), args),
+                            Postfix::Subscript(args) => Expr::Subscript(Box::new(expr), args),
+                            Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
+                            Postfix::Then(rhs) => Expr::Then(Box::new(expr), Box::new(rhs)),
+                            Postfix::Extension(rhs) => {
+                                Expr::Extension(Box::new(expr), Box::new(rhs))
                             }
-                        } else {
-                            match op {
-                                Postfix::Call(args) => Expr::MappedCall(Box::new(expr), args),
-                                Postfix::Subscript(args) => {
-                                    Expr::MappedSubscript(Box::new(expr), args)
-                                }
-                                Postfix::Attribute(attr) => {
-                                    Expr::MappedAttribute(Box::new(expr), attr)
-                                }
-                                Postfix::Then(rhs) => {
-                                    Expr::MappedThen(Box::new(expr), Box::new(rhs))
-                                }
-                                Postfix::Extension(rhs) => {
-                                    Expr::MappedExtension(Box::new(expr), Box::new(rhs))
-                                }
+                        }
+                    } else {
+                        match op {
+                            Postfix::Call(args) => Expr::MappedCall(Box::new(expr), args),
+                            Postfix::Subscript(args) => Expr::MappedSubscript(Box::new(expr), args),
+                            Postfix::Attribute(attr) => Expr::MappedAttribute(Box::new(expr), attr),
+                            Postfix::Then(rhs) => Expr::MappedThen(Box::new(expr), Box::new(rhs)),
+                            Postfix::Extension(rhs) => {
+                                Expr::MappedExtension(Box::new(expr), Box::new(rhs))
                             }
-                        },
-                        e.span(),
-                    )
-                },
-            )
-            .labelled("postfix")
-            .boxed(),
-    );
+                        }
+                    },
+                    e.span(),
+                )
+            },
+        )
+        .labelled("postfix")
+        .boxed();
 
-    unary.define(
-        select! {
-            Token::Symbol("@") => UnaryOp::Yield,
-            Token::Symbol("@@") => UnaryOp::YieldFrom,
-            Token::Symbol("+") => UnaryOp::Pos,
-            Token::Symbol("-") => UnaryOp::Neg,
-            Token::Symbol("~") => UnaryOp::Inv,
-        }
-        .repeated()
-        .foldr_with(postfix, |op: UnaryOp, rhs: SExpr, e| {
-            (Expr::Unary(op, Box::new(rhs)), e.span())
-        })
-        .labelled("unary")
-        .boxed(),
-    );
+    let unary = select! {
+        Token::Symbol("@") => UnaryOp::Yield,
+        Token::Symbol("@@") => UnaryOp::YieldFrom,
+        Token::Symbol("+") => UnaryOp::Pos,
+        Token::Symbol("-") => UnaryOp::Neg,
+        Token::Symbol("~") => UnaryOp::Inv,
+    }
+    .repeated()
+    .foldr_with(postfix, |op: UnaryOp, rhs: SExpr, e| {
+        (Expr::Unary(op, Box::new(rhs)), e.span())
+    })
+    .labelled("unary")
+    .boxed();
 
     fn make_binary_op<'tokens, 'src: 'tokens, I, POp, PArg>(
         arg: PArg,
@@ -661,8 +787,8 @@ where
 
     let except_types = choice((
         qualified_ident.clone().map(ExceptTypes::Single),
-        enumeration(qualified_ident.clone(), just_symbol(","))
-            .delimited_by(just_symbol("["), just_symbol("]"))
+        enumeration(qualified_ident.clone(), symbol(","))
+            .delimited_by(symbol("["), symbol("]"))
             .map(ExceptTypes::Multiple),
     ))
     .boxed();
@@ -689,12 +815,8 @@ where
 
     let slice0 = group((
         binary4.clone(),
-        just_symbol("..")
-            .ignore_then(binary4.clone().or_not())
-            .or_not(),
-        just_symbol("..")
-            .ignore_then(binary4.clone().or_not())
-            .or_not(),
+        symbol("..").ignore_then(binary4.clone().or_not()).or_not(),
+        symbol("..").ignore_then(binary4.clone().or_not()).or_not(),
     ))
     .map_with(|(lhs, a, b), e| {
         if a.is_none() && b.is_none() {
@@ -713,13 +835,9 @@ where
     .labelled("slice")
     .boxed();
 
-    let slice1 = just_symbol("..")
+    let slice1 = symbol("..")
         .ignore_then(binary4.clone().or_not())
-        .then(
-            just_symbol("..")
-                .ignore_then(binary4.clone().or_not())
-                .or_not(),
-        )
+        .then(symbol("..").ignore_then(binary4.clone().or_not()).or_not())
         .map(|(e1, e2)| Expr::Slice(None, e1.map(Box::new), e2.flatten().map(Box::new)))
         .spanned()
         .labelled("slice")
@@ -727,14 +845,28 @@ where
 
     let slices = choice((slice0, slice1));
 
-    let case_ = sexpr
-        .clone()
-        .then_ignore(just(START_BLOCK))
-        .or_not()
-        .then(block_or_inline_stmt.clone())
-        .map(|(pattern, body)| (pattern, body))
-        .labelled("match-case")
-        .boxed();
+    let case_ = choice((
+        group((
+            match_pattern(ident.clone(), qualified_ident, literal_expr).or_not(),
+            just(Token::Kw("if")).ignore_then(sexpr.clone()).or_not(),
+            just(START_BLOCK).ignore_then(block_or_inline_stmt.clone()),
+        ))
+        .map(|(pattern, guard, body)| MatchCase {
+            pattern,
+            guard,
+            body,
+        }),
+        just(START_BLOCK)
+            .or_not()
+            .ignore_then(block_or_inline_stmt.clone())
+            .map(|x| MatchCase {
+                pattern: None,
+                guard: None,
+                body: x,
+            }),
+    ))
+    .labelled("match-case")
+    .boxed();
 
     let match_ = slices
         .then(
@@ -801,7 +933,7 @@ where
         .collect()
         .boxed(),
         nary_tuple.clone(),
-        just_symbol("=").ignore_then(nary_tuple.clone()).or_not(),
+        symbol("=").ignore_then(nary_tuple.clone()).or_not(),
     ))
     .map(|(modifiers, lhs, rhs)| {
         if let Some(rhs) = rhs {
@@ -822,7 +954,7 @@ where
         .collect()
         .boxed(),
         sexpr.clone(),
-        just_symbol("=").ignore_then(sexpr.clone()).or_not(),
+        symbol("=").ignore_then(sexpr.clone()).or_not(),
     ))
     .map(|(modifiers, lhs, rhs)| {
         if let Some(rhs) = rhs {
@@ -912,7 +1044,7 @@ where
 
     let assert_stmt = just(Token::Kw("assert"))
         .ignore_then(sexpr.clone())
-        .then(just_symbol(",").ignore_then(sexpr.clone()).or_not())
+        .then(symbol(",").ignore_then(sexpr.clone()).or_not())
         .map(|(x, y)| Stmt::Assert(x, y))
         .labelled("assert statement")
         .boxed();
@@ -944,10 +1076,10 @@ where
         .or_not()
         .then_ignore(just(Token::Kw("import")))
         .then(group((
-            just_symbol(".").repeated().count(),
+            symbol(".").repeated().count(),
             ident
                 .clone()
-                .then_ignore(just_symbol("."))
+                .then_ignore(symbol("."))
                 .repeated()
                 .collect()
                 .boxed(),
@@ -956,9 +1088,9 @@ where
                     ident
                         .clone()
                         .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not()),
-                    just_symbol(","),
+                    symbol(","),
                 )
-                .delimited_by_with_eol(just_symbol("("), just_symbol(")"))
+                .delimited_by_with_eol(symbol("("), symbol(")"))
                 .map(ImportList::Leaves)
                 .boxed(),
                 just(Token::Symbol("*")).map(|_| ImportList::Star),
