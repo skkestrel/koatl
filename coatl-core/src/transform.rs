@@ -1103,6 +1103,9 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
         &'ast self,
         ctx: &mut TfCtx<'src>,
     ) -> TfResult<WithPre<'src, SPyPattern<'src>>> {
+        // TODO avoid python syntaxerror by verifying that all branches in Or bind the same name
+        // also check for no patterns after default pattern
+
         let mut pre = PyBlock::new();
         let mut attach = |v| bind_pre(&mut pre, v);
 

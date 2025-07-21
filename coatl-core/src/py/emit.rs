@@ -176,7 +176,9 @@ impl SPyPattern<'_> {
                     if i > 0 {
                         ctx.emit(" | ");
                     }
+                    ctx.emit("(");
                     item.emit_to(ctx)?;
+                    ctx.emit(")");
                 }
                 ctx.emit(")");
             }
