@@ -1134,15 +1134,11 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                         let var = ctx.temp_var_name("mproxy", span.start);
                         let a = PyAstBuilder::new(*span);
                         pre.push(a.assign(
-                            a.ident(var.clone(), PyAccessCtx::Load),
+                            a.ident(var.clone(), PyAccessCtx::Store),
                             a.call(a.load_ident("__match_proxy"), vec![a.call_arg(v_node)]),
                         ));
 
-                        PyPattern::Value(a.attribute(
-                            a.load_ident(var),
-                            "__match_proxy",
-                            PyAccessCtx::Load,
-                        ))
+                        PyPattern::Value(a.attribute(a.load_ident(var), "value", PyAccessCtx::Load))
                     }
                 }
             }
@@ -1316,7 +1312,9 @@ fn transform_match_expr<'src, 'ast>(
         };
 
         if let PyPattern::As(None, _) = pattern.value {
-            has_default_case = true;
+            if case.guard.is_none() {
+                has_default_case = true;
+            }
         }
 
         let py_block = case.body.transform_with_final_expr(ctx)?;

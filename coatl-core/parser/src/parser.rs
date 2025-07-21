@@ -106,17 +106,28 @@ where
 
     let literal_pattern = literal.map(Pattern::Value).spanned().boxed();
 
-    let capture = ident
-        .clone()
-        .map(|x| if x.0 == "_" { None } else { Some(x) })
-        .boxed();
-
-    let capture_pattern = capture.clone().map(Pattern::Capture).spanned().boxed();
+    fn to_wildcard<'src>(id: SIdent<'src>) -> Option<SIdent<'src>> {
+        if id.0 == "_" { None } else { Some(id) }
+    }
 
     let value_pattern = symbol(".")
+        .to(1)
         .or_not()
-        .ignore_then(qualified_ident.clone())
-        .map(Pattern::Value)
+        .then(qualified_ident.clone())
+        .try_map(|(q, value), _e| {
+            Ok(if let Expr::Attribute(..) = value.0 {
+                Pattern::Value(value)
+            } else if q.is_some() {
+                Pattern::Value(value)
+            } else if let Expr::Ident(id) = value.0 {
+                Pattern::Capture(to_wildcard(id))
+            } else {
+                return Err(Rich::custom(
+                    value.1,
+                    "Internal error: value pattern must be an identifier or attribute",
+                ));
+            })
+        })
         .spanned()
         .boxed();
 
@@ -127,8 +138,8 @@ where
 
     let sequence_item = choice((
         symbol("*")
-            .ignore_then(capture.clone())
-            .map(PatternSequenceItem::Spread),
+            .ignore_then(ident.clone())
+            .map(|x| PatternSequenceItem::Spread(to_wildcard(x))),
         pattern.clone().map(PatternSequenceItem::Item),
     ))
     .boxed();
@@ -144,8 +155,8 @@ where
 
     let mapping_item = choice((
         symbol("**")
-            .ignore_then(capture.clone())
-            .map(PatternMappingItem::Spread),
+            .ignore_then(ident.clone())
+            .map(|x| PatternMappingItem::Spread(to_wildcard(x))),
         ident
             .clone()
             .then_ignore(symbol(":"))
@@ -187,7 +198,7 @@ where
 
     let closed_pattern = choice((
         literal_pattern,
-        capture_pattern,
+        value_pattern.clone(),
         group_pattern,
         sequence_pattern,
         mapping_pattern,
@@ -198,6 +209,7 @@ where
     let or_pattern = closed_pattern
         .clone()
         .separated_by(symbol("|").then(just(Token::Eol).or_not()))
+        .at_least(1)
         .allow_leading()
         .collect::<Vec<_>>()
         .map_with(|x, e| {
@@ -592,7 +604,6 @@ where
         .clone()
         .map(Postfix::Call)
         .labelled("argument-list")
-        .as_context()
         .boxed();
 
     let subscript = enumeration(
@@ -606,7 +617,6 @@ where
     .delimited_by_with_eol(just(Token::Symbol("[")), just(Token::Symbol("]")))
     .map(Postfix::Subscript)
     .labelled("subscript")
-    .as_context()
     .boxed();
 
     let attribute = symbol(".")
@@ -857,7 +867,6 @@ where
             body,
         }),
         just(START_BLOCK)
-            .or_not()
             .ignore_then(block_or_inline_stmt.clone())
             .map(|x| MatchCase {
                 pattern: None,
@@ -866,6 +875,7 @@ where
             }),
     ))
     .labelled("match-case")
+    .as_context()
     .boxed();
 
     let match_ = slices

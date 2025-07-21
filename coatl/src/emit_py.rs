@@ -272,8 +272,9 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                     .iter()
                     .map(|case| {
                         let pattern_ast = case.pattern.emit_py(ctx)?;
+                        let guard_ast = case.guard.as_ref().map(|x| x.emit_py(ctx)).transpose()?;
                         let body_ast = case.body.emit_py(ctx)?;
-                        ctx.ast_cls("match_case", (pattern_ast, ctx.py.None(), body_ast))
+                        ctx.ast_cls("match_case", (pattern_ast, guard_ast, body_ast))
                     })
                     .collect();
                 ctx.ast_node("Match", (subject_ast, cases_ast?), &self.tl_span)
