@@ -36,4 +36,9 @@ def __match_proxy(v):
     from types import SimpleNamespace
     return SimpleNamespace(value=v)
 
-__all__ = ["__coalesces", "__set_exports", "__match_proxy"]
+class MatchError(Exception):
+    """Raised when a match fails."""
+    def __init__(self, message):
+        super().__init__(message)
+
+__all__ = ["__coalesces", "__set_exports", "__match_proxy", "MatchError"]

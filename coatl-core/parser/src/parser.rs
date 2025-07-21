@@ -6,6 +6,38 @@ use crate::ast::*;
 use crate::lexer::*;
 use chumsky::{extra::ParserExtra, input::ValueInput, prelude::*};
 
+pub trait ParserExt<'tokens, 'src: 'tokens, I, O, E>: Parser<'tokens, I, O, E>
+where
+    I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
+    E: ParserExtra<'tokens, I>,
+{
+    fn spanned(self) -> impl Parser<'tokens, I, Spanned<O>, E> + Clone + Sized
+    where
+        Self: Sized + Clone,
+    {
+        self.map_with(|x, e| (x, e.span()))
+    }
+
+    fn delimited_by_with_eol(
+        self,
+        start: impl Parser<'tokens, I, Token<'src>, E> + Clone,
+        end: impl Parser<'tokens, I, Token<'src>, E> + Clone,
+    ) -> impl Parser<'tokens, I, O, E> + Clone
+    where
+        Self: Sized + Clone,
+    {
+        self.delimited_by(start, just(Token::Eol).or_not().then(end))
+    }
+}
+
+impl<'tokens, 'src: 'tokens, I, O, E, P> ParserExt<'tokens, 'src, I, O, E> for P
+where
+    P: Parser<'tokens, I, O, E> + Sized,
+    I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
+    E: ParserExtra<'tokens, I>,
+{
+}
+
 fn enumeration<'tokens, 'src: 'tokens, I, O: 'tokens, OS: 'tokens, E, ItemParser, SepParser>(
     item_parser: ItemParser,
     optional_separator: SepParser,
@@ -47,38 +79,6 @@ where
     .boxed()
 }
 
-pub trait ParserExt<'tokens, 'src: 'tokens, I, O, E>: Parser<'tokens, I, O, E>
-where
-    I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
-    E: ParserExtra<'tokens, I>,
-{
-    fn spanned(self) -> impl Parser<'tokens, I, Spanned<O>, E> + Clone + Sized
-    where
-        Self: Sized + Clone,
-    {
-        self.map_with(|x, e| (x, e.span()))
-    }
-
-    fn delimited_by_with_eol(
-        self,
-        start: impl Parser<'tokens, I, Token<'src>, E> + Clone,
-        end: impl Parser<'tokens, I, Token<'src>, E> + Clone,
-    ) -> impl Parser<'tokens, I, O, E> + Clone
-    where
-        Self: Sized + Clone,
-    {
-        self.delimited_by(start, just(Token::Eol).or_not().then(end))
-    }
-}
-
-impl<'tokens, 'src: 'tokens, I, O, E, P> ParserExt<'tokens, 'src, I, O, E> for P
-where
-    P: Parser<'tokens, I, O, E> + Sized,
-    I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
-    E: ParserExtra<'tokens, I>,
-{
-}
-
 const START_BLOCK: Token = Token::Symbol(":");
 type TExtra<'tokens, 'src> = extra::Err<Rich<'tokens, Token<'src>, Span>>;
 
@@ -91,15 +91,20 @@ where
     just(Token::Symbol(symbol))
 }
 
-pub fn match_pattern<'tokens, 'src: 'tokens, TInput, PIdent, PQualIdent, PLiteral>(
+pub fn match_pattern<'tokens, 'src: 'tokens, TInput, PIdent, PQualIdent, PExpr, PLiteral>(
     ident: PIdent,
     qualified_ident: PQualIdent,
+    sexpr: PExpr,
     literal: PLiteral,
-) -> impl Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone
+) -> (
+    impl Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone,
+    impl Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone,
+)
 where
     TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
     PIdent: Parser<'tokens, TInput, SIdent<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PQualIdent: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PExpr: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PLiteral: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
 {
     let mut pattern = Recursive::declare();
@@ -144,30 +149,42 @@ where
     ))
     .boxed();
 
-    let sequence_pattern = sequence_item
-        .separated_by(symbol(",").then(just(Token::Eol).or_not()))
-        .allow_trailing()
-        .collect::<Vec<_>>()
+    let sequence_pattern = enumeration(sequence_item.clone(), symbol(","))
         .map(Pattern::Sequence)
         .delimited_by_with_eol(symbol("["), symbol("]"))
         .spanned()
+        .boxed();
+
+    let nary_sequence_pattern = sequence_item
+        .separated_by(symbol(","))
+        .collect::<Vec<_>>()
+        .then(symbol(",").to(0).or_not())
+        .map_with(|(items, last_comma), e| {
+            if items.len() == 1 && last_comma.is_none() {
+                let item = items.into_iter().next().unwrap();
+                if let PatternSequenceItem::Item(inner) = item {
+                    inner
+                } else {
+                    (Pattern::Sequence(vec![item]), e.span())
+                }
+            } else {
+                (Pattern::Sequence(items), e.span())
+            }
+        })
         .boxed();
 
     let mapping_item = choice((
         symbol("**")
             .ignore_then(ident.clone())
             .map(|x| PatternMappingItem::Spread(to_wildcard(x))),
-        ident
+        sexpr
             .clone()
             .then_ignore(symbol(":"))
             .then(pattern.clone())
             .map(|(key, value)| PatternMappingItem::Item(key, value)),
     ));
 
-    let mapping_pattern = mapping_item
-        .separated_by(symbol(",").then(just(Token::Eol).or_not()))
-        .allow_trailing()
-        .collect::<Vec<_>>()
+    let mapping_pattern = enumeration(mapping_item, symbol(","))
         .map(Pattern::Mapping)
         .delimited_by_with_eol(symbol("["), symbol("]"))
         .spanned()
@@ -235,27 +252,30 @@ where
         choice((
             as_pattern,
             value_pattern,
-            closed_pattern,
+            closed_pattern.clone(),
             symbol("_").to(Pattern::Capture(None)).spanned(),
         ))
         .labelled("pattern"),
     );
 
-    pattern.labelled("pattern").as_context()
+    (
+        closed_pattern.labelled("pattern").as_context(),
+        nary_sequence_pattern.labelled("pattern").as_context(),
+    )
 }
 
-pub fn function<'tokens, 'src: 'tokens, TInput, PL, PR, PIdent, PExpr>(
-    monic_lhs: PL,
-    block_or_inline_stmt: PR,
+pub fn function<'tokens, 'src: 'tokens, TInput, PBody, PIdent, PExpr, PPattern>(
+    block_or_inline_stmt: PBody,
     ident: PIdent,
     expr: PExpr,
+    pattern: PPattern,
 ) -> impl Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone
 where
     TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
-    PL: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
-    PR: Parser<'tokens, TInput, SBlock<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PBody: Parser<'tokens, TInput, SBlock<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PIdent: Parser<'tokens, TInput, SIdent<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PExpr: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PPattern: Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
 {
     recursive(|fn_| {
         let fn_body = symbol("=>")
@@ -265,19 +285,11 @@ where
             )))
             .boxed();
 
-        let monic_fn = monic_lhs
+        let uni_fn = pattern
             .clone()
-            .then(fn_body.clone().or_not())
-            .map_with(|(x, body), e| {
-                if let Some(body) = body {
-                    (
-                        Expr::Fn(vec![ArgDefItem::Arg(x, None)], Box::new(body)),
-                        e.span(),
-                    )
-                } else {
-                    x
-                }
-            })
+            .then(fn_body.clone())
+            .map(|(x, body)| Expr::Fn(vec![ArgDefItem::Arg(x, None)], Box::new(body)))
+            .spanned()
             .labelled("unary-fn")
             .boxed();
 
@@ -289,7 +301,8 @@ where
                 symbol("**")
                     .ignore_then(ident.clone())
                     .map(ArgDefItem::KwargSpread),
-                expr.clone()
+                pattern
+                    .clone()
                     .then(symbol("=").ignore_then(expr.clone()).or_not())
                     .map(|(key, value)| ArgDefItem::Arg(key, value)),
             )),
@@ -298,7 +311,7 @@ where
         .labelled("argument-def-list")
         .boxed();
 
-        let nary_fn = arg_list
+        let multi_fn = arg_list
             .clone()
             .delimited_by_with_eol(symbol("("), symbol(")"))
             .then(fn_body)
@@ -308,7 +321,7 @@ where
             .as_context()
             .boxed();
 
-        choice((nary_fn, monic_fn)).labelled("fn")
+        choice((multi_fn, uni_fn)).labelled("fn")
     })
 }
 
@@ -650,6 +663,13 @@ where
         .labelled("extension")
         .boxed();
 
+    let (pattern, nary_pattern) = match_pattern(
+        ident.clone(),
+        qualified_ident.clone(),
+        sexpr.clone(),
+        literal_expr,
+    );
+
     let postfix = atom
         .clone()
         .foldl_with(
@@ -745,15 +765,8 @@ where
         }
     }
 
-    let fn_ = function(
-        unary.clone(),
-        block_or_inline_stmt.clone(),
-        ident.clone(),
-        sexpr.clone(),
-    );
-
     let binary0 = make_binary_op(
-        fn_.clone(),
+        unary.clone(),
         select! {
             Token::Symbol("**") => BinaryOp::Exp,
         },
@@ -804,7 +817,7 @@ where
     .boxed();
 
     let checked_ = just(Token::Kw("try"))
-        .ignore_then(binary2.clone())
+        .ignore_then(binary3.clone())
         .then(
             just(Token::Kw("except"))
                 .ignore_then(except_types.clone())
@@ -815,8 +828,15 @@ where
         .labelled("checked")
         .boxed();
 
+    let fn_ = function(
+        block_or_inline_stmt.clone(),
+        ident.clone(),
+        sexpr.clone(),
+        pattern.clone(),
+    );
+
     let binary4 = make_binary_op(
-        binary3.or(checked_),
+        choice((checked_, fn_, binary3.clone())),
         select! {
             Token::Symbol("??") => BinaryOp::Coalesce,
         },
@@ -855,34 +875,58 @@ where
 
     let slices = choice((slice0, slice1));
 
-    let case_ = choice((
-        group((
-            match_pattern(ident.clone(), qualified_ident, literal_expr).or_not(),
-            just(Token::Kw("if")).ignore_then(sexpr.clone()).or_not(),
-            just(START_BLOCK).ignore_then(block_or_inline_stmt.clone()),
-        ))
-        .map(|(pattern, guard, body)| MatchCase {
-            pattern,
-            guard,
-            body,
-        }),
-        just(START_BLOCK)
-            .ignore_then(block_or_inline_stmt.clone())
-            .map(|x| MatchCase {
-                pattern: None,
-                guard: None,
-                body: x,
-            }),
+    let case_ = choice((group((
+        pattern.clone(),
+        just(Token::Kw("if")).ignore_then(binary3.clone()).or_not(),
+        symbol("=>").ignore_then(block_or_inline_stmt.clone()),
     ))
+    .map(|(pattern, guard, body)| MatchCase {
+        pattern: Some(pattern),
+        guard,
+        body,
+    }),))
     .labelled("match-case")
     .as_context()
     .boxed();
 
+    let default_case = just(Token::Ident("default"))
+        .then(just(START_BLOCK).or_not())
+        .ignore_then(block_or_inline_stmt.clone())
+        .then_ignore(just(Token::Eol).or_not())
+        .map(|x| MatchCase {
+            pattern: None,
+            guard: None,
+            body: x,
+        })
+        .boxed();
+
+    let cases = choice((
+        case_
+            .clone()
+            .separated_by(just(Token::Eol))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .then(default_case.clone().or_not())
+            .delimited_by(
+                just(Token::Symbol("BEGIN_BLOCK")),
+                just(Token::Symbol("END_BLOCK")),
+            ),
+        case_
+            .separated_by(just(Token::Kw("else")))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .then(default_case.or_not()),
+    ))
+    .map(|(mut cases, default)| {
+        cases.extend(default.into_iter());
+        cases
+    });
+
     let match_ = slices
         .then(
-            just(Token::Kw("match"))
+            just(Token::Ident("match"))
                 .then(just(START_BLOCK).or_not())
-                .ignore_then(enumeration(case_, just(Token::Kw("else"))))
+                .ignore_then(cases)
                 .or_not(),
         )
         .map_with(|(scrutinee, cases), e| {
@@ -895,7 +939,21 @@ where
         .labelled("match")
         .boxed();
 
-    let if_ = match_
+    let matches = match_
+        .then(
+            just(Token::Ident("matches"))
+                .ignore_then(pattern.clone())
+                .or_not(),
+        )
+        .map_with(|(expr, pattern), e| {
+            if let Some(pattern) = pattern {
+                (Expr::Matches(Box::new(expr), Box::new(pattern)), e.span())
+            } else {
+                expr
+            }
+        });
+
+    let if_ = matches
         .then(
             group((
                 just(Token::Kw("then"))
@@ -1032,7 +1090,7 @@ where
 
     let for_stmt = just(Token::Kw("for"))
         .ignore_then(group((
-            nary_tuple.clone().then_ignore(just(Token::Kw("in"))),
+            nary_pattern.clone().then_ignore(just(Token::Kw("in"))),
             sexpr.clone().then_ignore(just(START_BLOCK)),
             block_or_inline_stmt.clone(),
         )))

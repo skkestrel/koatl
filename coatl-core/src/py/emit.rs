@@ -203,12 +203,13 @@ impl SPyPattern<'_> {
             PyPattern::Mapping(items, spread) => {
                 ctx.emit("{");
                 for (key, value) in items {
-                    ctx.emit(key);
+                    key.emit_to(ctx, LOW_PREC)?;
                     ctx.emit(": ");
                     value.emit_to(ctx)?;
                     ctx.emit(", ");
                 }
                 if let Some(spread) = spread {
+                    ctx.emit("**");
                     ctx.emit(spread);
                 }
                 ctx.emit("}");
@@ -472,9 +473,13 @@ impl SPyExpr<'_> {
                         PyFstrPart::Str(s) => {
                             ctx.emit_escaped_fstr(s);
                         }
-                        PyFstrPart::Expr(expr, _ident) => {
+                        PyFstrPart::Expr(expr, fmt) => {
                             ctx.emit("{");
                             expr.emit_sided_to(ctx, HIGH_PREC, true)?;
+                            if let Some(fmt) = fmt {
+                                ctx.emit(":");
+                                ctx.emit(fmt);
+                            }
                             ctx.emit("}");
                         }
                     }

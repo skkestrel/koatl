@@ -192,7 +192,7 @@ pub enum PyDictItem<'a> {
 #[derive(Debug, Clone)]
 pub enum PyFstrPart<'a> {
     Str(PyIdent<'a>),
-    Expr(SPyExpr<'a>, PyIdent<'a>),
+    Expr(SPyExpr<'a>, Option<PyIdent<'a>>),
 }
 
 #[derive(Debug, Clone)]
@@ -265,7 +265,7 @@ pub enum PyPattern<'a> {
     As(Option<Box<SPyPattern<'a>>>, Option<PyIdent<'a>>),
     Or(Vec<SPyPattern<'a>>),
     Sequence(Vec<PyPatternSequenceItem<'a>>),
-    Mapping(Vec<(PyIdent<'a>, SPyPattern<'a>)>, Option<PyIdent<'a>>),
+    Mapping(Vec<(SPyExpr<'a>, SPyPattern<'a>)>, Option<PyIdent<'a>>),
     Class(
         SPyExpr<'a>,
         Vec<SPyPattern<'a>>,

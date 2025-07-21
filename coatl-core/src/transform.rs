@@ -825,21 +825,23 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 Ok(stmts)
             }
             Stmt::For(target, iter, body) => {
-                let target: &SExpr<'src> = target;
                 let iter_node: SPyExprWithPre<'src> = iter.transform_with_placeholder_guard(ctx)?;
                 let aux_stmts = iter_node.pre;
 
                 let mut block = aux_stmts;
-
-                let destructure = destructure(ctx, target, true)?;
-
                 let mut body_block = PyBlock::new();
-                body_block.extend(destructure.post_stmts);
+
+                let (matcher, cursor) = create_throwing_matcher(ctx, target)?;
+                body_block.extend(matcher);
                 body_block.extend(body.transform_with_final_stmt(ctx)?);
 
                 block.push(
                     (
-                        PyStmt::For(destructure.assign_to, iter_node.value, body_block),
+                        PyStmt::For(
+                            (PyExpr::Ident(cursor, PyAccessCtx::Store), *span).into(),
+                            iter_node.value,
+                            body_block,
+                        ),
                         *span,
                     )
                         .into(),
@@ -1183,8 +1185,13 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                 for item in items {
                     match item {
                         PatternMappingItem::Item(key, value) => {
-                            let value_node = attach(value.transform(ctx)?);
-                            kvps.push((key.0.into(), value_node));
+                            let value_node = value.transform(ctx)?;
+                            pre.extend(value_node.pre);
+
+                            let key_node = key.transform(ctx)?;
+                            pre.extend(key_node.pre);
+
+                            kvps.push((key_node.value, value_node.value));
                         }
                         PatternMappingItem::Spread(value) => {
                             if spread.is_some() {
@@ -1232,6 +1239,74 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
             value: (transformed, *span).into(),
         })
     }
+}
+
+fn create_throwing_matcher<'src, 'ast>(
+    ctx: &mut TfCtx<'src>,
+    pattern: &'ast SPattern<'src>,
+) -> TfResult<(PyBlock<'src>, PyIdent<'src>)> {
+    // TODO need to do a more sophisticated check if pattern is a default pattern here
+
+    if let Pattern::Capture(Some(id)) = pattern.0 {
+        return Ok((PyBlock::new(), id.0.into()));
+    }
+
+    let cursor = ctx.temp_var_name("matcher", pattern.1.start);
+
+    let a = PyAstBuilder::new(pattern.1);
+    let success = PyBlock(vec![a.pass()]);
+    let fail = PyBlock(vec![a.raise(a.call(
+        a.load_ident("MatchError"),
+        vec![a.call_arg(a.fstr(vec![
+            a.fstr_str("failed to match value "),
+            a.fstr_expr(a.load_ident(cursor.clone()), None),
+            a.fstr_str(format!(
+                " to pattern {}",
+                &ctx.source[pattern.1.start..pattern.1.end]
+            )),
+        ]))],
+    ))]);
+
+    Ok((
+        create_matcher(ctx, a.load_ident(cursor.clone()), pattern, success, fail)?,
+        cursor.clone().into(),
+    ))
+}
+
+fn create_matcher<'src, 'ast>(
+    ctx: &mut TfCtx<'src>,
+    subject: SPyExpr<'src>,
+    pattern: &'ast SPattern<'src>,
+    on_success: PyBlock<'src>,
+    on_fail: PyBlock<'src>,
+) -> TfResult<PyBlock<'src>> {
+    // TODO need to do a more sophisticated check if pattern is a default pattern here
+
+    if let Pattern::Capture(Some(_)) = pattern.0 {
+        return Ok(on_success);
+    }
+
+    let a = PyAstBuilder::new(pattern.1);
+    let pattern_node = pattern.transform(ctx)?;
+    let mut post = PyBlock::new();
+
+    post.push(a.match_(
+        subject,
+        vec![
+            PyMatchCase {
+                pattern: pattern_node.value,
+                guard: None,
+                body: on_success,
+            },
+            PyMatchCase {
+                pattern: (PyPattern::As(None, None), pattern.1).into(),
+                guard: None,
+                body: on_fail,
+            },
+        ],
+    ));
+
+    Ok(post)
 }
 
 fn transform_match_stmt<'src, 'ast>(
@@ -1439,20 +1514,9 @@ fn make_arglist<'src, 'ast>(
                             None
                         };
 
-                        let des = destructure(ctx, &arg, true)?;
-                        post.extend(des.post_stmts);
-
-                        let assign_name = match des.assign_to.value {
-                            PyExpr::Ident(ident, _) => ident,
-                            _ => {
-                                return Err(TfErrBuilder::default()
-                                    .message("Internal error: Destructuring assignment target must be an identifier")
-                                    .span(arg.1)
-                                    .build_errs());
-                            }
-                        };
-
-                        PyArgDefItem::Arg(assign_name, default)
+                        let (matcher, cursor) = create_throwing_matcher(ctx, arg)?;
+                        post.extend(matcher);
+                        PyArgDefItem::Arg(cursor, default)
                     }
                     ArgDefItem::ArgSpread(name) => PyArgDefItem::ArgSpread(name.0.into()),
                     ArgDefItem::KwargSpread(name) => PyArgDefItem::KwargSpread(name.0.into()),
@@ -2148,6 +2212,35 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 })
             }
             Expr::Match(subject, cases) => transform_match_expr(ctx, subject, cases, span),
+            Expr::Matches(subject, pattern) => {
+                let mut block = PyBlock::new();
+                let subject_t = subject.transform(ctx)?;
+                block.extend(subject_t.pre);
+
+                let a = PyAstBuilder::new(*span);
+                let var = ctx.temp_var_name("matches", span.start);
+
+                let matcher = create_matcher(
+                    ctx,
+                    subject_t.value,
+                    pattern,
+                    PyBlock(vec![a.assign(
+                        a.ident(var.clone(), PyAccessCtx::Store),
+                        a.literal(PyLiteral::Bool(true)),
+                    )]),
+                    PyBlock(vec![a.assign(
+                        a.ident(var.clone(), PyAccessCtx::Store),
+                        a.literal(PyLiteral::Bool(false)),
+                    )]),
+                )?;
+
+                block.extend(matcher);
+
+                Ok(SPyExprWithPre {
+                    value: a.load_ident(var.clone()),
+                    pre: block,
+                })
+            }
             Expr::Binary(op, lhs, rhs) => {
                 let (lhs, rhs) = match op {
                     BinaryOp::Pipe => {
@@ -2368,7 +2461,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                                 .build_errs());
                         };
 
-                        nodes.push(PyFstrPart::Expr(expr_node, "".into()));
+                        nodes.push(PyFstrPart::Expr(expr_node, None));
                         nodes.push(PyFstrPart::Str(str_part.0.clone().into()));
                     }
 

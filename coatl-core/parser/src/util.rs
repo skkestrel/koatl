@@ -46,7 +46,7 @@ impl AstBuilder {
 
     pub fn for_<'src>(
         &self,
-        target: SExpr<'src>,
+        target: SPattern<'src>,
         iter: SExpr<'src>,
         body: SBlock<'src>,
     ) -> SStmt<'src> {
@@ -225,11 +225,11 @@ impl AstBuilder {
     }
 
     // Argument item builders
-    pub fn arg<'src>(&self, arg: SExpr<'src>) -> SArgItem<'src> {
+    pub fn arg<'src>(&self, arg: SPattern<'src>) -> SArgItem<'src> {
         (ArgDefItem::Arg(arg, None), self.span)
     }
 
-    pub fn default_arg<'src>(&self, arg: SExpr<'src>, default: SExpr<'src>) -> SArgItem<'src> {
+    pub fn default_arg<'src>(&self, arg: SPattern<'src>, default: SExpr<'src>) -> SArgItem<'src> {
         (ArgDefItem::Arg(arg, Some(default)), self.span)
     }
 

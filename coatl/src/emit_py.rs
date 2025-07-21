@@ -231,7 +231,7 @@ impl<'src> PyPatternExt<'src> for SPyPattern<'src> {
                 let mut values = vec![];
 
                 for (key, value) in items {
-                    keys.push(key);
+                    keys.push(key.emit_py(ctx)?);
                     values.push(value.emit_py(ctx)?);
                 }
 

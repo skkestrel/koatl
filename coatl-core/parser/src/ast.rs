@@ -81,7 +81,7 @@ pub enum Stmt<'a> {
 
     Return(SExpr<'a>),
     While(SExpr<'a>, SBlock<'a>),
-    For(SExpr<'a>, SExpr<'a>, SBlock<'a>),
+    For(SPattern<'a>, SExpr<'a>, SBlock<'a>),
     Import(ImportStmt<'a>),
     Try(SBlock<'a>, Vec<ExceptHandler<'a>>, Option<SBlock<'a>>),
     Assert(SExpr<'a>, Option<SExpr<'a>>),
@@ -135,7 +135,7 @@ pub type SCallItem<'a> = Spanned<CallItem<'a>>;
 
 #[derive(Debug, Clone)]
 pub enum ArgDefItem<'a> {
-    Arg(SExpr<'a>, Option<SExpr<'a>>),
+    Arg(SPattern<'a>, Option<SExpr<'a>>),
     ArgSpread(SIdent<'a>),
     KwargSpread(SIdent<'a>),
 }
@@ -182,6 +182,7 @@ pub enum Expr<'a> {
 
     If(Box<SExpr<'a>>, Box<SBlock<'a>>, Option<Box<SBlock<'a>>>),
     Match(Box<SExpr<'a>>, Vec<MatchCase<'a>>),
+    Matches(Box<SExpr<'a>>, Box<SPattern<'a>>),
     Class(Vec<SCallItem<'a>>, Box<SBlock<'a>>),
 
     Call(Box<SExpr<'a>>, Vec<SCallItem<'a>>),
@@ -214,7 +215,7 @@ pub enum PatternSequenceItem<'a> {
 
 #[derive(Debug, Clone)]
 pub enum PatternMappingItem<'a> {
-    Item(SIdent<'a>, SPattern<'a>),
+    Item(SExpr<'a>, SPattern<'a>),
     Spread(Option<SIdent<'a>>),
 }
 
