@@ -63,23 +63,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "coatl"
-version = "0.1.2"
-dependencies = [
- "ariadne",
- "coatl-core",
- "pyo3",
-]
-
-[[package]]
-name = "coatl-core"
-version = "0.1.0"
-dependencies = [
- "ariadne",
- "parser",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -113,6 +96,23 @@ name = "indoc"
 version = "2.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f4c7245a08504955605670dbf141fceab975f15ca21570696aebe9d2e71576bd"
+
+[[package]]
+name = "koatl"
+version = "0.1.2"
+dependencies = [
+ "ariadne",
+ "koatl-core",
+ "pyo3",
+]
+
+[[package]]
+name = "koatl-core"
+version = "0.1.0"
+dependencies = [
+ "ariadne",
+ "parser",
+]
 
 [[package]]
 name = "libc"

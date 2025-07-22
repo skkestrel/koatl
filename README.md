@@ -3,24 +3,24 @@
 https://github.com/pyenv/pyenv-installer
 
 ```
-cd coatl
+cd koatl
 pyenv virtualenv pyo3
 pyenv local pyo3
 pip install -r requirements.txt
 
-maturin develop -m ./Coatl.toml
-# maturin build --release -m coatl/Cargo.toml
+maturin develop -m ./Koatl.toml
+# maturin build --release -m koatl/Cargo.toml
 
 pytest
-coatl ../sample/sunset_timer.tl
+koatl ../sample/sunset_timer.tl
 ```
 
 # Installing the kernel
 
 ```
-cd coatl-kernel
+cd koatl-kernel
 pip install .
-coatl
+koatl
 ```
 
 # Building cli tool
@@ -28,5 +28,5 @@ coatl
 ```
 cargo test
 cargo build
-target/debug/coatl trans sample/hello_world.tl
+target/debug/koatl trans sample/hello_world.tl
 ```

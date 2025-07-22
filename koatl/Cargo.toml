@@ -1,0 +1,13 @@
+[package]
+name = "koatl"
+version = "0.1.2"
+edition = "2021"
+
+[lib]
+name = "koatl"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = "0.25.0"
+ariadne = "0.5.1"
+koatl-core = { path = "../koatl-core" }

@@ -1,1 +1,1 @@
-quetzal is a language provider for coatl.
+quetzal is a language provider for koatl.

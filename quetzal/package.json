@@ -1,15 +1,15 @@
 {
 	"name": "quetzal",
-	"displayName": "coatl-quetzal",
-	"description": "Quetzal Language Server",
+	"displayName": "quetzal-koatl",
+	"description": "Koatl Language Support",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/skkestrel/coatl"
+		"url": "https://github.com/skkestrel/koatl"
 	},
 	"version": "0.0.1",
-	"publisher": "coatl",
+	"publisher": "koatl",
 	"engines": {
-		"vscode": "^1.102.0"
+		"vscode": "^1.90.0"
 	},
 	"categories": [
 		"Programming Languages"
@@ -17,9 +17,9 @@
 	"contributes": {
 		"languages": [
 			{
-				"id": "coatl",
+				"id": "koatl",
 				"aliases": [
-					"coatl",
+					"koatl",
 					"tl"
 				],
 				"extensions": [
@@ -30,8 +30,8 @@
 		],
 		"grammars": [
 			{
-				"language": "coatl",
-				"scopeName": "source.coatl",
+				"language": "koatl",
+				"scopeName": "source.koatl",
 				"path": "./syntaxes/tl.tmLanguage.json"
 			}
 		]

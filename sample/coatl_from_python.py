@@ -1,3 +1,3 @@
-from coatl.runtime import *
+from koatl.runtime import *
 
 import sample.hello_world

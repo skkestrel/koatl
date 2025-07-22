@@ -1,0 +1,53 @@
+[build-system]
+requires = [
+    "hatchling>=1.10.0", "ipykernel"
+]
+build-backend = "hatchling.build"
+
+[project]
+name = "koatl-kernel"
+dynamic = [
+    "version",
+]
+description = "Koatl kernel for Jupyter"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Kevin", email = "skkestrel@gmail.com" },
+]
+classifiers = [
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "ipykernel",
+    "jupyter_client",
+    "koatl"
+]
+
+[project.optional-dependencies]
+test = [
+  "jupyter_kernel_test",
+]
+
+[project.urls]
+Homepage = "https://github.com/skkestrel/koatl"
+
+[tool.hatch.version]
+path = "koatl_kernel/__init__.py"
+
+# Used to call hatch_build.py
+[tool.hatch.build.hooks.custom]
+
+[tool.hatch.build.targets.wheel]
+packages = ["/koatl_kernel"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/koatl_kernel",
+]
+
+[tool.hatch.build.targets.wheel.shared-data]
+"data_kernelspec/share" = "share"
