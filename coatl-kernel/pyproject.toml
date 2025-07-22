@@ -5,7 +5,7 @@ requires = [
 build-backend = "hatchling.build"
 
 [project]
-name = "coatl-kernel"
+name = "pycoatl-kernel"
 dynamic = [
     "version",
 ]
@@ -24,7 +24,7 @@ requires-python = ">=3.8"
 dependencies = [
     "ipykernel",
     "jupyter_client",
-    "coatl"
+    "pycoatl"
 ]
 
 [project.optional-dependencies]
@@ -41,6 +41,8 @@ path = "coatl_kernel/__init__.py"
 # Used to call hatch_build.py
 [tool.hatch.build.hooks.custom]
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/pycoatl_kernel"]
 
 [tool.hatch.build.targets.sdist]
 include = [

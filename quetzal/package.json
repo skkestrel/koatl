@@ -1,7 +1,11 @@
 {
 	"name": "quetzal",
-	"displayName": "quetzal",
+	"displayName": "coatl-quetzal",
 	"description": "Quetzal Language Server",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/skkestrel/coatl"
+	},
 	"version": "0.0.1",
 	"publisher": "coatl",
 	"engines": {
