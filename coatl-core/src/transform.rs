@@ -119,7 +119,12 @@ impl<'src> SBlockExt<'src> for SBlock<'src> {
         ctx: &mut TfCtx<'src>,
     ) -> TfResult<PyBlock<'src>> {
         let mut t = self.transform(ctx)?;
-        t.pre.push((PyStmt::Expr(t.value), self.1).into());
+        match t.value.value {
+            PyExpr::Literal(..) | PyExpr::Ident(..) => {}
+            _ => {
+                t.pre.push((PyStmt::Expr(t.value), self.1).into());
+            }
+        }
         Ok(t.pre)
     }
 
@@ -684,6 +689,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
         top_level: bool,
     ) -> TfResult<PyBlock<'src>> {
         let (stmt, span) = self;
+        let a = PyAstBuilder::new(*span);
 
         match &stmt {
             Stmt::Expr(expr) => {
@@ -763,17 +769,17 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 body_block.extend(matcher);
                 body_block.extend(body.transform_with_final_stmt(ctx)?);
 
-                block.push(
-                    (
-                        PyStmt::For(
-                            (PyExpr::Ident(cursor, PyAccessCtx::Store), *span).into(),
-                            iter_node.value,
-                            body_block,
-                        ),
-                        *span,
-                    )
-                        .into(),
-                );
+                block.push(a.for_(
+                    a.ident(cursor.clone(), PyAccessCtx::Store),
+                    a.call(
+                        a.load_ident("__vtable_lookup"),
+                        vec![
+                            a.call_arg(iter_node.value),
+                            a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
+                        ],
+                    ),
+                    body_block,
+                ));
 
                 Ok(block)
             }
@@ -869,8 +875,6 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                         }
                     }
                 }
-
-                let a = PyAstBuilder::new(*span);
 
                 let py_import: SPyStmt = if !import_stmt.trunk.is_empty() {
                     a.import_from(Some(base_module.into()), aliases, import_stmt.level)
@@ -1267,7 +1271,7 @@ fn make_class_def<'src, 'ast>(
     let mut stmts = PyBlock::new();
     let mut bases_nodes: Vec<PyCallItem<'src>> = vec![];
 
-    let block = body.transform_with_final_stmt(ctx)?;
+    let mut block = body.transform_with_final_stmt(ctx)?;
 
     for base in bases {
         let call_item: PyCallItem<'src> = match &base.0 {
@@ -1290,6 +1294,10 @@ fn make_class_def<'src, 'ast>(
         };
 
         bases_nodes.push(call_item);
+    }
+
+    if block.is_empty() {
+        block.push((PyStmt::Pass, *span).into());
     }
 
     stmts.push(
@@ -1696,28 +1704,20 @@ fn transform_postfix_expr<'src, 'ast>(
                 aux.extend(rhs_node.pre);
                 guard_if_expr(a.call(rhs_node.value, vec![PyCallItem::Arg(lhs.clone())]))
             }
-            Expr::Extension(_, rhs) => {
-                let rhs_node = rhs.transform_with_placeholder_guard(ctx)?;
-                aux.extend(rhs_node.pre);
-                let lambda_args = vec![a.arg_def_spread("args"), a.kwarg_def_spread("kwargs")];
-                let call_args = vec![
+            Expr::Extension(_, rhs) => a.call(
+                a.load_ident("__vtable_lookup"),
+                vec![
                     a.call_arg(lhs),
-                    a.call_arg_spread(a.load_ident("args")),
-                    a.call_kwarg_spread(a.load_ident("kwargs")),
-                ];
-                a.lambda(lambda_args, a.call(rhs_node.value, call_args))
-            }
-            Expr::MappedExtension(_, rhs) => {
-                let rhs_node = rhs.transform_with_placeholder_guard(ctx)?;
-                aux.extend(rhs_node.pre);
-                let lambda_args = vec![a.arg_def_spread("args"), a.kwarg_def_spread("kwargs")];
-                let call_args = vec![
+                    a.call_arg(a.literal(PyLiteral::Str(rhs.0.clone()))),
+                ],
+            ),
+            Expr::MappedExtension(_, rhs) => guard_if_expr(a.call(
+                a.load_ident("__vtable_lookup"),
+                vec![
                     a.call_arg(lhs.clone()),
-                    a.call_arg_spread(a.load_ident("args")),
-                    a.call_kwarg_spread(a.load_ident("kwargs")),
-                ];
-                guard_if_expr(a.lambda(lambda_args, a.call(rhs_node.value, call_args)))
-            }
+                    a.call_arg(a.literal(PyLiteral::Str(rhs.0.clone()))),
+                ],
+            )),
             _ => {
                 return Err(TfErrBuilder::default()
                 .message("Internal error: Postfix expressions can only be attributes, subscripts, calls, or extensions")

@@ -18,9 +18,3 @@ assert_eq(a(1)(2)(3), 3)
 
 a = x => x
 assert_eq(a.__name__, "a")
-
-# Extensions
-a = (x, y) => x + y
-
-assert_eq(1!a(2), 3)
-assert_eq(1!($)(), 1)

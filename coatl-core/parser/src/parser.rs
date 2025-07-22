@@ -109,7 +109,7 @@ where
 {
     let mut pattern = Recursive::declare();
 
-    let literal_pattern = literal.map(Pattern::Value).spanned().boxed();
+    let literal_pattern = literal.clone().map(Pattern::Value).spanned().boxed();
 
     fn to_wildcard<'src>(id: SIdent<'src>) -> Option<SIdent<'src>> {
         if id.0 == "_" { None } else { Some(id) }
@@ -178,11 +178,19 @@ where
         symbol("**")
             .ignore_then(ident.clone())
             .map(|x| PatternMappingItem::Spread(to_wildcard(x))),
-        sexpr
-            .clone()
-            .then_ignore(symbol(":"))
-            .then(pattern.clone())
-            .map(|(key, value)| PatternMappingItem::Item(key, value)),
+        choice((
+            ident
+                .clone()
+                .map(|(s, span)| Expr::Literal((Literal::Str(s), span)))
+                .spanned(),
+            literal.clone(),
+            sexpr
+                .clone()
+                .delimited_by_with_eol(symbol("("), symbol(")")),
+        ))
+        .then_ignore(symbol(":"))
+        .then(pattern.clone())
+        .map(|(key, value)| PatternMappingItem::Item(key, value)),
     ));
 
     let mapping_pattern = enumeration(mapping_item, symbol(","))
@@ -457,11 +465,19 @@ where
             symbol("**")
                 .ignore_then(sexpr.clone())
                 .map(MappingItem::Spread),
-            sexpr
-                .clone()
-                .then_ignore(just(START_BLOCK))
-                .then(sexpr.clone())
-                .map(|(key, value)| MappingItem::Item(key, value)),
+            choice((
+                ident
+                    .clone()
+                    .map(|(s, span)| Expr::Literal((Literal::Str(s), span)))
+                    .spanned(),
+                literal_expr.clone(),
+                sexpr
+                    .clone()
+                    .delimited_by_with_eol(symbol("("), symbol(")")),
+            ))
+            .then_ignore(symbol(":"))
+            .then(sexpr.clone())
+            .map(|(key, value)| MappingItem::Item(key, value)),
         )),
         symbol(","),
     )
@@ -588,7 +604,7 @@ where
     enum Postfix<'a> {
         Call(Vec<SCallItem<'a>>),
         Subscript(Vec<ListItem<'a>>),
-        Extension(SExpr<'a>),
+        Extension(SIdent<'a>),
         Then(SExpr<'a>),
         Attribute(SIdent<'a>),
     }
@@ -649,17 +665,7 @@ where
         .boxed();
 
     let extension = symbol("!")
-        .ignore_then(ident_expr.clone())
-        .map(Postfix::Extension)
-        .labelled("extension")
-        .boxed();
-
-    let expr_extension = symbol("!")
-        .ignore_then(
-            sexpr
-                .clone()
-                .delimited_by_with_eol(symbol("("), symbol(")")),
-        )
+        .ignore_then(ident.clone())
         .map(Postfix::Extension)
         .labelled("extension")
         .boxed();
@@ -668,7 +674,7 @@ where
         ident.clone(),
         qualified_ident.clone(),
         sexpr.clone(),
-        literal_expr,
+        literal_expr.clone(),
     );
 
     let postfix = atom
@@ -677,14 +683,7 @@ where
             symbol("?")
                 .to(1)
                 .or_not()
-                .then(choice((
-                    call,
-                    subscript,
-                    attribute,
-                    then,
-                    extension,
-                    expr_extension,
-                )))
+                .then(choice((call, subscript, attribute, then, extension)))
                 .repeated(),
             |expr, (coal, op), e| -> SExpr {
                 (
@@ -694,9 +693,7 @@ where
                             Postfix::Subscript(args) => Expr::Subscript(Box::new(expr), args),
                             Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
                             Postfix::Then(rhs) => Expr::Then(Box::new(expr), Box::new(rhs)),
-                            Postfix::Extension(rhs) => {
-                                Expr::Extension(Box::new(expr), Box::new(rhs))
-                            }
+                            Postfix::Extension(rhs) => Expr::Extension(Box::new(expr), rhs),
                         }
                     } else {
                         match op {
@@ -704,9 +701,7 @@ where
                             Postfix::Subscript(args) => Expr::MappedSubscript(Box::new(expr), args),
                             Postfix::Attribute(attr) => Expr::MappedAttribute(Box::new(expr), attr),
                             Postfix::Then(rhs) => Expr::MappedThen(Box::new(expr), Box::new(rhs)),
-                            Postfix::Extension(rhs) => {
-                                Expr::MappedExtension(Box::new(expr), Box::new(rhs))
-                            }
+                            Postfix::Extension(rhs) => Expr::MappedExtension(Box::new(expr), rhs),
                         }
                     },
                     e.span(),
