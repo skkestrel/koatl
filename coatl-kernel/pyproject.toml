@@ -42,7 +42,7 @@ path = "coatl_kernel/__init__.py"
 [tool.hatch.build.hooks.custom]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pycoatl_kernel"]
+packages = ["/coatl_kernel"]
 
 [tool.hatch.build.targets.sdist]
 include = [

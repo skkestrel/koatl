@@ -984,7 +984,7 @@ where
 
     // Statements
 
-    let expr_or_assign_stmt = group((
+    let assign_stmt = group((
         choice((
             just(Token::Kw("export")).to(AssignModifier::Export),
             just(Token::Kw("global")).to(AssignModifier::Global),
@@ -994,18 +994,14 @@ where
         .collect()
         .boxed(),
         nary_tuple.clone(),
-        symbol("=").ignore_then(nary_tuple.clone()).or_not(),
+        symbol("=").ignore_then(nary_tuple.clone()),
     ))
-    .map(|(modifiers, lhs, rhs)| {
-        if let Some(rhs) = rhs {
-            Stmt::Assign(lhs, rhs, modifiers)
-        } else {
-            Stmt::Expr(lhs, modifiers)
-        }
-    })
+    .map(|(modifiers, lhs, rhs)| Stmt::Assign(lhs, rhs, modifiers))
     .boxed();
 
-    let inline_expr_or_assign_stmt = group((
+    let expr_stmt = nary_tuple.clone().map(Stmt::Expr).boxed();
+
+    let inline_assign_stmt = group((
         choice((
             just(Token::Kw("export")).to(AssignModifier::Export),
             just(Token::Kw("global")).to(AssignModifier::Global),
@@ -1015,16 +1011,12 @@ where
         .collect()
         .boxed(),
         sexpr.clone(),
-        symbol("=").ignore_then(sexpr.clone()).or_not(),
+        symbol("=").ignore_then(sexpr.clone()),
     ))
-    .map(|(modifiers, lhs, rhs)| {
-        if let Some(rhs) = rhs {
-            Stmt::Assign(lhs, rhs, modifiers)
-        } else {
-            Stmt::Expr(lhs, modifiers)
-        }
-    })
+    .map(|(modifiers, lhs, rhs)| Stmt::Assign(lhs, rhs, modifiers))
     .boxed();
+
+    let inline_expr_stmt = sexpr.clone().map(Stmt::Expr).boxed();
 
     let while_stmt = just(Token::Kw("while"))
         .ignore_then(sexpr.clone())
@@ -1162,7 +1154,8 @@ where
 
     stmt.define(
         choice((
-            expr_or_assign_stmt.then_ignore(just(Token::Eol)),
+            assign_stmt.then_ignore(just(Token::Eol)),
+            expr_stmt.then_ignore(just(Token::Eol)),
             module_stmt.then_ignore(just(Token::Eol)),
             while_stmt.clone().then_ignore(just(Token::Eol)),
             for_stmt.clone().then_ignore(just(Token::Eol)),
@@ -1181,7 +1174,8 @@ where
 
     inline_stmt.define(
         choice((
-            inline_expr_or_assign_stmt,
+            inline_assign_stmt,
+            inline_expr_stmt,
             while_stmt,
             for_stmt,
             inline_return_stmt,

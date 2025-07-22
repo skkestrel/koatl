@@ -18,7 +18,7 @@ impl AstBuilder {
     }
 
     pub fn expr<'src>(&self, expr: SExpr<'src>) -> SStmt<'src> {
-        (Stmt::Expr(expr, vec![]), self.span)
+        (Stmt::Expr(expr), self.span)
     }
 
     pub fn assign<'src>(&self, target: SExpr<'src>, value: SExpr<'src>) -> SStmt<'src> {

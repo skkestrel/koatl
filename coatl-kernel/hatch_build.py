@@ -18,17 +18,18 @@ kernel_json = {
     "language": "coatl",
 }
 
+
 class CustomHook(BuildHookInterface):
     def initialize(self, version, build_data):
         here = os.path.abspath(os.path.dirname(__file__))
         sys.path.insert(0, here)
-        prefix = os.path.join(here, 'data_kernelspec')
+        prefix = os.path.join(here, "data_kernelspec")
 
         with TemporaryDirectory() as td:
-            os.chmod(td, 0o755) # Starts off as 700, not user readable
-            with open(os.path.join(td, 'kernel.json'), 'w') as f:
+            os.chmod(td, 0o755)  # Starts off as 700, not user readable
+            with open(os.path.join(td, "kernel.json"), "w") as f:
                 json.dump(kernel_json, f, sort_keys=True)
-            print('Installing Jupyter kernel spec')
+            print("Installing Jupyter kernel spec")
 
             # Requires logo files in kernel root directory
             cur_path = os.path.dirname(os.path.realpath(__file__))
@@ -38,5 +39,6 @@ class CustomHook(BuildHookInterface):
                 except FileNotFoundError:
                     print("Custom logo files not found. Default logos will be used.")
 
-            KernelSpecManager().install_kernel_spec(td, 'coatl', user=False, prefix=prefix)
-
+            KernelSpecManager().install_kernel_spec(
+                td, "coatl", user=False, prefix=prefix
+            )

@@ -70,7 +70,7 @@ pub enum AssignModifier {
 pub enum Stmt<'a> {
     Module,
     Assign(SExpr<'a>, SExpr<'a>, Vec<AssignModifier>),
-    Expr(SExpr<'a>, Vec<AssignModifier>),
+    Expr(SExpr<'a>),
 
     Return(SExpr<'a>),
     While(SExpr<'a>, SBlock<'a>),
