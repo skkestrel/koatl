@@ -1,6 +1,6 @@
 export iter = __vtable_lookup($, "iter")
 
-traits = [
+methods = [
     map: (x, f) =>
         for i in x:
             @f(i)
@@ -46,7 +46,3 @@ traits = [
     list: x =>
         list(x)
 ]
-
-
-_traits["iter"] = Trait("iter", requires_methods=["iter"])
-_traits["iter"].add_curried(traits)

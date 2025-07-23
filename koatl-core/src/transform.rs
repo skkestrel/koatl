@@ -771,13 +771,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                 block.push(a.for_(
                     a.ident(cursor.clone(), PyAccessCtx::Store),
-                    a.call(
-                        a.load_ident("_vtable_lookup"),
-                        vec![
-                            a.call_arg(iter_node.value),
-                            a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
-                        ],
-                    ),
+                    a.call(a.load_ident("iter"), vec![a.call_arg(iter_node.value)]),
                     body_block,
                 ));
 
@@ -1708,14 +1702,14 @@ fn transform_postfix_expr<'src, 'ast>(
                 guard_if_expr(a.call(rhs_node.value, vec![PyCallItem::Arg(lhs.clone())]))
             }
             Expr::Extension(_, rhs) => a.call(
-                a.load_ident("_vcall"),
+                a.load_ident("_vget"),
                 vec![
                     a.call_arg(lhs),
                     a.call_arg(a.literal(PyLiteral::Str(rhs.0.clone()))),
                 ],
             ),
             Expr::MappedExtension(_, rhs) => guard_if_expr(a.call(
-                a.load_ident("_vcall"),
+                a.load_ident("_vget"),
                 vec![
                     a.call_arg(lhs.clone()),
                     a.call_arg(a.literal(PyLiteral::Str(rhs.0.clone()))),

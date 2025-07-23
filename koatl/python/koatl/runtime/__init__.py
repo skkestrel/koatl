@@ -10,7 +10,6 @@ from . import meta_finder
 meta_finder.install_hook()
 del meta_finder
 
-from collections import defaultdict
 from .._rs import Record
 
 
@@ -62,75 +61,28 @@ def _slice_iter(sl):
         yield from range(i, sl.stop, step)
 
 
-_vtable = defaultdict(
-    dict,
-    {
-        dict: {"iter": dict.items},
-        slice: {"iter": _slice_iter},
-    },
-)
+from collections import defaultdict
+
+_vtable = defaultdict(dict, {})
+del defaultdict
 
 
-class Trait:
-    def __init__(self, name, requires_methods=[]):
-        self.name = name
-        self.requires_methods = requires_methods
-        self.methods = {}
-
-    def add_curried(self, methods):
-        import functools
-
-        def closure(name, method):
-            def bind_self(obj):
-                # TODO remove first parameter from signature
-
-                @functools.wraps(method)
-                def call(*args, **kwargs):
-                    return method(obj, *args, **kwargs)
-
-                call.__name__ = name
-                call.__qualname__ = self.name + "." + name
-
-                return call
-
-            bind_self.__name__ = name
-            bind_self.__qualname__ = self.name + "." + name
-
-            self.methods[name] = bind_self
-
-        for name, method in methods.items():
-            closure(name, method)
-
-
-_traits = defaultdict(dict, {})
-
-
-def _vtable_lookup(obj, name, no_traits=False):
-    for cls in type(obj).__mro__:
-        if cls in _vtable and name in _vtable[cls]:
-            return _vtable[cls][name](obj)
-
-    # TODO generalize this?
+# TODO move this to rust?
+def _vget(obj, name):
     if name == "iter":
+        if isinstance(obj, slice):
+            return _slice_iter(obj)
+        if hasattr(obj, "items"):
+            return obj.items
         if hasattr(obj, "__iter__"):
-            return __builtins__["iter"](obj)
+            return obj.__iter__
         raise TypeError(f"'{type(obj).__name__}' object is not iterable")
 
-    if not no_traits:
-        for trait_name, trait in _traits.items():
-            found = True
-            for requirement in trait.requires_methods:
-                try:
-                    _vtable_lookup(obj, requirement, no_traits=True)
-                except (AttributeError, TypeError):
-                    found = False
-                    break
-
-            if found:
-                if name in trait.methods:
-                    return trait.methods[name](obj)
-
     raise AttributeError(f"'{type(obj).__name__}' object has no attribute '{name}'")
+
+
+def iter(obj):
+    return _vget(obj, "iter")()
 
 
 __all__ = [
@@ -139,8 +91,7 @@ __all__ = [
     "_set_exports",
     "_match_proxy",
     "MatchError",
+    "iter",
+    "_vget",
     "_vtable",
-    "_traits",
-    "_vtable_lookup",
-    "Trait",
 ]

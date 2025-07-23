@@ -133,5 +133,6 @@ impl Record {
 fn py_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(transpile, m)?)?;
     m.add_class::<Record>()?;
+    m.add("vtbl", PyDict::new(m.py()))?;
     Ok(())
 }
