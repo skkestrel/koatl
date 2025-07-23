@@ -24,6 +24,7 @@ requires-python = ">=3.8"
 dependencies = [
     "ipykernel",
     "jupyter_client",
+    "jupyter_console",
     "koatl"
 ]
 
