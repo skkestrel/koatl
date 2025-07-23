@@ -6,7 +6,7 @@ use koatl_core::{
 };
 use pyo3::{
     prelude::*,
-    types::{PyDict, PyList, PyString},
+    types::{PyDict, PyList, PySlice, PyString},
 };
 
 #[pyfunction(signature=(src, mode="module", filename="<string>", sourcemap=false))]
@@ -129,10 +129,55 @@ impl Record {
     }
 }
 
+#[pyfunction(signature=(obj, name))]
+fn vget(obj: &Bound<'_, PyAny>, name: &Bound<'_, PyString>) -> PyResult<PyObject> {
+    if name.to_string() == "iter" {
+        if let Ok(slice) = obj.downcast::<PySlice>() {
+            // TODO move this into rs
+            let module = PyModule::import(obj.py(), "koatl.runtime")?;
+            return Ok(module.getattr("_slice_iter")?.call1((slice,))?.unbind());
+        }
+
+        if let Ok(items) = obj.getattr("items") {
+            return Ok(items.call0()?.unbind());
+        }
+
+        if let Ok(iter) = obj.try_iter() {
+            return Ok(iter.unbind().into_any());
+        }
+    }
+
+    if let Ok(attr) = obj.getattr(name) {
+        return Ok(attr.unbind());
+    }
+
+    let module = PyModule::import(obj.py(), "koatl._rs")?;
+    let tbl = module.getattr("vtbl")?.downcast_into::<PyDict>()?;
+
+    if let Ok(Some(types)) = tbl.get_item(name) {
+        let types = types.downcast::<PyDict>()?;
+        let obj_type = obj.get_type();
+        for typ in obj_type.mro() {
+            if let Ok(Some(value)) = types.get_item(typ) {
+                return Ok(value.unbind());
+            }
+        }
+    }
+
+    Err(PyErr::new::<pyo3::exceptions::PyAttributeError, _>(
+        format!(
+            "'{}' object has no v-attribute '{}'",
+            obj.get_type().name()?,
+            name
+        ),
+    ))
+}
+
 #[pymodule(name = "_rs")]
 fn py_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(transpile, m)?)?;
     m.add_class::<Record>()?;
     m.add("vtbl", PyDict::new(m.py()))?;
+    m.add_function(wrap_pyfunction!(vget, m)?)?;
     Ok(())
 }

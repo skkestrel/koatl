@@ -10,3 +10,6 @@ assert_eq(type(1), int)
 assert_eq(repr([1, 2, 3]), "[1, 2, 3]")
 assert_eq(repr((1, 2, 3)), "(1, 2, 3)")
 assert_eq(repr([1: 2]), "[1: 2]")
+
+# records should be accessible by attribute
+assert_eq([asdf: 1].asdf, 1)

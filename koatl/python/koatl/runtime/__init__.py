@@ -49,6 +49,7 @@ class MatchError(Exception):
         super().__init__(message)
 
 
+# called from Rust - koatl/lib.rs:vget
 def _slice_iter(sl):
     i = 0 if sl.start is None else sl.start
     step = 1 if sl.step is None else sl.step
@@ -61,28 +62,11 @@ def _slice_iter(sl):
         yield from range(i, sl.stop, step)
 
 
-from collections import defaultdict
-
-_vtable = defaultdict(dict, {})
-del defaultdict
-
-
-# TODO move this to rust?
-def _vget(obj, name):
-    if name == "iter":
-        if isinstance(obj, slice):
-            return _slice_iter(obj)
-        if hasattr(obj, "items"):
-            return obj.items
-        if hasattr(obj, "__iter__"):
-            return obj.__iter__
-        raise TypeError(f"'{type(obj).__name__}' object is not iterable")
-
-    raise AttributeError(f"'{type(obj).__name__}' object has no attribute '{name}'")
+from .._rs import vget as _vget, vtbl as _vtbl
 
 
 def iter(obj):
-    return _vget(obj, "iter")()
+    return _vget(obj, "iter")
 
 
 __all__ = [
@@ -91,7 +75,7 @@ __all__ = [
     "_set_exports",
     "_match_proxy",
     "MatchError",
-    "iter",
     "_vget",
-    "_vtable",
+    "_vtbl",
+    "iter",
 ]
