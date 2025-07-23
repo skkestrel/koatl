@@ -27,8 +27,15 @@ koatl ../sample/sunset_timer.tl
 
 ```
 cd koatl-kernel
-pip install .
+pip install -e .
 koatl
+```
+
+# Serving docs locally
+
+```
+cd docs
+npx docsify init
 ```
 
 # Building cli tool
