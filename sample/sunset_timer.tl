@@ -3,24 +3,6 @@ import datetime.(date, datetime)
 import time
 import sys
 
-slice = class:
-    __init__ = (self, start, stop, step) =>
-        self.start = start
-        self.stop = stop
-        self.step = step
-
-    __iter__ = self =>
-        step = if self.step == None: 1 else: self.step
-        start = if self.start == None: 0 else: self.start
-
-        if self.stop == None:
-            for i in range(start, 100000, step):
-                @i
-        else:
-            @@range(start, self.stop, step)
-
-        None
-
 countdown = target_dt =>
     print(f"Countdown to sunset at {format(target_dt.strftime("%-I:%M:%s %p"))}")
     for i in ..:

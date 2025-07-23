@@ -1,4 +1,12 @@
-# Before everything
+# Installation
+
+```
+pip install koatl koatl-kernel
+```
+
+Language provider in vscode: "quetzal-koatl"
+
+# Development
 
 https://github.com/pyenv/pyenv-installer
 
