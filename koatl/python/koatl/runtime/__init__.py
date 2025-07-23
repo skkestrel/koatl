@@ -5,11 +5,13 @@ and also declares functions that are required for certain tl features to work,
 such as coalescing and module exports.
 """
 
-from collections import defaultdict
 from . import meta_finder
 
 meta_finder.install_hook()
 del meta_finder
+
+from collections import defaultdict
+from .._rs import Record
 
 
 def _set_exports(package_name, globals_dict, exports, module_star_exports):
@@ -132,6 +134,7 @@ def _vtable_lookup(obj, name, no_traits=False):
 
 
 __all__ = [
+    "Record",
     "_coalesces",
     "_set_exports",
     "_match_proxy",

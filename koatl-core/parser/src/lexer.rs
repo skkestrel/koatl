@@ -106,6 +106,23 @@ pub fn escape_fstr(s: &str) -> String {
         .collect()
 }
 
+// TODO don't duplicate this with parser below
+pub fn is_valid_ident(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+
+    if !s
+        .chars()
+        .next()
+        .map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
+    {
+        return false;
+    }
+
+    s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 struct TokenizeCtx<'src: 'parse, 'parse, 'input, TInput>
 where
     TInput: StrInput<'src, Token = char, Span = SimpleSpan, Slice = &'src str>,

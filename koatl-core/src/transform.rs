@@ -1935,6 +1935,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
         access_ctx: PyAccessCtx,
     ) -> TfResult<SPyExprWithPre<'src>> {
         let (expr, span) = self;
+        let a = PyAstBuilder::new(*span);
 
         match &expr {
             Expr::Attribute(..) | Expr::Subscript(..) | Expr::Ident(..) => {}
@@ -2223,7 +2224,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     }
 
                     return Ok(SPyExprWithPre {
-                        value: (PyExpr::Dict(dict_items), *span).into(),
+                        value: a.call(a.load_ident("Record"), vec![a.call_arg(a.dict(dict_items))]),
                         pre: aux_stmts,
                     });
                 });
