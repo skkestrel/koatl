@@ -1,0 +1,6 @@
+-   [Intro](intro)
+-   [Formatting](formatting)
+-   [New operators](operators)
+-   **Links**
+-   [Github](https://github.com/skkestrel/koatl)
+-   [pypi](https://pypi.org/project/koatl/)

@@ -35,7 +35,11 @@
 		<script>
 			// Docsify Configuration
 			window.$docsify = {
-				// ..
+				maxLevel: 3,
+				subMaxLevel: 3,
+				coverpage: "coverpage.md",
+				loadSidebar: "sidebar.md",
+				homepage: "intro.md",
 			};
 		</script>
 
@@ -46,5 +50,9 @@
 		<!-- Recommended -->
 		<script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/plugins/search.js"></script>
 		<script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/plugins/zoom-image.min.js"></script>
+
+		<!-- Custom -->
+		<script src="https://cdn.jsdelivr.net/npm/docsify-pagination@2/dist/docsify-pagination.min.js"></script>
+		<script src="/assets/js/prism-koatl.js"></script>
 	</body>
 </html>
