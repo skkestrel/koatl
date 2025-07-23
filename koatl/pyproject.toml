@@ -11,6 +11,9 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
+dependencies = [
+    "forbiddenfruit",
+]
 
 [project.scripts]
 koatl = "koatl.__main__:main"

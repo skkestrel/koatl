@@ -151,6 +151,8 @@ fn vget(obj: &Bound<'_, PyAny>, name: &Bound<'_, PyString>) -> PyResult<PyObject
         return Ok(attr.unbind());
     }
 
+    // TODO add trait-based lookup?
+
     let module = PyModule::import(obj.py(), "koatl._rs")?;
     let tbl = module.getattr("vtbl")?.downcast_into::<PyDict>()?;
 

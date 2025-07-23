@@ -1,5 +1,3 @@
-export iter = __vtable_lookup($, "iter")
-
 methods = [
     map: (x, f) =>
         for i in x:
@@ -34,15 +32,24 @@ methods = [
         return result
 
     at: (x, index) =>
+        l = len(x)
         if index < 0:
-            index = index + len(x)
-        if (index < 0) + (index >= len(x)):
+            index = index + l
+        if (index < 0) + (index >= l):
             raise IndexError("Index out of range")
         return x[index]
 
     sum: x =>
-        x!fold(0, (acc, i) => acc + i)
+        x.fold(0, (acc, i) => acc + i)
 
     list: x =>
-        list(x)
+        list(x!iter)
+
+    record: x =>
+        Record(x!iter)
 ]
+
+import .mixins.(create_mixin, curse_mixin)
+
+export Iterable = create_mixin("Iterable", methods)
+curse_mixin(Iterable, [list, tuple, dict, set, slice, type((() => @None)())])
