@@ -1,5 +1,8 @@
 import util.assert_eq
 
+# parsing test
+1 match 1 if False => 2 default 3
+
 assert_eq(
     1 match 1 if False => 2 default 3,
     3

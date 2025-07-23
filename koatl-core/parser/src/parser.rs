@@ -880,7 +880,6 @@ where
     let default_case = just(Token::Ident("default"))
         .then(just(START_BLOCK).or_not())
         .ignore_then(block_or_inline_stmt.clone())
-        .then_ignore(just(Token::Eol).or_not())
         .map(|x| MatchCase {
             pattern: None,
             guard: None,
@@ -889,12 +888,13 @@ where
         .boxed();
 
     let cases = choice((
-        case_
-            .clone()
-            .separated_by(just(Token::Eol))
-            .allow_trailing()
+        just(Token::Kw("else"))
+            .or_not()
+            .ignore_then(case_.clone())
+            .then_ignore(just(Token::Eol))
+            .repeated()
             .collect::<Vec<_>>()
-            .then(default_case.clone().or_not())
+            .then(default_case.clone().or_not().then_ignore(just(Token::Eol)))
             .delimited_by(
                 just(Token::Symbol("BEGIN_BLOCK")),
                 just(Token::Symbol("END_BLOCK")),
