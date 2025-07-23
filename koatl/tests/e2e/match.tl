@@ -44,3 +44,7 @@ assert_eq(
             123
     [2, 3].(list),
 )
+
+x = 1
+assert_eq([1, 2, 3] matches [1, 2, 3], True)
+assert_eq([1, 2, 3] matches [.x, y, 3], True)

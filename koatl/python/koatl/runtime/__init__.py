@@ -12,7 +12,7 @@ meta_finder.install_hook()
 del meta_finder
 
 
-def __set_exports(package_name, globals_dict, exports, module_star_exports):
+def _set_exports(package_name, globals_dict, exports, module_star_exports):
     import importlib
 
     exports = set(exports)
@@ -33,11 +33,11 @@ def __set_exports(package_name, globals_dict, exports, module_star_exports):
     globals_dict["__all__"] = tuple(exports)
 
 
-def __coalesces(x):
+def _coalesces(x):
     return x is None or isinstance(x, BaseException)
 
 
-def __match_proxy(v):
+def _match_proxy(v):
     from types import SimpleNamespace
 
     return SimpleNamespace(value=v)
@@ -48,7 +48,7 @@ class MatchError(Exception):
         super().__init__(message)
 
 
-def __slice_iter(sl):
+def _slice_iter(sl):
     i = 0 if sl.start is None else sl.start
     step = 1 if sl.step is None else sl.step
 
@@ -60,11 +60,11 @@ def __slice_iter(sl):
         yield from range(i, sl.stop, step)
 
 
-__vtable = defaultdict(
+_vtable = defaultdict(
     dict,
     {
         dict: {"iter": dict.items},
-        slice: {"iter": __slice_iter},
+        slice: {"iter": _slice_iter},
     },
 )
 
@@ -100,13 +100,13 @@ class Trait:
             closure(name, method)
 
 
-__traits = defaultdict(dict, {})
+_traits = defaultdict(dict, {})
 
 
-def __vtable_lookup(obj, name, no_traits=False):
+def _vtable_lookup(obj, name, no_traits=False):
     for cls in type(obj).__mro__:
-        if cls in __vtable and name in __vtable[cls]:
-            return __vtable[cls][name](obj)
+        if cls in _vtable and name in _vtable[cls]:
+            return _vtable[cls][name](obj)
 
     # TODO generalize this?
     if name == "iter":
@@ -115,11 +115,11 @@ def __vtable_lookup(obj, name, no_traits=False):
         raise TypeError(f"'{type(obj).__name__}' object is not iterable")
 
     if not no_traits:
-        for trait_name, trait in __traits.items():
+        for trait_name, trait in _traits.items():
             found = True
             for requirement in trait.requires_methods:
                 try:
-                    __vtable_lookup(obj, requirement, no_traits=True)
+                    _vtable_lookup(obj, requirement, no_traits=True)
                 except (AttributeError, TypeError):
                     found = False
                     break
@@ -132,12 +132,12 @@ def __vtable_lookup(obj, name, no_traits=False):
 
 
 __all__ = [
-    "__coalesces",
-    "__set_exports",
-    "__match_proxy",
+    "_coalesces",
+    "_set_exports",
+    "_match_proxy",
     "MatchError",
-    "__vtable",
-    "__traits",
-    "__vtable_lookup",
+    "_vtable",
+    "_traits",
+    "_vtable_lookup",
     "Trait",
 ]

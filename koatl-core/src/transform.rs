@@ -83,7 +83,7 @@ impl<'src> TfCtx<'src> {
 
     fn temp_var_name(&self, typ: &str, cursor: usize) -> String {
         let (line, col) = self.linecol(cursor);
-        format!("__tl_{}_l{}c{}", typ, line, col)
+        format!("_{}_l{}c{}", typ, line, col)
     }
 }
 
@@ -772,7 +772,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 block.push(a.for_(
                     a.ident(cursor.clone(), PyAccessCtx::Store),
                     a.call(
-                        a.load_ident("__vtable_lookup"),
+                        a.load_ident("_vtable_lookup"),
                         vec![
                             a.call_arg(iter_node.value),
                             a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
@@ -816,8 +816,9 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     .transpose()?;
 
                 let mut stmts = PyBlock::new();
+                let var_name = ctx.temp_var_name("e", span.start);
 
-                let excepts = matching_except_handler(ctx, excepts, span)?;
+                let excepts = matching_except_handler(ctx, var_name.into(), excepts, span)?;
 
                 stmts.push((PyStmt::Try(body_block, vec![excepts], finally_block), *span).into());
 
@@ -1013,7 +1014,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                         let a = PyAstBuilder::new(*span);
                         pre.push(a.assign(
                             a.ident(var.clone(), PyAccessCtx::Store),
-                            a.call(a.load_ident("__match_proxy"), vec![a.call_arg(v_node)]),
+                            a.call(a.load_ident("_match_proxy"), vec![a.call_arg(v_node)]),
                         ));
 
                         PyPattern::Value(a.attribute(a.load_ident(var), "value", PyAccessCtx::Load))
@@ -1155,9 +1156,11 @@ fn create_matcher<'src, 'ast>(
         return Ok(on_success);
     }
 
+    let mut post = PyBlock::new();
     let a = PyAstBuilder::new(pattern.1);
     let pattern_node = pattern.transform(ctx)?;
-    let mut post = PyBlock::new();
+
+    post.extend(pattern_node.pre);
 
     post.push(a.match_(
         subject,
@@ -1663,7 +1666,7 @@ fn transform_postfix_expr<'src, 'ast>(
 
         let guard_if_expr = |e| {
             a.if_expr(
-                a.call(a.load_ident("__coalesces"), vec![a.call_arg(lhs.clone())]),
+                a.call(a.load_ident("_coalesces"), vec![a.call_arg(lhs.clone())]),
                 lhs.clone(),
                 e,
             )
@@ -1705,14 +1708,14 @@ fn transform_postfix_expr<'src, 'ast>(
                 guard_if_expr(a.call(rhs_node.value, vec![PyCallItem::Arg(lhs.clone())]))
             }
             Expr::Extension(_, rhs) => a.call(
-                a.load_ident("__vtable_lookup"),
+                a.load_ident("_vcall"),
                 vec![
                     a.call_arg(lhs),
                     a.call_arg(a.literal(PyLiteral::Str(rhs.0.clone()))),
                 ],
             ),
             Expr::MappedExtension(_, rhs) => guard_if_expr(a.call(
-                a.load_ident("__vtable_lookup"),
+                a.load_ident("_vcall"),
                 vec![
                     a.call_arg(lhs.clone()),
                     a.call_arg(a.literal(PyLiteral::Str(rhs.0.clone()))),
@@ -1744,6 +1747,7 @@ fn is_default_pattern<'src>(pattern: &SPattern<'src>) -> bool {
 
 fn matching_except_handler<'src>(
     ctx: &mut TfCtx<'src>,
+    var_name: Ident<'src>,
     handlers: &Vec<MatchCase<'src>>,
     span: &Span,
 ) -> TfResult<PyExceptHandler<'src>> {
@@ -1751,7 +1755,8 @@ fn matching_except_handler<'src>(
     let b = AstBuilder::new(*span);
     let mut block = PyBlock::new();
 
-    let (mut match_stmt, has_default) = transform_match_expr(ctx, &b.ident("__e"), handlers, span)?;
+    let (mut match_stmt, has_default) =
+        transform_match_expr(ctx, &b.ident(var_name.clone()), handlers, span)?;
 
     if let PyStmt::Match(_, cases) = &mut match_stmt.pre.0.last_mut().unwrap().value {
         if !has_default {
@@ -1772,7 +1777,7 @@ fn matching_except_handler<'src>(
 
     Ok(PyExceptHandler {
         typ: None,
-        name: Some("__e".into()),
+        name: Some(var_name),
         body: block,
     })
 }
@@ -1951,24 +1956,47 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 let t = expr.transform(ctx)?;
                 let var_name = ctx.temp_var_name("chk", span.start);
 
+                // exception variable doesn't leave the except slope, so rebind it to chk
+                let err_name = ctx.temp_var_name("e", span.start);
+
                 let mut try_body = t.pre;
                 try_body.push(a.assign(a.ident(var_name.clone(), PyAccessCtx::Store), t.value));
 
                 let mut catch_body = PyBlock::new();
                 catch_body.push(a.assign(
                     a.ident(var_name.clone(), PyAccessCtx::Store),
-                    a.load_ident("__e"),
+                    a.load_ident(var_name.clone()),
                 ));
 
+                let mut handlers = vec![];
+                if let Some(pattern) = pattern {
+                    handlers.push(MatchCase {
+                        // avoid this clone?
+                        pattern: Some(*pattern.clone()),
+                        guard: None,
+                        body: b.stmts_block(vec![
+                            b.assign(b.ident(var_name.clone()), b.ident(err_name.clone())),
+                        ]),
+                    });
+                    handlers.push(MatchCase {
+                        pattern: None,
+                        guard: None,
+                        body: b.stmts_block(vec![b.raise(None)]),
+                    });
+                } else {
+                    handlers.push(MatchCase {
+                        pattern: None,
+                        guard: None,
+                        body: b.stmts_block(vec![
+                            b.assign(b.ident(var_name.clone()), b.ident(err_name.clone())),
+                        ]),
+                    });
+                }
+
+                let except_handler =
+                    matching_except_handler(ctx, err_name.clone().into(), &handlers, span)?;
+
                 let mut stmts = PyBlock::new();
-
-                let handler = MatchCase {
-                    pattern: pattern.as_ref().map(|x| (**x).clone()),
-                    guard: None,
-                    body: b.stmts_block(vec![b.assign(b.ident(var_name.clone()), b.ident("__e"))]),
-                };
-
-                let except_handler = matching_except_handler(ctx, &vec![handler], span)?;
                 stmts.push(a.try_(try_body, vec![except_handler], None));
 
                 Ok(SPyExprWithPre {
@@ -2099,7 +2127,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                         let expr = a.if_expr(
                             a.call(
-                                a.load_ident("__coalesces"),
+                                a.load_ident("_coalesces"),
                                 vec![a.call_arg(lhs.value.clone())],
                             ),
                             rhs.value,

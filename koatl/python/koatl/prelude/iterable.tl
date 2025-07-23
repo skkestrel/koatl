@@ -48,5 +48,5 @@ traits = [
 ]
 
 
-__traits["iter"] = Trait("iter", requires_methods=["iter"])
-__traits["iter"].add_curried(traits)
+_traits["iter"] = Trait("iter", requires_methods=["iter"])
+_traits["iter"].add_curried(traits)
