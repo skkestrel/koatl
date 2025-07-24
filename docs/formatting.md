@@ -28,33 +28,49 @@ x = #- this is a #- nested -# comment -# 2
 
 ## Blocks-in-expressions
 
-Blocks-in-expressions allow blocks like `if`, `match`, and lambdas to be inline in expressions.
+Blocks-in-expressions allow long inline things in expressions.
 Like Rust, the final expression of a block is treated as its value.
 
 Opening round parentheses on at the end of a line starts a block-expression on the next line.
 
 ```koatl
+x = (
+    a = 2
+    b = 3
+    a + b
+)
+
+x == 5
+```
+
+```koatl
 x = 2 + (
-    if x:
+    if True:
         2
     else:
         3
 )
+x == 4
+```
 
+```koatl
 foo = x =>
     do_stuff()
     42
+
+foo(1) == 42
 ```
 
 ## Optional commas in enumerations
 
-Enumerations of anything split across multiple lines can omit commas.
+Multiline enumerations of lists, records, and function calls can drop commas.
 
 ```koatl
-my_list = [1, 2, 3]
+my_list = [1, 2+2, 3]
 my_list = [
     1
-    2
+    2 +
+        2
     3
 ]
 
