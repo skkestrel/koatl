@@ -55,7 +55,7 @@ python3 -m twine upload --repository pypi dist/*
 
 ```
 cd docs
-npx docsify init
+npx docsify serve
 ```
 
 # Building cli tool

@@ -50,7 +50,7 @@ foo = x =>
 
 Enumerations of anything split across multiple lines can omit commas.
 
-```
+```koatl
 my_list = [1, 2, 3]
 my_list = [
     1
