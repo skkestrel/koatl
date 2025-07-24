@@ -759,23 +759,28 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 Ok(stmts)
             }
             Stmt::For(target, iter, body) => {
-                let iter_node: SPyExprWithPre<'src> = iter.transform_with_placeholder_guard(ctx)?;
-                let aux_stmts = iter_node.pre;
+                let mut pre = PyBlock::new();
+                let iter_node = bind_pre(&mut pre, iter.transform_with_placeholder_guard(ctx)?);
 
-                let mut block = aux_stmts;
                 let mut body_block = PyBlock::new();
 
                 let (matcher, cursor) = create_throwing_matcher(ctx, target)?;
                 body_block.extend(matcher);
                 body_block.extend(body.transform_with_final_stmt(ctx)?);
 
-                block.push(a.for_(
+                pre.push(a.for_(
                     a.ident(cursor.clone(), PyAccessCtx::Store),
-                    a.call(a.load_ident("iter"), vec![a.call_arg(iter_node.value)]),
+                    a.call(
+                        a.load_ident("_vget"),
+                        vec![
+                            a.call_arg(iter_node),
+                            a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
+                        ],
+                    ),
                     body_block,
                 ));
 
-                Ok(block)
+                Ok(pre)
             }
             Stmt::While(cond, body) => {
                 let cond_node = cond.transform_with_placeholder_guard(ctx)?;
@@ -2161,7 +2166,17 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     }
                     UnaryOp::YieldFrom => {
                         return Ok(SPyExprWithPre {
-                            value: (PyExpr::YieldFrom(Box::new(expr.value)), *span).into(),
+                            value: (
+                                PyExpr::YieldFrom(Box::new(a.call(
+                                    a.load_ident("_vget"),
+                                    vec![
+                                        a.call_arg(expr.value),
+                                        a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
+                                    ],
+                                ))),
+                                *span,
+                            )
+                                .into(),
                             pre: aux_stmts,
                         });
                     }

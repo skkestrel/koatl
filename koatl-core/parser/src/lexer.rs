@@ -622,6 +622,8 @@ where
                 let (expr, expr_span) =
                     self.try_parse(|x| x.parse_block(0, NewBlockType::BeginInput))?;
 
+                let _ = self.try_parse(|x| x.parse_newline());
+                self.try_parse(|x| x.parse_indentation())?;
                 self.try_parse(|x| x.parse_seq("}"))?;
 
                 tokens.push((
@@ -778,8 +780,8 @@ where
                                     let mut err = TError::custom(
                                         self.span_since(&start_curs),
                                         format!(
-                                            "unmatched delimiter: expected '{}', found '{}'",
-                                            CLOSE_DELIMS[i], s
+                                            "unmatched delimiter '{}', found '{}'",
+                                            open_delim_char, s
                                         ),
                                     );
 
@@ -826,7 +828,10 @@ where
                 break;
             }
 
+            let before_newline = self.input.save();
+
             if self.try_parse(|x| x.parse_newline()).is_err() {
+                // make sure that there aren't any unexpected characters
                 return Err(Rich::custom(
                     self.span_since(&self.cursor()),
                     format!("unexpected '{}'", self.peek().unwrap()),
@@ -853,6 +858,9 @@ where
                     );
                     tokens.push((Token::Eol, end_span));
                     tokens.push((Token::Symbol("END_BLOCK"), end_span));
+
+                    // continue in order to catch trailing characters after the block
+                    continue;
                 } else if let Err(e) = new_block {
                     while self.try_parse(TokenizeCtx::parse_newline_or_eof).is_err() {
                         self.next();
@@ -869,18 +877,14 @@ where
             {
                 if cur_indent_level > indent_level {
                     // handle continuation
-
                     let (new_block, new_block_span) = self
                         .try_parse(|x| x.parse_block(indent_level, NewBlockType::Continuation))?;
 
                     tokens.extend(new_block.0);
-                }
-            }
-
-            if let Ok((cur_indent_level, cur_indent_span)) =
-                self.look_ahead(|x| x.parse_indentation())
-            {
-                if cur_indent_level < indent_level {
+                    continue;
+                } else if cur_indent_level < indent_level {
+                    // end of the block - rewind
+                    self.input.rewind(before_newline);
                     break;
                 }
 
@@ -890,6 +894,7 @@ where
                     tokens.push((Token::Eol, self.span_since(&self.cursor())));
                 }
             } else {
+                // couldn't parse indentation - end of file?
                 break;
             }
         }

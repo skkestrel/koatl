@@ -1,5 +1,23 @@
 import util.assert_eq
 
+# should parse correctly
+[
+    (() =>
+        None)()
+]
+
+(() =>
+    None)()
+
+(() =>
+    None
+)()
+
+(() => None
+)()
+
+(() => None)()
+
 assert_eq([
     1
     2

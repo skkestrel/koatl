@@ -457,13 +457,17 @@ impl SPyExpr<'_> {
             }
             PyExpr::Yield(expr) => {
                 set_prec(-0.5);
+                ctx.emit("(");
                 ctx.emit("yield ");
                 expr.emit_to(ctx, LOW_PREC)?;
+                ctx.emit(")");
             }
             PyExpr::YieldFrom(expr) => {
                 set_prec(-0.5); // TODO is this precedence correct?
+                ctx.emit("(");
                 ctx.emit("yield from ");
                 expr.emit_to(ctx, LOW_PREC)?;
+                ctx.emit(")");
             }
             PyExpr::Literal(literal) => literal.emit_to(ctx, parent_precendence)?,
             PyExpr::Fstr(fstr_parts) => {
