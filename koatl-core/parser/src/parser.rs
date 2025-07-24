@@ -192,11 +192,18 @@ where
         .then_ignore(symbol(":"))
         .then(pattern.clone())
         .map(|(key, value)| PatternMappingItem::Item(key, value)),
+        ident.clone().try_map(|x, s| {
+            if x.0 == "_" {
+                return Err(Rich::custom(s, "Mapping key cannot be a wildcard"));
+            }
+
+            Ok(PatternMappingItem::Ident(x))
+        }),
     ));
 
     let mapping_pattern = enumeration(mapping_item, symbol(","))
         .map(Pattern::Mapping)
-        .delimited_by_with_eol(symbol("["), symbol("]"))
+        .delimited_by_with_eol(symbol("{"), symbol("}"))
         .spanned()
         .boxed();
 
@@ -480,10 +487,11 @@ where
             .then_ignore(symbol(":"))
             .then(expr.clone())
             .map(|(key, value)| MappingItem::Item(key, value)),
+            ident.clone().map(MappingItem::Ident),
         )),
         symbol(","),
     )
-    .delimited_by_with_eol(just(Token::Symbol("[")), just(Token::Symbol("]")))
+    .delimited_by_with_eol(just(Token::Symbol("{")), just(Token::Symbol("}")))
     .map(Expr::Mapping)
     .labelled("mapping")
     .as_context()

@@ -410,6 +410,13 @@ fn destructure_mapping<'src, 'ast>(
     let mut spread_var = None;
     for item in items.iter() {
         match item {
+            MappingItem::Ident(ident) => stmts.push(a.assign(
+                a.ident(ident.0.clone(), PyAccessCtx::Store),
+                a.call(
+                    a.attribute(a.load_ident(dict_var.clone()), "pop", PyAccessCtx::Load),
+                    vec![a.call_arg(a.literal(PyLiteral::Str(ident.0.clone())))],
+                ),
+            )),
             MappingItem::Item(key, expr) => {
                 let item_bindings = destructure(ctx, expr, decl_only)?;
                 let key_node = key.transform(ctx)?;
@@ -1071,12 +1078,18 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                 let mut spread = None;
                 for item in items {
                     match item {
+                        PatternMappingItem::Ident(ident) => {
+                            kvps.push((
+                                (PyExpr::Literal(PyLiteral::Str(ident.0.clone())), *span).into(),
+                                (PyPattern::As(None, Some(ident.0.clone())), *span).into(),
+                            ));
+                        }
                         PatternMappingItem::Item(key, value) => {
-                            let value_node = value.transform(ctx)?;
-                            pre.extend(value_node.pre);
-
                             let key_node = key.transform(ctx)?;
                             pre.extend(key_node.pre);
+
+                            let value_node = value.transform(ctx)?;
+                            pre.extend(value_node.pre);
 
                             kvps.push((key_node.value, value_node.value));
                         }
@@ -2243,6 +2256,12 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                     for item in items {
                         match item {
+                            MappingItem::Ident(id) => {
+                                dict_items.push(PyDictItem::Item(
+                                    a.literal(PyLiteral::Str(id.0.clone())),
+                                    a.load_ident(id.0.clone()),
+                                ));
+                            }
                             MappingItem::Item(key, value) => {
                                 let key = key.transform_with_deep_placeholder_guard(ctx)?;
                                 let value = value.transform_with_deep_placeholder_guard(ctx)?;

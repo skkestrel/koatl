@@ -125,7 +125,7 @@ impl Record {
             s.push_str(&format!("{}: {}", key_repr, value.repr()?,));
         }
 
-        Ok(format!("[{}]", s))
+        Ok(format!("{{{}}}", s))
     }
 }
 

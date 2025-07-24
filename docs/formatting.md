@@ -31,6 +31,8 @@ x = #- this is a #- nested -# comment -# 2
 Blocks-in-expressions allow blocks like `if`, `match`, and lambdas to be inline in expressions.
 Like Rust, the final expression of a block is treated as its value.
 
+Opening round parentheses on at the end of a line starts a block-expression on the next line.
+
 ```koatl
 x = 2 + (
     if x:
@@ -57,11 +59,11 @@ my_list = [
 ]
 
 # Records replace dicts in Koatl - they behave similarly to Javascript objects
-my_record = [
+my_record = {
     1: 4
     asdf: 4
     (1+5): 4
-]
+}
 
 my_record[1] == 4
 my_record["asdf"] == 4

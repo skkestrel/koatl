@@ -1,4 +1,4 @@
-methods = [
+methods = {
     map: (x, f) =>
         for i in x:
             @f(i)
@@ -47,7 +47,7 @@ methods = [
 
     record: x =>
         Record(x!iter)
-]
+}
 
 import .mixins.(create_mixin, curse_mixin)
 

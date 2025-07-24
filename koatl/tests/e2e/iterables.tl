@@ -16,6 +16,6 @@ assert_eq(
 )
 
 assert_eq(
-    [1: 2].map([k, v] => [v, k]).record(),
-    [2: 1]
+    {1: 2}.map([k, v] => [v, k]).record(),
+    {2: 1}
 )

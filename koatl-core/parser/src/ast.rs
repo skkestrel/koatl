@@ -112,6 +112,7 @@ pub enum ListItem<'a> {
 
 #[derive(Debug, Clone)]
 pub enum MappingItem<'a> {
+    Ident(SIdent<'a>),
     Item(SExpr<'a>, SExpr<'a>),
     Spread(SExpr<'a>),
 }
@@ -194,6 +195,7 @@ pub enum PatternSequenceItem<'a> {
 
 #[derive(Debug, Clone)]
 pub enum PatternMappingItem<'a> {
+    Ident(SIdent<'a>),
     Item(SExpr<'a>, SPattern<'a>),
     Spread(Option<SIdent<'a>>),
 }
