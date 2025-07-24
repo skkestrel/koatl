@@ -73,10 +73,10 @@ pub enum Stmt<'a> {
     Expr(SExpr<'a>),
 
     Return(SExpr<'a>),
-    While(SExpr<'a>, SBlock<'a>),
-    For(SPattern<'a>, SExpr<'a>, SBlock<'a>),
+    While(SExpr<'a>, SExpr<'a>),
+    For(SPattern<'a>, SExpr<'a>, SExpr<'a>),
     Import(ImportStmt<'a>),
-    Try(SBlock<'a>, Vec<MatchCase<'a>>, Option<SBlock<'a>>),
+    Try(SExpr<'a>, Vec<MatchCase<'a>>, Option<SExpr<'a>>),
     Assert(SExpr<'a>, Option<SExpr<'a>>),
     Raise(Option<SExpr<'a>>),
     Break,
@@ -98,7 +98,7 @@ pub type SLiteral<'a> = Spanned<Literal<'a>>;
 
 #[derive(Debug, Clone)]
 pub struct FmtExpr<'a> {
-    pub block: SBlock<'a>,
+    pub block: SExpr<'a>,
     pub fmt: Option<Ident<'a>>,
 }
 
@@ -136,18 +136,10 @@ pub enum ArgDefItem<'a> {
 pub type SArgItem<'a> = Spanned<ArgDefItem<'a>>;
 
 #[derive(Debug, Clone)]
-pub enum Block<'a> {
-    Stmts(Vec<SStmt<'a>>),
-    Expr(SExpr<'a>),
-}
-
-pub type SBlock<'a> = Spanned<Block<'a>>;
-
-#[derive(Debug, Clone)]
 pub struct MatchCase<'src> {
     pub pattern: Option<SPattern<'src>>,
     pub guard: Option<SExpr<'src>>,
-    pub body: SBlock<'src>,
+    pub body: SExpr<'src>,
 }
 
 #[derive(Debug, Clone)]
@@ -167,10 +159,10 @@ pub enum Expr<'a> {
     Unary(UnaryOp, Box<SExpr<'a>>),
     Binary(BinaryOp, Box<SExpr<'a>>, Box<SExpr<'a>>),
 
-    If(Box<SExpr<'a>>, Box<SBlock<'a>>, Option<Box<SBlock<'a>>>),
+    If(Box<SExpr<'a>>, Box<SExpr<'a>>, Option<Box<SExpr<'a>>>),
     Match(Box<SExpr<'a>>, Vec<MatchCase<'a>>),
     Matches(Box<SExpr<'a>>, Box<SPattern<'a>>),
-    Class(Vec<SCallItem<'a>>, Box<SBlock<'a>>),
+    Class(Vec<SCallItem<'a>>, Box<SExpr<'a>>),
 
     Call(Box<SExpr<'a>>, Vec<SCallItem<'a>>),
     Subscript(Box<SExpr<'a>>, Vec<ListItem<'a>>),
@@ -186,10 +178,10 @@ pub enum Expr<'a> {
 
     Checked(Box<SExpr<'a>>, Option<Box<SPattern<'a>>>),
 
-    Fn(Vec<ArgDefItem<'a>>, Box<SBlock<'a>>),
+    Fn(Vec<ArgDefItem<'a>>, Box<SExpr<'a>>),
     Fstr(Spanned<String>, Vec<(SFmtExpr<'a>, Spanned<String>)>),
 
-    Block(Box<SBlock<'a>>),
+    Block(Vec<SStmt<'a>>),
 }
 
 pub type SExpr<'a> = Spanned<Expr<'a>>;

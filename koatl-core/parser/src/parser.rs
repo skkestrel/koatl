@@ -4,6 +4,7 @@ use std::borrow::Cow;
 
 use crate::ast::*;
 use crate::lexer::*;
+use chumsky::recursive::Indirect;
 use chumsky::{extra::ParserExtra, input::ValueInput, prelude::*};
 
 pub trait ParserExt<'tokens, 'src: 'tokens, I, O, E>: Parser<'tokens, I, O, E>
@@ -281,7 +282,7 @@ pub fn function<'tokens, 'src: 'tokens, TInput, PBody, PIdent, PExpr, PPattern>(
 ) -> impl Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone
 where
     TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
-    PBody: Parser<'tokens, TInput, SBlock<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PBody: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PIdent: Parser<'tokens, TInput, SIdent<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PExpr: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PPattern: Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
@@ -290,7 +291,8 @@ where
         let fn_body = symbol("=>")
             .ignore_then(choice((
                 block_or_inline_stmt.clone(),
-                fn_.clone().map(|x| Block::Expr(x)).spanned().boxed(),
+                // should these be switched?
+                fn_.clone().boxed(),
             )))
             .boxed();
 
@@ -335,37 +337,39 @@ where
 }
 
 pub fn parser<'tokens, 'src: 'tokens, TInput>()
--> impl Parser<'tokens, TInput, SBlock<'src>, extra::Err<Rich<'tokens, Token<'src>, Span>>>
+-> impl Parser<'tokens, TInput, Vec<SStmt<'src>>, TExtra<'tokens, 'src>> + Clone
 where
     TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
 {
-    let mut stmt = Recursive::declare();
-    let mut inline_stmt = Recursive::declare();
-    let mut atom = Recursive::declare();
-    let mut sexpr = Recursive::declare();
+    let mut stmt = Recursive::<Indirect<TInput, SStmt, TExtra>>::declare();
+    let mut inline_stmt = Recursive::<Indirect<TInput, SStmt, TExtra>>::declare();
+    let mut atom = Recursive::<Indirect<TInput, SExpr, TExtra>>::declare();
+    let mut expr = Recursive::<Indirect<TInput, SExpr, TExtra>>::declare();
 
     let stmts = stmt
         .clone()
         .repeated()
-        .collect::<Vec<_>>()
-        .map(Block::Stmts)
-        .spanned()
+        .collect::<Vec<SStmt>>()
         .labelled("statement-list")
         .boxed();
 
     let block = stmts
         .clone()
         .delimited_by(symbol("BEGIN_BLOCK"), symbol("END_BLOCK"))
+        .map(Expr::Block)
+        .spanned()
         .boxed();
 
-    let block_or_expr = choice((block.clone(), sexpr.clone().map(Block::Expr).spanned())).boxed();
+    let expr_or_block = choice((block.clone(), expr.clone())).boxed();
 
-    let block_or_inline_stmt = choice((
+    let expr_or_inline_stmt_or_block = choice((
         block.clone(),
         inline_stmt
             .clone()
-            .map(|x| Block::Stmts(vec![x]))
-            .spanned()
+            .map_with(|x, e| match x.0 {
+                Stmt::Expr(x) => x,
+                _ => (Expr::Block(vec![x]), e.span()),
+            })
             .boxed(),
     ))
     .boxed();
@@ -408,8 +412,8 @@ where
     .boxed();
 
     let list_item = choice((
-        symbol("*").ignore_then(sexpr.clone()).map(ListItem::Spread),
-        sexpr.clone().map(ListItem::Item),
+        symbol("*").ignore_then(expr.clone()).map(ListItem::Spread),
+        expr.clone().map(ListItem::Item),
     ))
     .boxed();
 
@@ -463,7 +467,7 @@ where
     let mapping = enumeration(
         choice((
             symbol("**")
-                .ignore_then(sexpr.clone())
+                .ignore_then(expr.clone())
                 .map(MappingItem::Spread),
             choice((
                 ident
@@ -471,12 +475,10 @@ where
                     .map(|(s, span)| Expr::Literal((Literal::Str(s), span)))
                     .spanned(),
                 literal_expr.clone(),
-                sexpr
-                    .clone()
-                    .delimited_by_with_eol(symbol("("), symbol(")")),
+                expr.clone().delimited_by_with_eol(symbol("("), symbol(")")),
             ))
             .then_ignore(symbol(":"))
-            .then(sexpr.clone())
+            .then(expr.clone())
             .map(|(key, value)| MappingItem::Item(key, value)),
         )),
         symbol(","),
@@ -498,7 +500,7 @@ where
     let fstr = fstr_begin
         .spanned()
         .then(
-            block_or_expr
+            expr_or_block
                 .clone()
                 .spanned()
                 .then(fstr_continue.spanned())
@@ -529,9 +531,9 @@ where
                     ident
                         .clone()
                         .then_ignore(symbol("="))
-                        .then(sexpr.clone())
+                        .then(expr.clone())
                         .map(|(key, value)| CallItem::Kwarg(key, value)),
-                    sexpr.clone().map(CallItem::Arg),
+                    expr.clone().map(CallItem::Arg),
                 ))
                 .spanned()
                 .boxed(),
@@ -541,7 +543,7 @@ where
             .or_not(),
         )
         .then_ignore(just(START_BLOCK))
-        .then(block_or_inline_stmt.clone())
+        .then(expr_or_inline_stmt_or_block.clone())
         .map(|(arglist, block)| Expr::Class(arglist.unwrap_or_else(|| Vec::new()), Box::new(block)))
         .spanned()
         .labelled("class")
@@ -549,14 +551,14 @@ where
 
     let classic_if = just(Token::Kw("if"))
         .ignore_then(group((
-            sexpr.clone().then_ignore(just(START_BLOCK)),
-            block_or_inline_stmt.clone(),
+            expr.clone().then_ignore(just(START_BLOCK)),
+            expr_or_inline_stmt_or_block.clone(),
             group((
                 just(Token::Eol).or_not(),
                 just(Token::Kw("else")),
                 just(START_BLOCK),
             ))
-            .ignore_then(block_or_inline_stmt.clone())
+            .ignore_then(expr_or_inline_stmt_or_block.clone())
             .or_not(),
         )))
         .map(|(cond, if_, else_)| Expr::If(Box::new(cond), Box::new(if_), else_.map(Box::new)))
@@ -580,9 +582,7 @@ where
                 .spanned(),
             block
                 .clone()
-                .delimited_by_with_eol(symbol("("), symbol(")"))
-                .map(|x| Expr::Block(Box::new(x)))
-                .spanned(),
+                .delimited_by_with_eol(symbol("("), symbol(")")),
             nary_tuple
                 .clone()
                 .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
@@ -609,17 +609,17 @@ where
     let call_args = enumeration(
         choice((
             symbol("*")
-                .ignore_then(sexpr.clone())
+                .ignore_then(expr.clone())
                 .map(CallItem::ArgSpread),
             symbol("**")
-                .ignore_then(sexpr.clone())
+                .ignore_then(expr.clone())
                 .map(CallItem::KwargSpread),
             ident
                 .clone()
                 .then_ignore(symbol("="))
-                .then(sexpr.clone())
+                .then(expr.clone())
                 .map(|(key, value)| CallItem::Kwarg(key, value)),
-            sexpr.clone().map(CallItem::Arg),
+            expr.clone().map(CallItem::Arg),
         ))
         .spanned()
         .boxed(),
@@ -635,8 +635,8 @@ where
 
     let subscript = enumeration(
         choice((
-            symbol("*").ignore_then(sexpr.clone()).map(ListItem::Spread),
-            sexpr.clone().map(ListItem::Item),
+            symbol("*").ignore_then(expr.clone()).map(ListItem::Spread),
+            expr.clone().map(ListItem::Item),
         ))
         .boxed(),
         symbol(","),
@@ -653,8 +653,7 @@ where
 
     let then = symbol(".")
         .ignore_then(
-            sexpr
-                .clone()
+            expr.clone()
                 .delimited_by_with_eol(symbol("("), symbol(")"))
                 .map(Postfix::Then),
         )
@@ -670,7 +669,7 @@ where
     let (pattern, nary_pattern) = match_pattern(
         ident.clone(),
         qualified_ident.clone(),
-        sexpr.clone(),
+        expr.clone(),
         literal_expr.clone(),
     );
 
@@ -814,9 +813,9 @@ where
         .boxed();
 
     let fn_ = function(
-        block_or_inline_stmt.clone(),
+        expr_or_inline_stmt_or_block.clone(),
         ident.clone(),
-        sexpr.clone(),
+        expr.clone(),
         pattern.clone(),
     );
 
@@ -860,23 +859,23 @@ where
 
     let slices = choice((slice0, slice1));
 
-    let case_ = choice((group((
+    let case_ = group((
         nary_pattern.clone(),
         just(Token::Kw("if")).ignore_then(binary3.clone()).or_not(),
-        symbol("=>").ignore_then(block_or_inline_stmt.clone()),
+        symbol("=>").ignore_then(expr_or_inline_stmt_or_block.clone()),
     ))
     .map(|(pattern, guard, body)| MatchCase {
         pattern: Some(pattern),
         guard,
         body,
-    }),))
+    })
     .labelled("match-case")
     .as_context()
     .boxed();
 
     let default_case = just(Token::Ident("default"))
         .then(just(START_BLOCK).or_not())
-        .ignore_then(block_or_inline_stmt.clone())
+        .ignore_then(expr_or_inline_stmt_or_block.clone())
         .map(|x| MatchCase {
             pattern: None,
             guard: None,
@@ -943,12 +942,12 @@ where
             group((
                 just(Token::Kw("then"))
                     .then(just(START_BLOCK).or_not())
-                    .ignore_then(block_or_inline_stmt.clone()),
+                    .ignore_then(expr_or_inline_stmt_or_block.clone()),
                 just(Token::Eol)
                     .or_not()
                     .then(just(Token::Kw("else")))
                     .then(just(START_BLOCK).or_not())
-                    .ignore_then(block_or_inline_stmt.clone())
+                    .ignore_then(expr_or_inline_stmt_or_block.clone())
                     .or_not(),
             ))
             .or_not(),
@@ -972,7 +971,7 @@ where
         false,
     );
 
-    sexpr.define(binary6.labelled("expression").as_context().boxed());
+    expr.define(binary6.labelled("expression").as_context().boxed());
 
     // Statements
 
@@ -1002,18 +1001,18 @@ where
         .repeated()
         .collect()
         .boxed(),
-        sexpr.clone(),
-        symbol("=").ignore_then(sexpr.clone()),
+        expr.clone(),
+        symbol("=").ignore_then(expr.clone()),
     ))
     .map(|(modifiers, lhs, rhs)| Stmt::Assign(lhs, rhs, modifiers))
     .boxed();
 
-    let inline_expr_stmt = sexpr.clone().map(Stmt::Expr).boxed();
+    let inline_expr_stmt = expr.clone().map(Stmt::Expr).boxed();
 
     let while_stmt = just(Token::Kw("while"))
-        .ignore_then(sexpr.clone())
+        .ignore_then(expr.clone())
         .then_ignore(just(START_BLOCK))
-        .then(block_or_inline_stmt.clone())
+        .then(expr_or_inline_stmt_or_block.clone())
         .map(|(cond, body)| Stmt::While(cond, body))
         .labelled("while statement")
         .boxed();
@@ -1022,7 +1021,7 @@ where
         .then(just(Token::Kw("except")))
         .ignore_then(nary_pattern.clone().or_not())
         .boxed()
-        .then(just(START_BLOCK).ignore_then(block_or_inline_stmt.clone()))
+        .then(just(START_BLOCK).ignore_then(expr_or_inline_stmt_or_block.clone()))
         .map(|(pattern, body)| MatchCase {
             pattern,
             guard: None,
@@ -1034,14 +1033,14 @@ where
     let finally_block = one_of([Token::Eol])
         .then(just(Token::Kw("finally")))
         .then(just(START_BLOCK))
-        .ignore_then(block_or_inline_stmt.clone())
+        .ignore_then(expr_or_inline_stmt_or_block.clone())
         .labelled("finally block")
         .boxed();
 
     let try_stmt = just(Token::Kw("try"))
         .then(just(START_BLOCK))
         .ignore_then(group((
-            block_or_inline_stmt.clone(),
+            expr_or_inline_stmt_or_block.clone(),
             except_block.repeated().collect(),
             finally_block.or_not(),
         )))
@@ -1052,8 +1051,8 @@ where
     let for_stmt = just(Token::Kw("for"))
         .ignore_then(group((
             nary_pattern.clone().then_ignore(just(Token::Kw("in"))),
-            sexpr.clone().then_ignore(just(START_BLOCK)),
-            block_or_inline_stmt.clone(),
+            expr.clone().then_ignore(just(START_BLOCK)),
+            expr_or_inline_stmt_or_block.clone(),
         )))
         .map(|(decl, iter, body)| Stmt::For(decl, iter, body))
         .labelled("for statement")
@@ -1066,14 +1065,14 @@ where
         .boxed();
 
     let inline_return_stmt = just(Token::Kw("return"))
-        .ignore_then(sexpr.clone())
+        .ignore_then(expr.clone())
         .map(Stmt::Return)
         .labelled("inline return statement")
         .boxed();
 
     let assert_stmt = just(Token::Kw("assert"))
-        .ignore_then(sexpr.clone())
-        .then(symbol(",").ignore_then(sexpr.clone()).or_not())
+        .ignore_then(expr.clone())
+        .then(symbol(",").ignore_then(expr.clone()).or_not())
         .map(|(x, y)| Stmt::Assert(x, y))
         .labelled("assert statement")
         .boxed();
@@ -1085,7 +1084,7 @@ where
         .boxed();
 
     let inline_raise_stmt = just(Token::Kw("raise"))
-        .ignore_then(sexpr.clone().or_not())
+        .ignore_then(expr.clone().or_not())
         .map(Stmt::Raise)
         .labelled("inline raise statement")
         .boxed();
@@ -1186,7 +1185,10 @@ where
 pub fn parse_tokens<'tokens, 'src: 'tokens>(
     src: &'src str,
     tokens: &'tokens TokenList<'src>,
-) -> (Option<SBlock<'src>>, Vec<Rich<'tokens, Token<'src>, Span>>) {
+) -> (
+    Option<Vec<SStmt<'src>>>,
+    Vec<Rich<'tokens, Token<'src>, Span>>,
+) {
     parser()
         .parse(
             tokens

@@ -92,110 +92,124 @@ struct WithPre<'src, T> {
     value: T,
 }
 
+enum PyBlockExpr<'src> {
+    Nothing,
+    Never,
+    Expr(SPyExpr<'src>),
+}
+
 type SPyExprWithPre<'src> = WithPre<'src, SPyExpr<'src>>;
+type PyBlockExprWithPre<'src> = WithPre<'src, PyBlockExpr<'src>>;
 
-trait SBlockExt<'src> {
-    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>>;
+trait ExprWithPreExt<'src> {
+    fn drop_expr(self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlock<'src>>;
+}
 
-    fn transform_with_final_stmt<'ast>(
-        &'ast self,
-        ctx: &mut TfCtx<'src>,
-    ) -> TfResult<PyBlock<'src>>;
+impl<'src> ExprWithPreExt<'src> for SPyExprWithPre<'src> {
+    fn drop_expr(self, _ctx: &mut TfCtx<'src>) -> TfResult<PyBlock<'src>> {
+        let mut block = self.pre;
+
+        match self.value.value {
+            PyExpr::Literal(..) | PyExpr::Ident(..) => {}
+            _ => {
+                let span = self.value.tl_span;
+                block.push((PyStmt::Expr(self.value), span).into());
+            }
+        }
+
+        Ok(block)
+    }
+}
+
+impl<'src> ExprWithPreExt<'src> for PyBlockExprWithPre<'src> {
+    fn drop_expr(self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlock<'src>> {
+        if let PyBlockExpr::Expr(expr) = self.value {
+            Ok(SPyExprWithPre {
+                pre: self.pre,
+                value: expr,
+            }
+            .drop_expr(ctx)?)
+        } else {
+            Ok(self.pre)
+        }
+    }
+}
+
+trait BlockExt<'src> {
+    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlockExprWithPre<'src>>;
 
     fn transform_with_depth<'ast>(
         &'ast self,
         ctx: &mut TfCtx<'src>,
         is_top_level: bool,
-    ) -> TfResult<SPyExprWithPre<'src>>;
+    ) -> TfResult<PyBlockExprWithPre<'src>>;
 }
 
-impl<'src> SBlockExt<'src> for SBlock<'src> {
-    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>> {
+impl<'src> BlockExt<'src> for Vec<SStmt<'src>> {
+    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlockExprWithPre<'src>> {
         self.transform_with_depth(ctx, false)
     }
 
-    fn transform_with_final_stmt<'ast>(
-        &'ast self,
-        ctx: &mut TfCtx<'src>,
-    ) -> TfResult<PyBlock<'src>> {
-        let mut t = self.transform(ctx)?;
-        match t.value.value {
-            PyExpr::Literal(..) | PyExpr::Ident(..) => {}
-            _ => {
-                t.pre.push((PyStmt::Expr(t.value), self.1).into());
-            }
-        }
-        Ok(t.pre)
-    }
-
     fn transform_with_depth<'ast>(
         &'ast self,
         ctx: &mut TfCtx<'src>,
         is_top_level: bool,
-    ) -> TfResult<SPyExprWithPre<'src>> {
-        let (block, _span) = self;
+    ) -> TfResult<PyBlockExprWithPre<'src>> {
+        if self.is_empty() {
+            return Ok(WithPre {
+                pre: PyBlock::new(),
+                value: PyBlockExpr::Nothing,
+            });
+        }
 
-        match block {
-            Block::Stmts(stmts) => {
-                if stmts.is_empty() {
-                    return Ok(WithPre {
-                        pre: PyBlock::new(),
-                        value: (PyExpr::Literal(PyLiteral::None), self.1).into(),
-                    });
+        let mut pre = PyBlock::new();
+        let mut errs = Vec::new();
+        let mut ok = true;
+
+        let mut handle_stmt = |stmt: &SStmt<'src>| {
+            match stmt.transform_with_depth(ctx, is_top_level) {
+                Ok(transformed) => {
+                    pre.extend(transformed);
                 }
-
-                let mut py_stmts = PyBlock::new();
-                let mut errs = Vec::new();
-                let mut ok = true;
-
-                let mut handle_stmt = |stmt: &SStmt<'src>| {
-                    match stmt.transform_with_depth(ctx, is_top_level) {
-                        Ok(transformed) => {
-                            py_stmts.extend(transformed);
-                        }
-                        Err(e) => {
-                            errs.extend(e.0);
-                            ok = false;
-                        }
-                    };
-                };
-
-                let mut iter = stmts.iter();
-
-                for stmt in iter.by_ref().take(stmts.len() - 1) {
-                    handle_stmt(stmt);
+                Err(e) => {
+                    errs.extend(e.0);
+                    ok = false;
                 }
+            };
+        };
 
-                let final_stmt = iter.next().unwrap();
-                let mut final_expr = None;
+        let mut iter = self.iter();
 
-                match &final_stmt.0 {
-                    Stmt::Expr(expr) => match expr.transform_with_placeholder_guard(ctx) {
-                        Ok(expr_with_aux) => {
-                            py_stmts.extend(expr_with_aux.pre);
-                            final_expr = Some(expr_with_aux.value);
-                        }
-                        Err(e) => {
-                            errs.extend(e.0);
-                            ok = false;
-                        }
-                    },
-                    _ => {
-                        handle_stmt(final_stmt);
-                    }
+        for stmt in iter.by_ref().take(self.len() - 1) {
+            handle_stmt(stmt);
+        }
+
+        let final_stmt = iter.next().unwrap();
+        let mut value = PyBlockExpr::Nothing;
+
+        match &final_stmt.0 {
+            Stmt::Expr(expr) => match expr.transform_with_placeholder_guard(ctx) {
+                Ok(expr_with_aux) => {
+                    value = PyBlockExpr::Expr(bind_pre(&mut pre, expr_with_aux));
                 }
-
-                if ok {
-                    Ok(WithPre {
-                        pre: py_stmts,
-                        value: final_expr
-                            .unwrap_or((PyExpr::Literal(PyLiteral::None), self.1).into()),
-                    })
-                } else {
-                    Err(TfErrs(errs))
+                Err(e) => {
+                    errs.extend(e.0);
+                    ok = false;
                 }
+            },
+            Stmt::Raise(..) | Stmt::Return(..) | Stmt::Break | Stmt::Continue => {
+                handle_stmt(final_stmt);
+                value = PyBlockExpr::Never;
             }
-            Block::Expr(sexpr) => sexpr.transform(ctx),
+            _ => {
+                handle_stmt(final_stmt);
+            }
+        }
+
+        if ok {
+            Ok(WithPre { pre, value })
+        } else {
+            Err(TfErrs(errs))
         }
     }
 }
@@ -381,7 +395,7 @@ fn destructure_mapping<'src, 'ast>(
     let mut stmts = PyBlock(vec![a.assign(
         a.ident(dict_var.clone(), PyAccessCtx::Store),
         a.call(
-            a.load_ident("dict"),
+            a.load_ident("Record"),
             vec![a.call_arg(a.load_ident(cursor_var.clone()))],
         ),
     )]);
@@ -641,7 +655,7 @@ fn transform_assignment<'src, 'ast>(
                     ctx,
                     ident.clone(),
                     FnDefArgs::ArgList(arglist),
-                    FnDefBody::Block(body),
+                    FnDefBody::Expr(body),
                     decorators,
                     span,
                 )?,
@@ -766,7 +780,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                 let (matcher, cursor) = create_throwing_matcher(ctx, target)?;
                 body_block.extend(matcher);
-                body_block.extend(body.transform_with_final_stmt(ctx)?);
+                body_block.extend(body.transform(ctx)?.drop_expr(ctx)?);
 
                 pre.push(a.for_(
                     a.ident(cursor.clone(), PyAccessCtx::Store),
@@ -784,7 +798,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
             }
             Stmt::While(cond, body) => {
                 let cond_node = cond.transform_with_placeholder_guard(ctx)?;
-                let body_block = body.transform_with_final_stmt(ctx)?;
+                let body_block = body.transform(ctx)?.drop_expr(ctx)?;
 
                 let mut stmts = PyBlock::new();
 
@@ -808,10 +822,10 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 Ok(stmts)
             }
             Stmt::Try(body, excepts, finally) => {
-                let body_block = body.transform_with_final_stmt(ctx)?;
+                let body_block = body.transform(ctx)?.drop_expr(ctx)?;
                 let finally_block = finally
                     .as_ref()
-                    .map(|f| f.transform_with_final_stmt(ctx))
+                    .map(|f| f.transform(ctx)?.drop_expr(ctx))
                     .transpose()?;
 
                 let mut stmts = PyBlock::new();
@@ -901,8 +915,8 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 fn transform_if_expr<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     cond: &'ast SExpr<'src>,
-    then_block: &'ast SBlock<'src>,
-    else_block: &'ast Option<Box<SBlock<'src>>>,
+    then_block: &'ast SExpr<'src>,
+    else_block: Option<&'ast SExpr<'src>>,
     span: &Span,
 ) -> TfResult<SPyExprWithPre<'src>> {
     let cond = cond.transform(ctx)?;
@@ -1266,14 +1280,14 @@ fn make_class_def<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     name: Cow<'src, str>,
     bases: &'ast Vec<SCallItem<'src>>,
-    body: &'ast Box<SBlock<'src>>,
+    body: &'ast SExpr<'src>,
     decorators: PyDecorators<'src>,
     span: &Span,
 ) -> TfResult<PyBlock<'src>> {
     let mut stmts = PyBlock::new();
     let mut bases_nodes: Vec<PyCallItem<'src>> = vec![];
 
-    let mut block = body.transform_with_final_stmt(ctx)?;
+    let mut block = body.transform(ctx)?.drop_expr(ctx)?;
 
     for base in bases {
         let call_item: PyCallItem<'src> = match &base.0 {
@@ -1315,7 +1329,7 @@ fn make_class_def<'src, 'ast>(
 
 enum FnDefBody<'src, 'ast> {
     PyStmts(PyBlock<'src>),
-    Block(&'ast SBlock<'src>),
+    Expr(&'ast SExpr<'src>),
 }
 
 enum FnDefArgs<'src, 'ast> {
@@ -1376,7 +1390,7 @@ fn prepare_py_fn<'src, 'ast>(
 
     body_stmts.extend(match body {
         FnDefBody::PyStmts(stmts) => stmts,
-        FnDefBody::Block(block) => {
+        FnDefBody::Expr(block) => {
             let block = block.transform(ctx)?;
             let mut stmts = block.pre;
 
@@ -1974,20 +1988,20 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                         // avoid this clone?
                         pattern: Some(*pattern.clone()),
                         guard: None,
-                        body: b.stmts_block(vec![
+                        body: b.block_expr(vec![
                             b.assign(b.ident(var_name.clone()), b.ident(err_name.clone())),
                         ]),
                     });
                     handlers.push(MatchCase {
                         pattern: None,
                         guard: None,
-                        body: b.stmts_block(vec![b.raise(None)]),
+                        body: b.block_expr(vec![b.raise(None)]),
                     });
                 } else {
                     handlers.push(MatchCase {
                         pattern: None,
                         guard: None,
-                        body: b.stmts_block(vec![
+                        body: b.block_expr(vec![
                             b.assign(b.ident(var_name.clone()), b.ident(err_name.clone())),
                         ]),
                     });
@@ -2008,7 +2022,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             Expr::Fn(arglist, body) => make_fn_exp(
                 ctx,
                 FnDefArgs::ArgList(arglist),
-                FnDefBody::Block(body),
+                FnDefBody::Expr(body),
                 span,
             ),
             Expr::Class(bases, body) => {
@@ -2039,10 +2053,25 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             | Expr::MappedThen(..)
             | Expr::Extension(..)
             | Expr::MappedExtension(..) => transform_postfix_expr(ctx, self, access_ctx),
-            Expr::If(cond, then_block, else_block) => {
-                transform_if_expr(ctx, cond, then_block, else_block, span)
+            Expr::If(cond, then_block, else_block) => transform_if_expr(
+                ctx,
+                cond,
+                then_block,
+                else_block.as_ref().map(|x| x.as_ref()),
+                span,
+            ),
+            Expr::Block(block) => {
+                let t = block.transform(ctx)?;
+
+                let none_literal = (PyExpr::Literal(PyLiteral::None), *span).into();
+
+                let value = match t.value {
+                    PyBlockExpr::Expr(expr) => expr,
+                    PyBlockExpr::Nothing | PyBlockExpr::Never => none_literal,
+                };
+
+                Ok(SPyExprWithPre { value, pre: t.pre })
             }
-            Expr::Block(block) => block.transform(ctx),
             Expr::Match(subject, cases) => Ok(transform_match_expr(ctx, subject, cases, span)?.0),
             Expr::Matches(subject, pattern) => {
                 let mut block = PyBlock::new();
@@ -2317,13 +2346,15 @@ pub struct TransformOutput<'src> {
 
 pub fn transform_ast<'src, 'ast>(
     source: &'src str,
-    block: &'ast SBlock<'src>,
+    block: &'ast Vec<SStmt<'src>>,
 ) -> TfResult<TransformOutput<'src>> {
     let mut ctx = TfCtx::new(source)?;
     let mut stmts = block.transform_with_depth(&mut ctx, true)?;
-    let span = stmts.value.tl_span;
 
-    stmts.pre.push((PyStmt::Expr(stmts.value), span).into());
+    if let PyBlockExpr::Expr(value) = stmts.value {
+        let span = value.tl_span;
+        stmts.pre.push((PyStmt::Expr(value), span).into());
+    }
 
     Ok(TransformOutput {
         py_block: stmts.pre,

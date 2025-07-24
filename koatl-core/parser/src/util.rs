@@ -42,7 +42,7 @@ impl AstBuilder {
         (Stmt::Assert(expr, msg), self.span)
     }
 
-    pub fn while_<'src>(&self, test: SExpr<'src>, body: SBlock<'src>) -> SStmt<'src> {
+    pub fn while_<'src>(&self, test: SExpr<'src>, body: SExpr<'src>) -> SStmt<'src> {
         (Stmt::While(test, body), self.span)
     }
 
@@ -50,7 +50,7 @@ impl AstBuilder {
         &self,
         target: SPattern<'src>,
         iter: SExpr<'src>,
-        body: SBlock<'src>,
+        body: SExpr<'src>,
     ) -> SStmt<'src> {
         (Stmt::For(target, iter, body), self.span)
     }
@@ -61,9 +61,9 @@ impl AstBuilder {
 
     pub fn try_<'src>(
         &self,
-        body: SBlock<'src>,
+        body: SExpr<'src>,
         handlers: Vec<MatchCase<'src>>,
-        orelse: Option<SBlock<'src>>,
+        orelse: Option<SExpr<'src>>,
     ) -> SStmt<'src> {
         (Stmt::Try(body, handlers, orelse), self.span)
     }
@@ -116,8 +116,8 @@ impl AstBuilder {
     pub fn if_<'src>(
         &self,
         test: SExpr<'src>,
-        body: SBlock<'src>,
-        orelse: Option<SBlock<'src>>,
+        body: SExpr<'src>,
+        orelse: Option<SExpr<'src>>,
     ) -> SExpr<'src> {
         (
             Expr::If(Box::new(test), Box::new(body), orelse.map(Box::new)),
@@ -129,7 +129,7 @@ impl AstBuilder {
         (Expr::Match(Box::new(subject), cases), self.span)
     }
 
-    pub fn class<'src>(&self, bases: Vec<SCallItem<'src>>, body: SBlock<'src>) -> SExpr<'src> {
+    pub fn class<'src>(&self, bases: Vec<SCallItem<'src>>, body: SExpr<'src>) -> SExpr<'src> {
         (Expr::Class(bases, Box::new(body)), self.span)
     }
 
@@ -156,7 +156,7 @@ impl AstBuilder {
         (Expr::Then(Box::new(left), Box::new(right)), self.span)
     }
 
-    pub fn function<'src>(&self, args: Vec<ArgDefItem<'src>>, body: SBlock<'src>) -> SExpr<'src> {
+    pub fn function<'src>(&self, args: Vec<ArgDefItem<'src>>, body: SExpr<'src>) -> SExpr<'src> {
         (Expr::Fn(args, Box::new(body)), self.span)
     }
 
@@ -168,17 +168,8 @@ impl AstBuilder {
         (Expr::Fstr(prefix, parts), self.span)
     }
 
-    pub fn block_expr<'src>(&self, block: SBlock<'src>) -> SExpr<'src> {
-        (Expr::Block(Box::new(block)), self.span)
-    }
-
-    // Block builders
-    pub fn stmts_block<'src>(&self, stmts: Vec<SStmt<'src>>) -> SBlock<'src> {
-        (Block::Stmts(stmts), self.span)
-    }
-
-    pub fn expr_block<'src>(&self, expr: SExpr<'src>) -> SBlock<'src> {
-        (Block::Expr(expr), self.span)
+    pub fn block_expr<'src>(&self, block: Vec<SStmt<'src>>) -> SExpr<'src> {
+        (Expr::Block(block), self.span)
     }
 
     // Literal builders
@@ -254,7 +245,7 @@ impl AstBuilder {
     // Format expression builder
     pub fn fmt_expr<'src>(
         &self,
-        block: SBlock<'src>,
+        block: SExpr<'src>,
         fmt: Option<impl Into<Cow<'src, str>>>,
     ) -> SFmtExpr<'src> {
         (

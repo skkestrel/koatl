@@ -3,7 +3,8 @@ pub mod parser;
 pub mod py;
 pub mod transform;
 
-use parser::ast::{Block, Span};
+use ::parser::ast::SStmt;
+use parser::ast::Span;
 use parser::{TokenList, parse_tokens, tokenize};
 
 use crate::py::ast::{PyAccessCtx, PyImportAlias, PyListItem, PyLiteral};
@@ -207,7 +208,7 @@ pub fn format_errs(errs: &[TlErr], filename: &str, src: &str) -> Vec<u8> {
     writer
 }
 
-pub fn parse_tl<'src>(src: &'src str) -> TlResult<::parser::ast::SBlock<'src>> {
+pub fn parse_tl<'src>(src: &'src str) -> TlResult<Vec<SStmt<'src>>> {
     let mut errs = vec![];
 
     let (tokens, token_errs) = tokenize(&src);
@@ -242,7 +243,7 @@ pub fn parse_tl<'src>(src: &'src str) -> TlResult<::parser::ast::SBlock<'src>> {
         }
     }));
 
-    let tl_ast: (Block<'src>, Span) = tl_ast.ok_or_else(|| errs)?;
+    let tl_ast: Vec<SStmt<'src>> = tl_ast.ok_or_else(|| errs)?;
     // println!("AST: {ast:?}");
 
     Ok(tl_ast)
