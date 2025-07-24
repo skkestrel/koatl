@@ -857,7 +857,12 @@ where
                         new_block_span.context,
                         new_block_span.end..new_block_span.end,
                     );
-                    tokens.push((Token::Eol, end_span));
+
+                    // don't push another eol if the last token is already eol (edge case fix)
+                    if tokens.last().is_none_or(|t| t.0 != Token::Eol) {
+                        tokens.push((Token::Eol, end_span));
+                    }
+
                     tokens.push((Token::Symbol("END_BLOCK"), end_span));
 
                     // continue in order to catch trailing characters after the block
@@ -892,7 +897,10 @@ where
                 self.parse_indentation()?;
 
                 if block_type != NewBlockType::Continuation {
-                    tokens.push((Token::Eol, eol_span));
+                    // don't push another eol if the last token is already eol (edge case fix)
+                    if tokens.last().is_none_or(|t| t.0 != Token::Eol) {
+                        tokens.push((Token::Eol, eol_span));
+                    }
                 }
             } else {
                 // couldn't parse indentation - end of file?
