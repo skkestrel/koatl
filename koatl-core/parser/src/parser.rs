@@ -299,7 +299,7 @@ where
             .then(fn_body.clone())
             .map(|(x, body)| Expr::Fn(vec![ArgDefItem::Arg(x, None)], Box::new(body)))
             .spanned()
-            .labelled("unary-fn")
+            .labelled("uni-fn")
             .boxed();
 
         let arg_list = enumeration(
@@ -326,7 +326,7 @@ where
             .then(fn_body)
             .map(|(args, body)| Expr::Fn(args, Box::new(body)))
             .spanned()
-            .labelled("nary-fn")
+            .labelled("multi-fn")
             .as_context()
             .boxed();
 
@@ -564,19 +564,11 @@ where
         .labelled("if")
         .boxed();
 
-    let block_expr = just(Token::Kw("block"))
-        .then(just(START_BLOCK))
-        .ignore_then(block_or_inline_stmt.clone())
-        .map(|x| Expr::Block(Box::new(x)))
-        .spanned()
-        .labelled("block");
-
     atom.define(
         choice((
             ident_expr.clone(),
             classic_if,
             class_,
-            block_expr,
             literal_expr.clone(),
             placeholder,
             list.clone(),
@@ -585,6 +577,11 @@ where
             symbol("(")
                 .then(symbol(")"))
                 .map(|_| Expr::Tuple(vec![]))
+                .spanned(),
+            block
+                .clone()
+                .delimited_by_with_eol(symbol("("), symbol(")"))
+                .map(|x| Expr::Block(Box::new(x)))
                 .spanned(),
             nary_tuple
                 .clone()
@@ -722,7 +719,7 @@ where
     .foldr_with(postfix, |op: UnaryOp, rhs: SExpr, e| {
         (Expr::Unary(op, Box::new(rhs)), e.span())
     })
-    .labelled("unary")
+    .labelled("unary-expression")
     .boxed();
 
     fn make_binary_op<'tokens, 'src: 'tokens, I, POp, PArg>(

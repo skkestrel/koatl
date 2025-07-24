@@ -13,6 +13,7 @@ use crate::transform::transform_ast;
 use ariadne::{Color, Label, Report, ReportKind, sources};
 
 pub enum TlErrKind {
+    Tokenize,
     Parse,
     Transform,
     Emit,
@@ -188,8 +189,14 @@ pub fn format_errs(errs: &[TlErr], filename: &str, src: &str) -> Vec<u8> {
                     .with_color(Color::Red),
             )
             .with_labels(e.contexts.iter().map(|(label, span)| {
+                let msg = if let TlErrKind::Parse = e.kind {
+                    format!("while parsing this {label}")
+                } else {
+                    label.clone()
+                };
+
                 Label::new((filename.clone(), span.into_range()))
-                    .with_message(format!("while parsing this {label}"))
+                    .with_message(msg)
                     .with_color(Color::Yellow)
             }))
             .finish()
@@ -206,7 +213,7 @@ pub fn parse_tl<'src>(src: &'src str) -> TlResult<::parser::ast::SBlock<'src>> {
     let (tokens, token_errs) = tokenize(&src);
     errs.extend(token_errs.into_iter().map(|e| {
         TlErr {
-            kind: TlErrKind::Parse,
+            kind: TlErrKind::Tokenize,
             message: e.reason().to_string(),
             span: Some(*e.span()),
             contexts: e

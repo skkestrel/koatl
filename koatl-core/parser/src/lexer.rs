@@ -829,6 +829,7 @@ where
             }
 
             let before_newline = self.input.save();
+            let eol_span = self.span_since(&self.cursor());
 
             if self.try_parse(|x| x.parse_newline()).is_err() {
                 // make sure that there aren't any unexpected characters
@@ -891,7 +892,7 @@ where
                 self.parse_indentation()?;
 
                 if block_type != NewBlockType::Continuation {
-                    tokens.push((Token::Eol, self.span_since(&self.cursor())));
+                    tokens.push((Token::Eol, eol_span));
                 }
             } else {
                 // couldn't parse indentation - end of file?
