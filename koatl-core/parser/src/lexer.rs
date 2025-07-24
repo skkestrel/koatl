@@ -2,6 +2,7 @@
 
 use chumsky::{
     input::{Cursor, InputRef, StrInput},
+    label::LabelError,
     prelude::*,
 };
 use std::{collections::HashSet, fmt};
@@ -267,7 +268,7 @@ where
         const POLYGRAMS: &[&str] = &[
             "===", "<=>", "=>", "..", "==", "<>", "<=", ">=", "//", "**", "??", "@@", ".=",
         ];
-        const MONOGRAMS: &str = "[]()<>.,;:!?@$%^&*+-=|\\/`~";
+        const MONOGRAMS: &str = "[](){}<>.,;:!?@$%^&*+-=|\\/`~";
 
         let saved = self.input.save();
         let start = self.cursor();
@@ -619,7 +620,7 @@ where
                 let _ = self.try_parse(|x| x.parse_newline());
 
                 let (expr, expr_span) =
-                    self.try_parse(|x| x.parse_block(0, NewBlockType::BeginInput, false))?;
+                    self.try_parse(|x| x.parse_block(0, NewBlockType::BeginInput))?;
 
                 self.try_parse(|x| x.parse_seq("}"))?;
 
@@ -700,11 +701,10 @@ where
         &mut self,
         current_indent: usize,
         block_type: NewBlockType,
-        close_brace_err: bool,
     ) -> TResult<'src, Spanned<TokenList<'src>>> {
         let mut tokens = vec![];
 
-        // TODO should parse_empty_line be part of parse_indentation
+        // TODO should parse_empty_line be part of parse_indentation?
         while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
 
         let (indent_level, indent_span) =
@@ -729,19 +729,25 @@ where
             }
         }
 
+        const OPEN_DELIMS: &[char] = &['{', '[', '('];
+        const CLOSE_DELIMS: &[char] = &['}', ']', ')'];
+        let mut delim_stack = vec![];
+
         loop {
-            let mut has_token = false;
+            // over lines
             let mut expect_new_block = false;
+            let mut end_block = false;
 
             loop {
+                // over tokens in line
                 if self.look_ahead(TokenizeCtx::parse_str_start).is_ok() {
                     let toks = self.parse_str()?;
                     tokens.extend(toks.0);
-
-                    has_token = true;
-                    expect_new_block = false;
                 } else {
                     let tok;
+
+                    let start_curs = self.cursor();
+                    let saved = self.input.save();
 
                     if let Ok((token, after_dot)) = self.try_parse(TokenizeCtx::parse_number) {
                         if after_dot && self.peek() == Some('.') {
@@ -760,33 +766,64 @@ where
                         break;
                     }
 
-                    expect_new_block = tok.0 == Token::Symbol("=>")
-                        || tok.0 == Token::Symbol(":")
-                        || tok.0 == Token::Symbol("{")
-                        || tok.0 == Token::Symbol("[")
-                        || tok.0 == Token::Symbol("(");
+                    if let Token::Symbol(s) = &tok.0 {
+                        let char = s.chars().next().unwrap_or('\0');
+                        if OPEN_DELIMS.contains(&char) {
+                            delim_stack.push((char, tok.1));
+                        } else if let Some(i) = CLOSE_DELIMS.iter().position(|&c| c == char) {
+                            let corresponding_open = OPEN_DELIMS[i];
+
+                            if let Some((open_delim_char, span)) = delim_stack.pop() {
+                                if open_delim_char != corresponding_open {
+                                    let mut err = TError::custom(
+                                        self.span_since(&start_curs),
+                                        format!(
+                                            "unmatched delimiter: expected '{}', found '{}'",
+                                            CLOSE_DELIMS[i], s
+                                        ),
+                                    );
+
+                                    // why?
+                                    <chumsky::error::Rich<'_, char> as LabelError<
+                                        '_,
+                                        TInput,
+                                        &str,
+                                    >>::in_context(
+                                        &mut err, "here", span
+                                    );
+
+                                    return Err(err);
+                                }
+                            } else {
+                                // end the block - eol is emitted by caller
+                                self.input.rewind(saved);
+                                end_block = true;
+                                break;
+                            }
+                        }
+                    }
 
                     tokens.push(tok);
-                    has_token = true;
+                }
+
+                expect_new_block = false;
+
+                if let Some(last_token) = tokens.last() {
+                    if let Token::Symbol(s) = last_token.0 {
+                        if s == "=>"
+                            || s == ":"
+                            || OPEN_DELIMS.contains(&s.chars().next().unwrap_or('\0'))
+                        {
+                            expect_new_block = true;
+                        }
+                    }
                 }
 
                 self.parse_nonsemantic()?;
             }
 
-            if self.peek().is_none() {
-                // reached eof
+            if end_block || self.peek().is_none() {
                 break;
-            }
-
-            if self.peek() == Some('}') {
-                if close_brace_err {
-                    return Err(Rich::custom(
-                        self.span_since(&self.cursor()),
-                        "unexpected '}' outside fstr",
-                    ));
-                } else {
-                    break;
-                }
             }
 
             if self.try_parse(|x| x.parse_newline()).is_err() {
@@ -796,35 +833,32 @@ where
                 ));
             }
 
-            if has_token {
-                if expect_new_block {
-                    let new_block = self.try_parse(|x| {
-                        x.parse_block(indent_level, NewBlockType::NewBlock, close_brace_err)
-                    });
+            if expect_new_block {
+                let new_block =
+                    self.try_parse(|x| x.parse_block(indent_level, NewBlockType::NewBlock));
 
-                    if let Ok((new_block, new_block_span)) = new_block {
-                        tokens.push((
-                            Token::Symbol("BEGIN_BLOCK"),
-                            Span::new(
-                                new_block_span.context,
-                                new_block_span.start..new_block_span.start,
-                            ),
-                        ));
-                        tokens.extend(new_block.0);
-
-                        let end_span = Span::new(
+                if let Ok((new_block, new_block_span)) = new_block {
+                    tokens.push((
+                        Token::Symbol("BEGIN_BLOCK"),
+                        Span::new(
                             new_block_span.context,
-                            new_block_span.end..new_block_span.end,
-                        );
-                        tokens.push((Token::Eol, end_span));
-                        tokens.push((Token::Symbol("END_BLOCK"), end_span));
-                    } else if let Err(e) = new_block {
-                        while self.try_parse(TokenizeCtx::parse_newline_or_eof).is_err() {
-                            self.next();
-                        }
+                            new_block_span.start..new_block_span.start,
+                        ),
+                    ));
+                    tokens.extend(new_block.0);
 
-                        return Err(e);
+                    let end_span = Span::new(
+                        new_block_span.context,
+                        new_block_span.end..new_block_span.end,
+                    );
+                    tokens.push((Token::Eol, end_span));
+                    tokens.push((Token::Symbol("END_BLOCK"), end_span));
+                } else if let Err(e) = new_block {
+                    while self.try_parse(TokenizeCtx::parse_newline_or_eof).is_err() {
+                        self.next();
                     }
+
+                    return Err(e);
                 }
             }
 
@@ -836,9 +870,8 @@ where
                 if cur_indent_level > indent_level {
                     // handle continuation
 
-                    let (new_block, new_block_span) = self.try_parse(|x| {
-                        x.parse_block(indent_level, NewBlockType::Continuation, close_brace_err)
-                    })?;
+                    let (new_block, new_block_span) = self
+                        .try_parse(|x| x.parse_block(indent_level, NewBlockType::Continuation))?;
 
                     tokens.extend(new_block.0);
                 }
@@ -861,20 +894,29 @@ where
             }
         }
 
-        let Some(last_block_token) = tokens.last() else {
-            return Err(Rich::custom(indent_span, "empty block"));
+        // empty block is possible with some weird continuation layouts:
+        /*
+         * x = [
+         *      1
+         *      2
+         *   ] then ...
+         *
+         *   ^ this is a continuation that immediately ends due to ]
+         */
+        let block_span = if let Some(last_block_token) = tokens.last() {
+            Span::new(
+                indent_span.context,
+                indent_span.start..last_block_token.1.end,
+            )
+        } else {
+            Span::new(indent_span.context, indent_span.start..indent_span.end)
         };
-
-        let block_span = Span::new(
-            indent_span.context,
-            indent_span.start..last_block_token.1.end,
-        );
 
         Ok((TokenList(tokens), block_span))
     }
 
     fn tokenize_input(&mut self) -> TResult<'src, TokenList<'src>> {
-        let (mut tokens, span) = self.parse_block(0, NewBlockType::BeginInput, true)?;
+        let (mut tokens, span) = self.parse_block(0, NewBlockType::BeginInput)?;
         tokens.0.push((Token::Eol, self.span_since(&self.cursor())));
         Ok(tokens)
     }

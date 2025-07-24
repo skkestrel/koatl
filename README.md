@@ -21,10 +21,17 @@ pyenv local pyo3
 pip install -r requirements.txt
 
 maturin develop -m ./Koatl.toml
-# maturin build --release -m koatl/Cargo.toml
 
 pytest
 koatl ../sample/sunset_timer.tl
+```
+
+## Deploying
+
+Bump version number in Cargo.toml, then
+
+```
+maturin publish
 ```
 
 # Installing the kernel
@@ -33,6 +40,15 @@ koatl ../sample/sunset_timer.tl
 cd koatl-kernel
 pip install -e .
 koatl
+```
+
+## Deploying kernel
+
+Version number is in `koatl_kernel/__init__.py`
+
+```
+python3 -m build
+python3 -m twine upload --repository pypi dist/*
 ```
 
 # Serving docs locally

@@ -37,7 +37,7 @@ x = 2 + (
         2
     else:
         3
-) # <-- note: this bracket cannot (yet) be on the same line as "3" above
+)
 
 foo = x =>
     do_stuff()

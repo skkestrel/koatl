@@ -1,8 +1,1 @@
-This is the main python package.
-
-Version number is in `Cargo.toml`
-
-```
-maturin develop
-maturin publish
-```
+This is the main python package for Koatl.
