@@ -2144,6 +2144,9 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     BinaryOp::Exp => PyBinaryOp::Pow,
                     BinaryOp::MatMul => PyBinaryOp::MatMult,
 
+                    BinaryOp::And => PyBinaryOp::And,
+                    BinaryOp::Or => PyBinaryOp::Or,
+
                     BinaryOp::Lt => PyBinaryOp::Lt,
                     BinaryOp::Gt => PyBinaryOp::Gt,
                     BinaryOp::Leq => PyBinaryOp::Leq,
@@ -2200,6 +2203,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     UnaryOp::Neg => PyUnaryOp::Neg,
                     UnaryOp::Pos => PyUnaryOp::Pos,
                     UnaryOp::Inv => PyUnaryOp::Inv,
+                    UnaryOp::Not => PyUnaryOp::Not,
                     UnaryOp::Yield => {
                         return Ok(SPyExprWithPre {
                             value: (PyExpr::Yield(Box::new(expr.value)), *span).into(),

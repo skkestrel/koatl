@@ -1,2 +1,2 @@
-export import .iterable
+export import .iterable.Iterable
 export import .functional.*

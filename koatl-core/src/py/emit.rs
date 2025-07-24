@@ -139,7 +139,7 @@ impl PyArgDefItem<'_> {
 impl PyUnaryOp {
     pub fn precedence(&self) -> f32 {
         match self {
-            PyUnaryOp::Not => 0.0,
+            PyUnaryOp::Not => LOW_PREC, // TODO
             PyUnaryOp::Neg | PyUnaryOp::Pos | PyUnaryOp::Inv => 4.0,
         }
     }

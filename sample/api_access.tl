@@ -15,22 +15,22 @@ API_RESPONSE = {
     }
 }
 
-map_err = f => value => value.(Ok) then value.(f) else value
+get_user_details = Ok.do((data, user_id) =>
+    x1 = try data[user_id] except KeyError()
 
-get_user_details = (data, user_id) =>
     user = @(try data[user_id] except KeyError()
-        | map_err(e => KeyError(f"User {user_id} not found.")))
+        | map_err(e => KeyError(f"User {user_id} not found: {e}")))
 
     profile = try user.profile
 
-    profile.(Ok) then:
+    not Ok(profile) then:
         print(f"Profile not found.")
     else:
         print(f"Name: {try profile.name ?? "N/A"}")
 
         contact = try profile.contact
 
-        contact.(Ok) then:
+        not Ok(contact) then:
             print(f"Contact not found: {profile}")
         else:
             print(f"Email: {try contact.email ?? "N/A"}")
@@ -46,13 +46,15 @@ get_user_details = (data, user_id) =>
             "No orders found."
     )
 
-    return True
-  | Ok.do
+    ()
+)
 
-get_user_details(API_RESPONSE, "user_a") | repr | print
-print("-" * 20)
-get_user_details(API_RESPONSE, "user_b") | repr | print
-print("-" * 20)
-get_user_details(API_RESPONSE, "user_c") | repr | print
-print("-" * 20)
-get_user_details(API_RESPONSE, "user_d") | repr | print
+["user_a", "user_b", "user_c", "user_d"]
+    | Iterable.map($, id =>
+        print(f"Searching for id {id}")
+        get_user_details(API_RESPONSE, id) match:
+            Ok() => print("Details fetched successfully.")
+            e => print(f"Error fetching details: {repr(e)}")
+        print("-" * 20)
+      )
+    | list

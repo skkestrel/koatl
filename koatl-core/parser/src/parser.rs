@@ -106,11 +106,11 @@ where
     PIdent: Parser<'tokens, TInput, SIdent<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PQualIdent: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PExpr: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
-    PLiteral: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PLiteral: Parser<'tokens, TInput, SLiteral<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
 {
     let mut pattern = Recursive::declare();
 
-    let literal_pattern = literal.clone().map(Pattern::Value).spanned().boxed();
+    let literal_pattern = literal.clone().map(Pattern::Literal).spanned().boxed();
 
     fn to_wildcard<'src>(id: SIdent<'src>) -> Option<SIdent<'src>> {
         if id.0 == "_" { None } else { Some(id) }
@@ -184,7 +184,7 @@ where
                 .clone()
                 .map(|(s, span)| Expr::Literal((Literal::Str(s), span)))
                 .spanned(),
-            literal.clone(),
+            literal.clone().map(Expr::Literal).spanned(),
             sexpr
                 .clone()
                 .delimited_by_with_eol(symbol("("), symbol(")")),
@@ -678,7 +678,7 @@ where
         ident.clone(),
         qualified_ident.clone(),
         expr.clone(),
-        literal_expr.clone(),
+        literal.clone(),
     );
 
     let postfix = atom
@@ -715,6 +715,8 @@ where
         .labelled("postfix")
         .boxed();
 
+    let mut checked = Recursive::<Indirect<TInput, SExpr, TExtra>>::declare();
+
     let unary = select! {
         Token::Symbol("@") => UnaryOp::Yield,
         Token::Symbol("@@") => UnaryOp::YieldFrom,
@@ -723,9 +725,10 @@ where
         Token::Symbol("~") => UnaryOp::Inv,
     }
     .repeated()
-    .foldr_with(postfix, |op: UnaryOp, rhs: SExpr, e| {
-        (Expr::Unary(op, Box::new(rhs)), e.span())
-    })
+    .foldr_with(
+        choice((postfix, checked.clone())),
+        |op: UnaryOp, rhs: SExpr, e| (Expr::Unary(op, Box::new(rhs)), e.span()),
+    )
     .labelled("unary-expression")
     .boxed();
 
@@ -808,17 +811,29 @@ where
         false,
     );
 
-    let checked_ = just(Token::Kw("try"))
-        .ignore_then(binary3.clone())
-        .then(
-            just(Token::Kw("except"))
-                .ignore_then(pattern.clone())
-                .or_not(),
-        )
-        .map(|(expr, typs)| Expr::Checked(Box::new(expr), typs.map(Box::new)))
-        .spanned()
-        .labelled("checked")
-        .boxed();
+    let not = select! {
+        Token::Kw("not") => UnaryOp::Not,
+    }
+    .repeated()
+    .foldr_with(binary3.clone(), |op: UnaryOp, rhs: SExpr, e| {
+        (Expr::Unary(op, Box::new(rhs)), e.span())
+    })
+    .labelled("unary-not")
+    .boxed();
+
+    checked.define(
+        just(Token::Kw("try"))
+            .ignore_then(not.clone())
+            .then(
+                just(Token::Kw("except"))
+                    .ignore_then(pattern.clone())
+                    .or_not(),
+            )
+            .map(|(expr, typs)| Expr::Checked(Box::new(expr), typs.map(Box::new)))
+            .spanned()
+            .labelled("checked")
+            .boxed(),
+    );
 
     let fn_ = function(
         expr_or_inline_stmt_or_block.clone(),
@@ -828,7 +843,7 @@ where
     );
 
     let binary4 = make_binary_op(
-        choice((checked_, fn_, binary3.clone())),
+        choice((checked, fn_, not.clone())),
         select! {
             Token::Symbol("??") => BinaryOp::Coalesce,
         },
@@ -898,7 +913,7 @@ where
             .then_ignore(just(Token::Eol))
             .repeated()
             .collect::<Vec<_>>()
-            .then(default_case.clone().or_not().then_ignore(just(Token::Eol)))
+            .then(default_case.clone().then_ignore(just(Token::Eol)).or_not())
             .delimited_by(
                 just(Token::Symbol("BEGIN_BLOCK")),
                 just(Token::Symbol("END_BLOCK")),
@@ -945,7 +960,16 @@ where
             }
         });
 
-    let if_ = matches
+    let binary5 = make_binary_op(
+        matches,
+        select! {
+            Token::Kw("and") => BinaryOp::And,
+            Token::Kw("or") => BinaryOp::Or,
+        },
+        false,
+    );
+
+    let if_ = binary5
         .then(
             group((
                 just(Token::Kw("then"))

@@ -1,3 +1,5 @@
+import .mixins.(create_mixin, curse_mixin)
+
 methods = {
     map: (x, f) =>
         for i in x:
@@ -49,7 +51,7 @@ methods = {
         Record(x!iter)
 }
 
-import .mixins.(create_mixin, curse_mixin)
+# TODO merge this with typing.Iterable?
 
 export Iterable = create_mixin("Iterable", methods)
 curse_mixin(Iterable, [list, tuple, dict, set, slice, type((() => @None)())])

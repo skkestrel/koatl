@@ -24,6 +24,9 @@ pub enum BinaryOp {
     Is,
     Nis,
 
+    And,
+    Or,
+
     Coalesce,
     Pipe,
 }
@@ -33,6 +36,7 @@ pub enum UnaryOp {
     Inv,
     Pos,
     Neg,
+    Not,
     Yield,
     YieldFrom,
 }
