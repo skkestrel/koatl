@@ -685,6 +685,10 @@ impl<'src> PyExprExt<'src> for SPyExpr<'src> {
                 let step_ast = step.as_ref().map(|e| e.emit_py(ctx)).transpose()?;
                 ctx.ast_node("Slice", (start_ast, stop_ast, step_ast), &self.tl_span)?
             }
+            PyExpr::Await(expr) => {
+                let expr_ast = expr.emit_py(ctx)?;
+                ctx.ast_node("Await", (expr_ast,), &self.tl_span)?
+            }
             PyExpr::Yield(expr) => {
                 let expr_ast = expr.emit_py(ctx)?;
                 ctx.ast_node("Yield", (expr_ast,), &self.tl_span)?

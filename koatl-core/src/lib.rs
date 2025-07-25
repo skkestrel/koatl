@@ -33,6 +33,7 @@ pub struct TranspileOptions {
     pub inject_prelude: bool,
     pub inject_runtime: bool,
     pub set_exports: bool,
+    pub allow_await: bool,
 }
 
 impl TranspileOptions {
@@ -41,6 +42,7 @@ impl TranspileOptions {
             inject_prelude: true,
             inject_runtime: true,
             set_exports: false,
+            allow_await: false,
         }
     }
 
@@ -48,11 +50,13 @@ impl TranspileOptions {
         let mut opt = TranspileOptions::script();
         opt.inject_prelude = false;
         opt.inject_runtime = false;
+        opt.allow_await = true;
         opt
     }
 
     pub fn module() -> Self {
         TranspileOptions {
+            allow_await: false,
             inject_prelude: true,
             inject_runtime: true,
             set_exports: true,
@@ -72,7 +76,7 @@ pub fn transpile_to_py_ast<'src>(
 ) -> TlResult<PyBlock<'src>> {
     let tl_ast = parse_tl(src)?;
 
-    let output = transform_ast(&src, &tl_ast).map_err(|e| {
+    let output = transform_ast(&src, &tl_ast, options.allow_await).map_err(|e| {
         e.0.into_iter()
             .map(|e| TlErr {
                 kind: TlErrKind::Transform,

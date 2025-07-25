@@ -600,8 +600,16 @@ where
         .as_context()
         .boxed();
 
+    let await_ = just(Token::Ident("await"))
+        .ignore_then(expr.clone())
+        .map(|x| Expr::Unary(UnaryOp::Await, Box::new(x)))
+        .spanned()
+        .labelled("await")
+        .boxed();
+
     atom.define(
         choice((
+            await_,
             ident_expr.clone(),
             classic_if,
             classic_match,
@@ -830,7 +838,7 @@ where
     .foldr_with(binary3.clone(), |op: UnaryOp, rhs: SExpr, e| {
         (Expr::Unary(op, Box::new(rhs)), e.span())
     })
-    .labelled("unary-not")
+    .labelled("unary-await")
     .boxed();
 
     checked.define(
@@ -1116,7 +1124,7 @@ where
         .labelled("inline return statement")
         .boxed();
 
-    let assert_stmt = just(Token::Kw("assert"))
+    let assert_stmt = just(Token::Ident("assert"))
         .ignore_then(expr.clone())
         .then(symbol(",").ignore_then(expr.clone()).or_not())
         .map(|(x, y)| Stmt::Assert(x, y))

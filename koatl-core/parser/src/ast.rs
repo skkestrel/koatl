@@ -37,6 +37,7 @@ pub enum UnaryOp {
     Pos,
     Neg,
     Not,
+    Await,
     Yield,
     YieldFrom,
 }

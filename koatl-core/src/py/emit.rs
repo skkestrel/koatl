@@ -462,6 +462,13 @@ impl SPyExpr<'_> {
                 expr.emit_to(ctx, LOW_PREC)?;
                 ctx.emit(")");
             }
+            PyExpr::Await(expr) => {
+                set_prec(-0.5);
+                ctx.emit_indent();
+                ctx.emit("await ");
+                expr.emit_to(ctx, LOW_PREC)?;
+                ctx.emit_endl();
+            }
             PyExpr::YieldFrom(expr) => {
                 set_prec(-0.5); // TODO is this precedence correct?
                 ctx.emit("(");

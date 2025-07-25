@@ -219,6 +219,7 @@ pub enum PyExpr<'a> {
         Option<Box<SPyExpr<'a>>>,
     ),
 
+    Await(Box<SPyExpr<'a>>),
     Yield(Box<SPyExpr<'a>>),
     YieldFrom(Box<SPyExpr<'a>>),
 }
