@@ -29,7 +29,9 @@ export Async = class:
 
     __await__ = self =>
         for future in self.generator:
-            @@future.__await__()
+            @@(try future.__await__() except AttributeError())
+                !map_err(e => TypeError(f"Object {future} is not awaitable: {e}"))
+                .(Ok.assert)
 
     __repr__ = self =>
         return "Async(...)"
@@ -58,6 +60,14 @@ Ok.do = staticmethod(
             except StopIteration(value=value) as e:
                 return value
         | wraps(f)
+)
+
+Ok.assert = staticmethod(
+    value =>
+        value match:
+            BaseException() as e => raise e
+            None => raise ValueError("Expected a value, got None")
+            default value
 )
 
 register_global_attr(

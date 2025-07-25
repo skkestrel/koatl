@@ -69,14 +69,6 @@ def check_ok(value):
     return True
 
 
-def assert_ok(value):
-    if isinstance(value, BaseException):
-        raise value
-    elif value is None:
-        raise ValueError("Expected a value, got None")
-    return value
-
-
 def check_not_ok(value):
     return not check_ok(value)
 
@@ -89,9 +81,7 @@ def check_err(value):
     return isinstance(value, BaseException)
 
 
-Ok = PseudoType(
-    "koatl.runtime.traits", "Ok", {"assert": staticmethod(assert_ok)}, check_ok
-)
+Ok = PseudoType("koatl.runtime.traits", "Ok", {}, check_ok)
 NotOk = PseudoType("koatl.runtime.traits", "NotOk", {}, check_not_ok)
 Some = PseudoType("koatl.runtime.traits", "Some", {}, check_some)
 Err = PseudoType("koatl.runtime.traits", "Err", {}, check_err)

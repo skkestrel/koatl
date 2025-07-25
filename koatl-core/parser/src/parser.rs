@@ -565,7 +565,7 @@ where
             group((
                 just(Token::Eol).or_not(),
                 just(Token::Kw("else")),
-                just(START_BLOCK),
+                just(START_BLOCK).or_not(),
             ))
             .ignore_then(expr_or_inline_stmt_or_block.clone())
             .or_not(),

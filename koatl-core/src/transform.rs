@@ -62,8 +62,9 @@ struct TfCtx<'src> {
     exports: Vec<PyIdent<'src>>,
     module_star_exports: Vec<PyIdent<'src>>,
 
-    allow_await: bool,
+    allow_top_level_await: bool,
     placeholder_ctx_stack: Vec<PlaceholderCtx>,
+    fn_ctx_stack: Vec<FnCtx>,
 
     py_kws: HashSet<String>,
 
@@ -82,13 +83,14 @@ impl<'src> TfCtx<'src> {
         let py_kws = PY_KWS.iter().map(|s| s.to_string()).collect::<HashSet<_>>();
 
         Ok(TfCtx {
-            allow_await: false,
+            allow_top_level_await: false,
             source,
             line_cache: LineColCache::new(source),
             exports: Vec::new(),
             py_kws,
             module_star_exports: Vec::new(),
             placeholder_ctx_stack: Vec::new(),
+            fn_ctx_stack: Vec::new(),
         })
     }
 
@@ -830,13 +832,24 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
             }
             Stmt::While(cond, body) => {
                 let cond_node = cond.transform_with_placeholder_guard(ctx)?;
+
+                ctx.fn_ctx_stack.push(FnCtx::new());
                 let body_block = body.transform(ctx)?.drop_expr(ctx)?;
+                let fn_ctx = ctx.fn_ctx_stack.pop().unwrap();
 
                 let mut stmts = PyBlock::new();
 
                 let cond: SPyExpr<'src> = if cond_node.pre.is_empty() {
                     cond_node.value
                 } else {
+                    if fn_ctx.is_async {
+                        // TODO revisit this!
+                        return Err(TfErrBuilder::default()
+                            .message("Await is not allowed in this complex loop condition")
+                            .span(*span)
+                            .build_errs());
+                    }
+
                     let aux_fn = make_fn_exp(
                         ctx,
                         FnDefArgs::PyArgList(vec![]),
@@ -1435,6 +1448,10 @@ fn make_arglist<'src, 'ast>(
     Ok((pre, post, args))
 }
 
+/**
+ * Note: whenever calling this function with body as `FnDefBody::PyStmts`, the caller
+ * should interact with ctx.fn_ctx_stack, similar to below.
+ */
 fn prepare_py_fn<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     arglist: FnDefArgs<'src, 'ast>,
@@ -1451,11 +1468,17 @@ fn prepare_py_fn<'src, 'ast>(
     body_stmts.extend(match body {
         FnDefBody::PyStmts(stmts) => stmts,
         FnDefBody::Expr(block) => {
+            ctx.fn_ctx_stack.push(FnCtx::new());
             let block = block.transform(ctx)?;
+            let fn_ctx = ctx.fn_ctx_stack.pop().unwrap();
+
+            if fn_ctx.is_async {
+                // TODO revisit this!
+                return Err(await_error(span));
+            }
+
             let mut stmts = block.pre;
-
             stmts.push((PyStmt::Return(block.value), *span).into());
-
             stmts
         }
     });
@@ -1615,6 +1638,20 @@ fn transform_subscript_items<'src, 'ast>(
     Ok((aux_stmts, subscript_expr))
 }
 
+struct FnCtx {
+    is_async: bool,
+    is_also_placeholder_ctx: bool,
+}
+
+impl FnCtx {
+    fn new() -> Self {
+        Self {
+            is_async: false,
+            is_also_placeholder_ctx: false,
+        }
+    }
+}
+
 struct PlaceholderCtx {
     activated: bool,
     span: Span,
@@ -1633,6 +1670,13 @@ impl PlaceholderCtx {
     }
 }
 
+fn await_error<'src>(span: &Span) -> TfErrs {
+    TfErrBuilder::default()
+        .message("Await is not allowed except at the top level in interactive contexts; use the Async.do monad instead")
+        .span(*span)
+        .build_errs()
+}
+
 fn placeholder_guard<'src, F>(
     ctx: &mut TfCtx<'src>,
     span: &Span,
@@ -1641,12 +1685,26 @@ fn placeholder_guard<'src, F>(
 where
     F: FnOnce(&mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>>,
 {
-    ctx.placeholder_ctx_stack.push(PlaceholderCtx::new(*span));
-    let inner_expr = f(ctx)?;
-    let popped = ctx.placeholder_ctx_stack.pop().unwrap();
+    let mut fn_ctx = FnCtx::new();
+    fn_ctx.is_also_placeholder_ctx = true;
 
-    if popped.activated {
-        let var_name = popped.var_name(ctx);
+    ctx.placeholder_ctx_stack.push(PlaceholderCtx::new(*span));
+    ctx.fn_ctx_stack.push(fn_ctx);
+
+    let inner_expr = f(ctx)?;
+
+    let placeholder_ctx = ctx.placeholder_ctx_stack.pop().unwrap();
+    let fn_ctx = ctx.fn_ctx_stack.pop().unwrap();
+
+    if placeholder_ctx.activated {
+        if fn_ctx.is_async {
+            return Err(TfErrBuilder::default()
+                .message("Await is not allowed as part of a placeholder-expression")
+                .span(*span)
+                .build_errs());
+        }
+
+        let var_name = placeholder_ctx.var_name(ctx);
 
         let mut body = PyBlock::new();
         body.extend(inner_expr.pre);
@@ -1664,6 +1722,16 @@ where
             pre: fn_exp.pre,
         })
     } else {
+        if fn_ctx.is_async {
+            // this potential placeholder ctx generated an async ctx, but wasn't actually a placeholder
+            // so we forward it down to the next fn_ctx
+            if let Some(fn_ctx) = ctx.fn_ctx_stack.last_mut() {
+                fn_ctx.is_async = true;
+            } else if !ctx.allow_top_level_await {
+                return Err(await_error(span));
+            }
+        }
+
         Ok(inner_expr)
     }
 }
@@ -2239,7 +2307,11 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 });
             }
             Expr::Unary(op, expr) => {
-                let expr = expr.transform(ctx)?;
+                let expr = match op {
+                    UnaryOp::Await => expr.transform_with_placeholder_guard(ctx)?,
+                    _ => expr.transform(ctx)?,
+                };
+
                 let aux_stmts = expr.pre;
 
                 let py_op = match op {
@@ -2248,12 +2320,12 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     UnaryOp::Inv => PyUnaryOp::Inv,
                     UnaryOp::Not => PyUnaryOp::Not,
                     UnaryOp::Await => {
-                        if !ctx.allow_await {
-                            return Err(TfErrBuilder::default()
-                                .message("await is not allowed outside of an interactive context; use Async.do monads instead.")
-                                .span(*span)
-                                .build_errs());
+                        if let Some(fn_ctx) = ctx.fn_ctx_stack.last_mut() {
+                            fn_ctx.is_async = true;
+                        } else if !ctx.allow_top_level_await {
+                            return Err(await_error(span));
                         }
+
                         return Ok(SPyExprWithPre {
                             value: (PyExpr::Await(Box::new(expr.value)), *span).into(),
                             pre: aux_stmts,
@@ -2428,7 +2500,7 @@ pub fn transform_ast<'src, 'ast>(
     allow_await: bool,
 ) -> TfResult<TransformOutput<'src>> {
     let mut ctx = TfCtx::new(source)?;
-    ctx.allow_await = allow_await;
+    ctx.allow_top_level_await = allow_await;
 
     let mut stmts = block.transform_with_depth(&mut ctx, true)?;
 
