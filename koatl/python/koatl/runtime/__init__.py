@@ -16,7 +16,7 @@ class MatchError(Exception):
         super().__init__(message)
 
 
-def _set_exports(package_name, globals_dict, exports, module_star_exports):
+def set_exports(package_name, globals_dict, exports, module_star_exports):
     import importlib
 
     exports = set(exports)
@@ -37,7 +37,7 @@ def _set_exports(package_name, globals_dict, exports, module_star_exports):
     globals_dict["__all__"] = tuple(exports)
 
 
-def _unpack_rec(obj):
+def unpack_record(obj):
     """
     used in record unpacking
     """
@@ -47,16 +47,22 @@ def _unpack_rec(obj):
         return Record(obj.__dict__)
 
 
-from .._rs import Record, tl_vget
-
+from types import SimpleNamespace
+from .._rs import Record, vget
 from .traits import *
 
+__tl__ = SimpleNamespace(
+    Record=Record,
+    MatchError=MatchError,
+    unpack_record=unpack_record,
+    set_exports=set_exports,
+    vget=vget,
+    **{name: traits.__dict__[name] for name in traits.__all__}
+)
 
 __all__ = [
+    "__tl__",
     "Record",
     "MatchError",
-    "tl_vget",
-    "_set_exports",
-    "_unpack_rec",
     *traits.__all__,
 ]

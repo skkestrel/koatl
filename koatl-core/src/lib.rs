@@ -125,7 +125,7 @@ pub fn transpile_to_py_ast<'src>(
 
     if options.set_exports {
         py_ast.0.push(a.expr(a.call(
-            a.load_ident("_set_exports"),
+            a.tl_builtin("set_exports"),
             vec![
                     a.call_arg(a.load_ident("__package__")),
                     a.call_arg(a.call(a.load_ident("globals"), vec![])),

@@ -205,7 +205,7 @@ fn get_virtual<'py, 'ptr>(
 }
 
 #[pyfunction(signature=(obj, name))]
-fn tl_vcheck(obj: &Bound<'_, PyAny>, name: &Bound<'_, PyString>) -> PyResult<bool> {
+fn vcheck(obj: &Bound<'_, PyAny>, name: &Bound<'_, PyString>) -> PyResult<bool> {
     match get_virtual(obj, name)? {
         VGetResult::Value(_) => Ok(true),
         VGetResult::NeedsBind(_) => Ok(true),
@@ -215,7 +215,7 @@ fn tl_vcheck(obj: &Bound<'_, PyAny>, name: &Bound<'_, PyString>) -> PyResult<boo
 }
 
 #[pyfunction(signature=(obj, name))]
-fn tl_vget(obj: &Bound<'_, PyAny>, name: &Bound<'_, PyString>) -> PyResult<PyObject> {
+fn vget(obj: &Bound<'_, PyAny>, name: &Bound<'_, PyString>) -> PyResult<PyObject> {
     fn bind_attr<'py>(obj: &Bound<'py, PyAny>, attr: &Bound<'py, PyAny>) -> PyResult<PyObject> {
         if attr.hasattr("ext_prop")? {
             return Ok(attr.call1((obj,))?.unbind());
@@ -292,7 +292,7 @@ fn py_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("types_vtbl", PyDict::new(m.py()))?;
     m.add("traits_vtbl", PyDict::new(m.py()))?;
 
-    m.add_function(wrap_pyfunction!(tl_vget, m)?)?;
-    m.add_function(wrap_pyfunction!(tl_vcheck, m)?)?;
+    m.add_function(wrap_pyfunction!(vget, m)?)?;
+    m.add_function(wrap_pyfunction!(vcheck, m)?)?;
     Ok(())
 }

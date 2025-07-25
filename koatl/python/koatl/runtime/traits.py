@@ -1,5 +1,5 @@
 import types
-from .._rs import types_vtbl, traits_vtbl, tl_vcheck
+from .._rs import types_vtbl, traits_vtbl, vcheck
 
 
 def fix_methods(type_name, methods):
@@ -22,7 +22,7 @@ def Trait(module, name, methods, *, requires=[]):
 
     def instancecheck(cls, instance):
         for req in requires:
-            if not tl_vcheck(instance, req):
+            if not vcheck(instance, req):
                 return False
 
         return True
@@ -117,12 +117,11 @@ def register_global_trait(type):
 
 __all__ = [
     "Trait",
-    "PseudoType",
+    "ExtensionProperty",
     "Ok",
     "NotOk",
     "Some",
     "Err",
-    "ExtensionProperty",
     "register_global_attr",
     "register_global_trait",
 ]

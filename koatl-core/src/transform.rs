@@ -418,7 +418,7 @@ fn destructure_mapping<'src, 'ast>(
     let mut stmts = PyBlock(vec![a.assign(
         a.ident(dict_var.clone(), PyAccessCtx::Store),
         a.call(
-            a.load_ident("_unpack_rec"),
+            a.tl_builtin("unpack_record"),
             vec![a.call_arg(a.load_ident(cursor_var.clone()))],
         ),
     )]);
@@ -817,7 +817,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 pre.push(a.for_(
                     a.ident(cursor.clone(), PyAccessCtx::Store),
                     a.call(
-                        a.load_ident("tl_vget"),
+                        a.tl_builtin("vget"),
                         vec![
                             a.call_arg(iter_node),
                             a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
@@ -1739,7 +1739,7 @@ fn transform_postfix_expr<'src, 'ast>(
 
         let guard_if_expr = |expr| {
             a.if_expr(
-                a.call(a.load_ident("Ok"), vec![a.call_arg(lhs.clone())]),
+                a.call(a.tl_builtin("Ok"), vec![a.call_arg(lhs.clone())]),
                 expr,
                 lhs.clone(),
             )
@@ -1781,14 +1781,14 @@ fn transform_postfix_expr<'src, 'ast>(
                 guard_if_expr(a.call(rhs_node.value, vec![PyCallItem::Arg(lhs.clone())]))
             }
             Expr::Extension(_, rhs) => a.call(
-                a.load_ident("tl_vget"),
+                a.tl_builtin("vget"),
                 vec![
                     a.call_arg(lhs),
                     a.call_arg(a.literal(PyLiteral::Str(ctx.escape_ident(&rhs.0)))),
                 ],
             ),
             Expr::MappedExtension(_, rhs) => guard_if_expr(a.call(
-                a.load_ident("tl_vget"),
+                a.tl_builtin("vget"),
                 vec![
                     a.call_arg(lhs.clone()),
                     a.call_arg(a.literal(PyLiteral::Str(ctx.escape_ident(&rhs.0)))),
@@ -2217,7 +2217,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                         let a = PyAstBuilder::new(*span);
 
                         let expr = a.if_expr(
-                            a.call(a.load_ident("Ok"), vec![a.call_arg(lhs.value.clone())]),
+                            a.call(a.tl_builtin("Ok"), vec![a.call_arg(lhs.value.clone())]),
                             lhs.value,
                             rhs.value,
                         );
@@ -2269,7 +2269,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                         return Ok(SPyExprWithPre {
                             value: (
                                 PyExpr::YieldFrom(Box::new(a.call(
-                                    a.load_ident("tl_vget"),
+                                    a.tl_builtin("vget"),
                                     vec![
                                         a.call_arg(expr.value),
                                         a.call_arg(a.literal(PyLiteral::Str("iter".into()))),

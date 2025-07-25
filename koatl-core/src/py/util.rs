@@ -217,6 +217,10 @@ impl PyAstBuilder {
             .into()
     }
 
+    pub fn tl_builtin<'src>(&self, name: &'static str) -> SPyExpr<'src> {
+        self.attribute(self.load_ident("__tl__"), name, PyAccessCtx::Load)
+    }
+
     pub fn subscript<'src>(
         &self,
         value: SPyExpr<'src>,
