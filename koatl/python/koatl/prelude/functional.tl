@@ -1,4 +1,6 @@
+import asyncio
 import functools.wraps
+import koatl.runtime.traits.register_global_attr
 
 export Fn = class:
     compose = staticmethod(
@@ -21,25 +23,43 @@ export Fn = class:
                 default raise ValueError("Invalid arguments for Fn.compose()")
     )
 
+export Async = class:
+    __init__ = (self, generator) =>
+        self.generator = generator
+
+    __await__ = self =>
+        for future in self.generator:
+            @@future.__await__()
+
+    __repr__ = self =>
+        return "Async(...)"
+
+    do = staticmethod(
+        f => wraps(f)((*args, **kwargs) => Async(f(*args, **kwargs)))
+    )
+
+    sleep = staticmethod(asyncio.sleep)
+    create_task = staticmethod(asyncio.create_task)
+    gather = staticmethod(asyncio.gather)
+    wait = staticmethod(asyncio.wait)
+    run = asyncio.run
+
 Ok.do = staticmethod(
-    f =>
-        wraps(f)(
-            (*args, **kwargs) =>
-                gen = f(*args, **kwargs)
+    f => (*args, **kwargs) =>
+            gen = f(*args, **kwargs)
 
-                try:
-                    x = gen.send(None)
-                    while True:
-                        if not Ok(x):
-                            return x
+            try:
+                x = gen.send(None)
+                while True:
+                    if not Ok(x):
+                        return x
 
-                        x = gen.send(x)
-                except StopIteration(value=value) as e:
-                    return value
-        )
+                    x = gen.send(x)
+            except StopIteration(value=value) as e:
+                return value
+        | wraps(f)
 )
 
-import koatl.runtime.traits.register_global_attr
 register_global_attr(
     object,
     "map_err",
