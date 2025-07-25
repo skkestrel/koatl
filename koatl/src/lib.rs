@@ -5,8 +5,9 @@ use koatl_core::{
     transpile as transpile_to_source, transpile_to_py_ast, TranspileOptions,
 };
 use pyo3::{
+    ffi::{self},
     prelude::*,
-    types::{PyDict, PyList, PyString},
+    types::{PyDict, PyList, PyRange, PySlice, PyString},
 };
 
 #[pyfunction(signature=(src, mode="module", filename="<string>", sourcemap=false))]
@@ -145,16 +146,17 @@ impl Record {
     }
 }
 
-enum VGetResult<'py> {
+enum VGetResult<'py, 'ptr> {
     Value(Bound<'py, PyAny>),
     NeedsBind(Bound<'py, PyAny>),
+    SliceIter(&'ptr Bound<'py, PySlice>),
     None,
 }
 
-fn get_virtual<'py>(
-    obj: &Bound<'py, PyAny>,
-    name: &Bound<'py, PyString>,
-) -> PyResult<VGetResult<'py>> {
+fn get_virtual<'py, 'ptr>(
+    obj: &'ptr Bound<'py, PyAny>,
+    name: &'ptr Bound<'py, PyString>,
+) -> PyResult<VGetResult<'py, 'ptr>> {
     if let Ok(attr) = obj.getattr(name) {
         return Ok(VGetResult::Value(attr));
     }
@@ -166,6 +168,10 @@ fn get_virtual<'py>(
 
         if let Ok(iter) = obj.try_iter() {
             return Ok(VGetResult::Value(iter.into_any()));
+        }
+
+        if let Ok(sl) = obj.downcast::<PySlice>() {
+            return Ok(VGetResult::SliceIter(sl));
         }
     }
 
@@ -203,6 +209,7 @@ fn tl_vcheck(obj: &Bound<'_, PyAny>, name: &Bound<'_, PyString>) -> PyResult<boo
     match get_virtual(obj, name)? {
         VGetResult::Value(_) => Ok(true),
         VGetResult::NeedsBind(_) => Ok(true),
+        VGetResult::SliceIter(_) => Ok(true),
         VGetResult::None => Ok(false),
     }
 }
@@ -219,10 +226,55 @@ fn tl_vget(obj: &Bound<'_, PyAny>, name: &Bound<'_, PyString>) -> PyResult<PyObj
     }
 
     let got = get_virtual(obj, name)?;
+    let py = obj.py();
 
     match got {
         VGetResult::Value(value) => return Ok(value.into()),
         VGetResult::NeedsBind(attr) => return bind_attr(obj, &attr),
+        VGetResult::SliceIter(slice) => unsafe {
+            let slice_obj = slice.as_ptr() as *mut ffi::PySliceObject;
+            let start = (*slice_obj).start;
+            let stop = (*slice_obj).stop;
+            let step = (*slice_obj).step;
+
+            let step = if step == ffi::Py_None() {
+                1
+            } else if ffi::PyLong_Check(step) == 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                    "Slice step must be an integer or None to iterate".to_string(),
+                ));
+            } else {
+                ffi::PyLong_AsSsize_t(step)
+            };
+
+            let start = if start == ffi::Py_None() {
+                0
+            } else if ffi::PyLong_Check(start) == 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                    "Slice start must be an integer or None to iterate".to_string(),
+                ));
+            } else {
+                ffi::PyLong_AsSsize_t(start)
+            };
+
+            if stop == ffi::Py_None() {
+                let itertools = py.import("itertools")?;
+                Ok(itertools
+                    .getattr("count")?
+                    .call1((start, step))?
+                    .unbind()
+                    .into_any())
+            } else if ffi::PyLong_Check(stop) == 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                    "Slice stop must be an integer or None to iterate".to_string(),
+                ));
+            } else {
+                let stop = ffi::PyLong_AsSsize_t(stop);
+                Ok(PyRange::new_with_step(py, start, stop, step)?
+                    .unbind()
+                    .into_any())
+            }
+        },
         VGetResult::None => Err(PyErr::new::<pyo3::exceptions::PyAttributeError, _>(
             format!(
                 "'{}' object has no v-attribute '{}'",
