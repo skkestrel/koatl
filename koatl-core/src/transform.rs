@@ -863,7 +863,9 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 let mut stmts = PyBlock::new();
                 let var_name = ctx.temp_var_name("e", span.start);
 
-                let excepts = matching_except_handler(ctx, var_name.into(), excepts, span)?;
+                // this logic here is kind of bad...
+                let except_refs = excepts.iter().collect::<Vec<_>>();
+                let excepts = matching_except_handler(ctx, var_name.into(), &except_refs, span)?;
 
                 stmts.push((PyStmt::Try(body_block, vec![excepts], finally_block), *span).into());
 
@@ -1250,7 +1252,8 @@ fn create_matcher<'src, 'ast>(
 fn transform_match_expr<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     subject: &'ast SExpr<'src>,
-    cases: &'ast [MatchCase<'src>],
+    cases: &Vec<&'ast MatchCase<'src>>,
+    fill_default_case: bool,
     span: &Span,
 ) -> TfResult<(SPyExprWithPre<'src>, bool)> {
     let subject = subject.transform_with_placeholder_guard(ctx)?;
@@ -1306,7 +1309,7 @@ fn transform_match_expr<'src, 'ast>(
         });
     }
 
-    if !has_default_case {
+    if !has_default_case && fill_default_case {
         py_cases.push(PyMatchCase {
             pattern: (PyPattern::As(None, None), *span).into(),
             guard: None,
@@ -1818,7 +1821,7 @@ fn is_default_pattern<'src>(pattern: &SPattern<'src>) -> bool {
 fn matching_except_handler<'src>(
     ctx: &mut TfCtx<'src>,
     var_name: Ident<'src>,
-    handlers: &Vec<MatchCase<'src>>,
+    handlers: &Vec<&MatchCase<'src>>,
     span: &Span,
 ) -> TfResult<PyExceptHandler<'src>> {
     let a = PyAstBuilder::new(*span);
@@ -1826,7 +1829,7 @@ fn matching_except_handler<'src>(
     let mut block = PyBlock::new();
 
     let (mut match_stmt, has_default) =
-        transform_match_expr(ctx, &b.ident(var_name.clone()), handlers, span)?;
+        transform_match_expr(ctx, &b.ident(var_name.clone()), handlers, false, span)?;
 
     if let PyStmt::Match(_, cases) = &mut match_stmt.pre.0.last_mut().unwrap().value {
         if !has_default {
@@ -2049,11 +2052,6 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                             b.assign(b.ident(var_name.clone()), b.ident(err_name.clone())),
                         ]),
                     });
-                    handlers.push(MatchCase {
-                        pattern: None,
-                        guard: None,
-                        body: b.block_expr(vec![b.raise(None)]),
-                    });
                 } else {
                     handlers.push(MatchCase {
                         pattern: None,
@@ -2064,8 +2062,10 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     });
                 }
 
+                let handler_refs = handlers.iter().collect::<Vec<_>>();
+
                 let except_handler =
-                    matching_except_handler(ctx, err_name.clone().into(), &handlers, span)?;
+                    matching_except_handler(ctx, err_name.clone().into(), &handler_refs, span)?;
 
                 let mut stmts = PyBlock::new();
                 stmts.push(a.try_(try_body, vec![except_handler], None));
@@ -2129,7 +2129,9 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                 Ok(SPyExprWithPre { value, pre: t.pre })
             }
-            Expr::Match(subject, cases) => Ok(transform_match_expr(ctx, subject, cases, span)?.0),
+            Expr::Match(subject, cases) => {
+                Ok(transform_match_expr(ctx, subject, &cases.iter().collect(), true, span)?.0)
+            }
             Expr::Matches(subject, pattern) => {
                 let mut block = PyBlock::new();
                 let subject_t = subject.transform(ctx)?;

@@ -21,10 +21,6 @@ export Fn = class:
                 default raise ValueError("Invalid arguments for Fn.compose()")
     )
 
-export untry = x => x matches BaseException() then raise x else x
-
-export map_err = f => value => not Ok(value) then f(value) else value
-
 Ok.do = staticmethod(
     f =>
         wraps(f)(
@@ -38,13 +34,18 @@ Ok.do = staticmethod(
                             return x
 
                         x = gen.send(x)
-                except StopIteration(value=value):
+                except StopIteration(value=value) as e:
                     return value
         )
 )
 
-NotOkMeta = class(type):
-    __instancecheck__ = (cls, instance) => not Ok(instance)
-
-export NotOk = class(metaclass=NotOkMeta):
-    __new__ = (cls, value) => not Ok(value)
+import koatl.runtime.traits.register_global_attr
+register_global_attr(
+    object,
+    "map_err",
+    (self, f) =>
+        if self matches Err():
+            return f(self)
+        else:
+            return self
+)
