@@ -930,6 +930,12 @@ where
     }
 
     fn tokenize_input(&mut self) -> TResult<'src, TokenList<'src>> {
+        while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
+
+        if let None = self.peek() {
+            return Ok(TokenList(vec![]));
+        }
+
         let (mut tokens, span) = self.parse_block(0, NewBlockType::BeginInput)?;
         tokens.0.push((Token::Eol, self.span_since(&self.cursor())));
         Ok(tokens)
