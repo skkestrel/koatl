@@ -344,11 +344,11 @@ impl PyAstBuilder {
     pub fn import_alias<'src>(
         &self,
         name: impl Into<PyIdent<'src>>,
-        as_name: Option<impl Into<PyIdent<'src>>>,
+        as_name: impl Into<Option<PyIdent<'src>>>,
     ) -> PyImportAlias<'src> {
         PyImportAlias {
             name: name.into(),
-            as_name: as_name.map(|n| n.into()),
+            as_name: as_name.into(),
         }
     }
 

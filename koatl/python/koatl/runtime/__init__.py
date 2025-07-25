@@ -16,21 +16,6 @@ class MatchError(Exception):
         super().__init__(message)
 
 
-class OkMeta(type):
-    def __instancecheck__(cls, instance):
-        return Ok(instance)
-
-
-class Ok(metaclass=OkMeta):
-    def __new__(cls, value):
-        match value:
-            case None:
-                return False
-            case BaseException():
-                return False
-        return True
-
-
 def _set_exports(package_name, globals_dict, exports, module_star_exports):
     import importlib
 
@@ -52,6 +37,16 @@ def _set_exports(package_name, globals_dict, exports, module_star_exports):
     globals_dict["__all__"] = tuple(exports)
 
 
+def _unpack_rec(obj):
+    """
+    used in record unpacking
+    """
+    if hasattr(obj, "items"):
+        return Record(obj.items())
+    else:
+        return Record(obj.__dict__)
+
+
 from .._rs import Record, tl_vget
 
 from .traits import *
@@ -59,13 +54,9 @@ from .traits import *
 
 __all__ = [
     "Record",
-    "Ok",
     "MatchError",
-    "ExtensionProperty",
     "tl_vget",
     "_set_exports",
-    # traits.tl
-    "Trait",
-    "register_global_attr",
-    "register_global_trait",
+    "_unpack_rec",
+    *traits.__all__,
 ]

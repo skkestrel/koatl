@@ -395,7 +395,7 @@ fn destructure_mapping<'src, 'ast>(
     let mut stmts = PyBlock(vec![a.assign(
         a.ident(dict_var.clone(), PyAccessCtx::Store),
         a.call(
-            a.load_ident("Record"),
+            a.load_ident("_unpack_rec"),
             vec![a.call_arg(a.load_ident(cursor_var.clone()))],
         ),
     )]);
@@ -897,15 +897,22 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     }
                 }
 
-                let py_import: SPyStmt = if !import_stmt.trunk.is_empty() {
-                    a.import_from(Some(base_module.into()), aliases, import_stmt.level)
+                let imports = if !import_stmt.trunk.is_empty() {
+                    let mut v = vec![];
+
+                    if import_stmt.level == 0 {
+                        v.push(a.import(vec![a.import_alias(import_stmt.trunk[0].0.clone(), None)]))
+                    }
+                    v.push(a.import_from(Some(base_module.into()), aliases, import_stmt.level));
+
+                    v
                 } else if import_stmt.level != 0 {
-                    a.import_from(None, aliases, import_stmt.level)
+                    vec![a.import_from(None, aliases, import_stmt.level)]
                 } else {
-                    a.import(aliases)
+                    vec![a.import(aliases)]
                 };
 
-                Ok(PyBlock(vec![py_import]))
+                Ok(PyBlock(imports))
             }
             Stmt::Err => Err(TfErrBuilder::default()
                 .message("unexpected statement error (should have been caught in lexer)".to_owned())

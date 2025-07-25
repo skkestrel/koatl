@@ -52,5 +52,5 @@ methods = {
 
 # TODO merge this with typing.Iterable?
 
-export Iterable = Trait("Iterable", methods, requires=["iter"])
+export Iterable = Trait(__name__, "Iterable", methods, requires=["iter"])
 register_global_trait(Iterable)

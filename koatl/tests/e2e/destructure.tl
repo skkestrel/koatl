@@ -53,3 +53,6 @@ assert_eq([a, b, c], [1, (2, 3), 4])
 
 a, [*b], c, *d = 1, [2, 3], 4, 5, 6
 assert_eq([a, b, c, d], [1, [2, 3], 4, (5, 6)])
+
+# destructuring modules
+{assert_eq} = util
