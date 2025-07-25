@@ -352,6 +352,7 @@ where
     let mut inline_stmt = Recursive::<Indirect<TInput, SStmt, TExtra>>::declare();
     let mut atom = Recursive::<Indirect<TInput, SExpr, TExtra>>::declare();
     let mut expr = Recursive::<Indirect<TInput, SExpr, TExtra>>::declare();
+    let mut cases = Recursive::<Indirect<TInput, _, TExtra>>::declare();
 
     let stmts = stmt
         .clone()
@@ -574,10 +575,36 @@ where
         .labelled("if")
         .boxed();
 
+    let qualified_ident = ident_expr
+        .clone()
+        .foldl_with(
+            symbol(".").ignore_then(ident.clone()).repeated(),
+            |lhs, rhs, e| (Expr::Attribute(Box::new(lhs), rhs), e.span()),
+        )
+        .boxed();
+
+    let (pattern, nary_pattern) = match_pattern(
+        ident.clone(),
+        qualified_ident.clone(),
+        expr.clone(),
+        literal.clone(),
+    );
+
+    let classic_match = just(Token::Kw("match"))
+        .ignore_then(expr.clone())
+        .then_ignore(just(START_BLOCK))
+        .then(cases.clone())
+        .map(|(scrutinee, cases)| Expr::Match(Box::new(scrutinee), cases))
+        .spanned()
+        .labelled("classic-match")
+        .as_context()
+        .boxed();
+
     atom.define(
         choice((
             ident_expr.clone(),
             classic_if,
+            classic_match,
             class_,
             literal_expr.clone(),
             placeholder,
@@ -597,14 +624,6 @@ where
         ))
         .labelled("atom"),
     );
-
-    let qualified_ident = ident_expr
-        .clone()
-        .foldl_with(
-            symbol(".").ignore_then(ident.clone()).repeated(),
-            |lhs, rhs, e| (Expr::Attribute(Box::new(lhs), rhs), e.span()),
-        )
-        .boxed();
 
     enum Postfix<'a> {
         Call(Vec<SCallItem<'a>>),
@@ -673,13 +692,6 @@ where
         .map(Postfix::Extension)
         .labelled("extension")
         .boxed();
-
-    let (pattern, nary_pattern) = match_pattern(
-        ident.clone(),
-        qualified_ident.clone(),
-        expr.clone(),
-        literal.clone(),
-    );
 
     let postfix = atom
         .clone()
@@ -906,32 +918,34 @@ where
         })
         .boxed();
 
-    let cases = choice((
-        just(Token::Kw("else"))
-            .or_not()
-            .ignore_then(case_.clone())
-            .then_ignore(just(Token::Eol))
-            .repeated()
-            .collect::<Vec<_>>()
-            .then(default_case.clone().then_ignore(just(Token::Eol)).or_not())
-            .delimited_by(
-                just(Token::Symbol("BEGIN_BLOCK")),
-                just(Token::Symbol("END_BLOCK")),
-            ),
-        case_
-            .separated_by(just(Token::Kw("else")))
-            .allow_trailing()
-            .collect::<Vec<_>>()
-            .then(default_case.or_not()),
-    ))
-    .map(|(mut cases, default)| {
-        cases.extend(default.into_iter());
-        cases
-    });
+    cases.define(
+        choice((
+            just(Token::Kw("else"))
+                .or_not()
+                .ignore_then(case_.clone())
+                .then_ignore(just(Token::Eol))
+                .repeated()
+                .collect::<Vec<_>>()
+                .then(default_case.clone().then_ignore(just(Token::Eol)).or_not())
+                .delimited_by(
+                    just(Token::Symbol("BEGIN_BLOCK")),
+                    just(Token::Symbol("END_BLOCK")),
+                ),
+            case_
+                .separated_by(just(Token::Kw("else")))
+                .allow_trailing()
+                .collect::<Vec<_>>()
+                .then(default_case.or_not()),
+        ))
+        .map(|(mut cases, default)| {
+            cases.extend(default.into_iter());
+            cases
+        }),
+    );
 
     let match_ = slices
         .then(
-            just(Token::Ident("match"))
+            just(Token::Kw("match"))
                 .then(just(START_BLOCK).or_not())
                 .ignore_then(cases)
                 .or_not(),

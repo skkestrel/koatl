@@ -31,7 +31,8 @@ In Python, this won't work:
 y = 2
 match x:
     case y:
-        # this treats y as a capture instead of a value to match against!
+        # this treats y as a capture
+        # instead of a value to match against!
 ```
 
 This is the correct way:
@@ -43,11 +44,11 @@ match x:
         # this matches correctly
 ```
 
-Koatl introduces a shorthand syntax for matching values (note that the match comes after the scrutinee):
+Koatl introduces a shorthand syntax for matching values:
 
 ```koatl
 y = 2
-x match:
+match x: # or "x match:"
     .y => print("matched")
     y => print("fallback")
 ```
