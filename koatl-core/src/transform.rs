@@ -792,7 +792,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 pre.push(a.for_(
                     a.ident(cursor.clone(), PyAccessCtx::Store),
                     a.call(
-                        a.load_ident("_vget"),
+                        a.load_ident("tl_vget"),
                         vec![
                             a.call_arg(iter_node),
                             a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
@@ -1034,7 +1034,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                         let a = PyAstBuilder::new(*span);
                         pre.push(a.assign(
                             a.ident(var.clone(), PyAccessCtx::Store),
-                            a.call(a.load_ident("_match_proxy"), vec![a.call_arg(v_node)]),
+                            a.call(a.load_ident("Record"), vec![a.call_kwarg("value", v_node)]),
                         ));
 
                         PyPattern::Value(a.attribute(a.load_ident(var), "value", PyAccessCtx::Load))
@@ -1690,11 +1690,11 @@ fn transform_postfix_expr<'src, 'ast>(
     placeholder_guard(ctx, &expr.1, |ctx| {
         let a = PyAstBuilder::new(expr.1);
 
-        let guard_if_expr = |e| {
+        let guard_if_expr = |expr| {
             a.if_expr(
-                a.call(a.load_ident("_coalesces"), vec![a.call_arg(lhs.clone())]),
+                a.call(a.load_ident("Ok"), vec![a.call_arg(lhs.clone())]),
+                expr,
                 lhs.clone(),
-                e,
             )
         };
 
@@ -1734,14 +1734,14 @@ fn transform_postfix_expr<'src, 'ast>(
                 guard_if_expr(a.call(rhs_node.value, vec![PyCallItem::Arg(lhs.clone())]))
             }
             Expr::Extension(_, rhs) => a.call(
-                a.load_ident("_vget"),
+                a.load_ident("tl_vget"),
                 vec![
                     a.call_arg(lhs),
                     a.call_arg(a.literal(PyLiteral::Str(rhs.0.clone()))),
                 ],
             ),
             Expr::MappedExtension(_, rhs) => guard_if_expr(a.call(
-                a.load_ident("_vget"),
+                a.load_ident("tl_vget"),
                 vec![
                     a.call_arg(lhs.clone()),
                     a.call_arg(a.literal(PyLiteral::Str(rhs.0.clone()))),
@@ -2171,12 +2171,9 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                         let a = PyAstBuilder::new(*span);
 
                         let expr = a.if_expr(
-                            a.call(
-                                a.load_ident("_coalesces"),
-                                vec![a.call_arg(lhs.value.clone())],
-                            ),
-                            rhs.value,
+                            a.call(a.load_ident("Ok"), vec![a.call_arg(lhs.value.clone())]),
                             lhs.value,
+                            rhs.value,
                         );
 
                         return Ok(SPyExprWithPre {
@@ -2214,7 +2211,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                         return Ok(SPyExprWithPre {
                             value: (
                                 PyExpr::YieldFrom(Box::new(a.call(
-                                    a.load_ident("_vget"),
+                                    a.load_ident("tl_vget"),
                                     vec![
                                         a.call_arg(expr.value),
                                         a.call_arg(a.literal(PyLiteral::Str("iter".into()))),

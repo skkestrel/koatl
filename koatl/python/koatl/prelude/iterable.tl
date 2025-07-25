@@ -1,5 +1,3 @@
-import .mixins.(create_mixin, curse_mixin)
-
 methods = {
     map: (x, f) =>
         for i in x:
@@ -34,15 +32,16 @@ methods = {
         return result
 
     at: (x, index) =>
-        l = len(x)
-        if index < 0:
-            index = index + l
-        if (index < 0) + (index >= l):
-            raise IndexError("Index out of range")
-        return x[index]
+        for i in x:
+            if i == index:
+                return i
+        raise IndexError("Index out of range")
 
     sum: x =>
-        x.fold(0, (acc, i) => acc + i)
+        acc = 0
+        for i in x:
+            acc = acc + i
+        acc
 
     list: x =>
         list(x!iter)
@@ -53,5 +52,5 @@ methods = {
 
 # TODO merge this with typing.Iterable?
 
-export Iterable = create_mixin("Iterable", methods)
-curse_mixin(Iterable, [list, tuple, dict, set, slice, type((() => @None)())])
+export Iterable = Trait("Iterable", methods, requires=["iter"])
+register_global_trait(Iterable)

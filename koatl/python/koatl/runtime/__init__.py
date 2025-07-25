@@ -10,7 +10,25 @@ from . import meta_finder
 meta_finder.install_hook()
 del meta_finder
 
-from .._rs import Record
+
+class MatchError(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+
+
+class OkMeta(type):
+    def __instancecheck__(cls, instance):
+        return Ok(instance)
+
+
+class Ok(metaclass=OkMeta):
+    def __new__(cls, value):
+        match value:
+            case None:
+                return False
+            case BaseException():
+                return False
+        return True
 
 
 def _set_exports(package_name, globals_dict, exports, module_star_exports):
@@ -34,48 +52,20 @@ def _set_exports(package_name, globals_dict, exports, module_star_exports):
     globals_dict["__all__"] = tuple(exports)
 
 
-def _coalesces(x):
-    return x is None or isinstance(x, BaseException)
+from .._rs import Record, tl_vget
 
-
-def _match_proxy(v):
-    from types import SimpleNamespace
-
-    return SimpleNamespace(value=v)
-
-
-class MatchError(Exception):
-    def __init__(self, message):
-        super().__init__(message)
-
-
-# called from Rust - koatl/lib.rs:vget
-def _slice_iter(sl):
-    i = 0 if sl.start is None else sl.start
-    step = 1 if sl.step is None else sl.step
-
-    if sl.stop is None:
-        while True:
-            yield i
-            i += step
-    else:
-        yield from range(i, sl.stop, step)
-
-
-from .._rs import vget as _vget, vtbl as _vtbl
-
-
-def iter(obj):
-    return _vget(obj, "iter")
+from .traits import *
 
 
 __all__ = [
     "Record",
-    "_coalesces",
-    "_set_exports",
-    "_match_proxy",
+    "Ok",
     "MatchError",
-    "_vget",
-    "_vtbl",
-    "iter",
+    "ExtensionProperty",
+    "tl_vget",
+    "_set_exports",
+    # traits.tl
+    "Trait",
+    "register_global_attr",
+    "register_global_trait",
 ]

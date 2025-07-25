@@ -25,33 +25,23 @@ export untry = x => x matches BaseException() then raise x else x
 
 export map_err = f => value => not Ok(value) then f(value) else value
 
-OkMeta = class(type):
-    __instancecheck__ = (cls, instance) => Ok(instance)
+Ok.do = staticmethod(
+    f =>
+        wraps(f)(
+            (*args, **kwargs) =>
+                gen = f(*args, **kwargs)
 
-export Ok = class(metaclass=OkMeta):
-    __new__ = (cls, value) =>
-        value match:
-            None => False
-            BaseException() => False
-            _ => True
+                try:
+                    x = gen.send(None)
+                    while True:
+                        if not Ok(x):
+                            return x
 
-    do = staticmethod(
-        f =>
-            wraps(f)(
-                (*args, **kwargs) =>
-                    gen = f(*args, **kwargs)
-
-                    try:
-                        x = gen.send(None)
-                        while True:
-                            if not Ok(x):
-                                return x
-
-                            x = gen.send(x)
-                    except StopIteration(value=value):
-                        return value
-            )
-    )
+                        x = gen.send(x)
+                except StopIteration(value=value):
+                    return value
+        )
+)
 
 NotOkMeta = class(type):
     __instancecheck__ = (cls, instance) => not Ok(instance)

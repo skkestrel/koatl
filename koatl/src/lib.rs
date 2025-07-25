@@ -6,7 +6,7 @@ use koatl_core::{
 };
 use pyo3::{
     prelude::*,
-    types::{PyDict, PyList, PySlice, PyString},
+    types::{PyDict, PyList, PyString},
 };
 
 #[pyfunction(signature=(src, mode="module", filename="<string>", sourcemap=false))]
@@ -59,7 +59,23 @@ fn transpile(src: &str, mode: &str, filename: &str, sourcemap: bool) -> PyResult
 
 #[pyclass(extends=PyDict)]
 #[derive(Default)]
-struct Record {}
+pub struct Record {}
+
+impl Record {
+    pub fn from_items<'py>(
+        py: Python<'py>,
+        items: &Vec<(PyObject, PyObject)>,
+    ) -> PyResult<Bound<'py, Self>> {
+        let rec = Py::new(py, Self::default())?.into_bound(py);
+        let dict = rec.downcast::<PyDict>()?;
+
+        for (item_key, item_value) in items {
+            dict.set_item(item_key, item_value)?;
+        }
+
+        Ok(rec)
+    }
+}
 
 #[pymethods]
 impl Record {
@@ -129,57 +145,102 @@ impl Record {
     }
 }
 
-#[pyfunction(signature=(obj, name))]
-fn vget(obj: &Bound<'_, PyAny>, name: &Bound<'_, PyString>) -> PyResult<PyObject> {
-    if name.to_string() == "iter" {
-        if let Ok(slice) = obj.downcast::<PySlice>() {
-            // TODO move this into rs
-            let module = PyModule::import(obj.py(), "koatl.runtime")?;
-            return Ok(module.getattr("_slice_iter")?.call1((slice,))?.unbind());
-        }
+enum VGetResult<'py> {
+    Value(Bound<'py, PyAny>),
+    NeedsBind(Bound<'py, PyAny>),
+    None,
+}
 
+fn get_virtual<'py>(
+    obj: &Bound<'py, PyAny>,
+    name: &Bound<'py, PyString>,
+) -> PyResult<VGetResult<'py>> {
+    if let Ok(attr) = obj.getattr(name) {
+        return Ok(VGetResult::Value(attr));
+    }
+
+    if name.to_string() == "iter" {
         if let Ok(items) = obj.getattr("items") {
-            return Ok(items.call0()?.unbind());
+            return Ok(VGetResult::Value(items.call0()?.into()));
         }
 
         if let Ok(iter) = obj.try_iter() {
-            return Ok(iter.unbind().into_any());
+            return Ok(VGetResult::Value(iter.into_any()));
         }
     }
 
-    if let Ok(attr) = obj.getattr(name) {
-        return Ok(attr.unbind());
-    }
-
-    // TODO add trait-based lookup?
-
     let module = PyModule::import(obj.py(), "koatl._rs")?;
-    let tbl = module.getattr("vtbl")?.downcast_into::<PyDict>()?;
+    let types_vtbl = module.getattr("types_vtbl")?.downcast_into::<PyDict>()?;
 
-    if let Ok(Some(types)) = tbl.get_item(name) {
+    if let Ok(Some(types)) = types_vtbl.get_item(name) {
         let types = types.downcast::<PyDict>()?;
-        let obj_type = obj.get_type();
-        for typ in obj_type.mro() {
-            if let Ok(Some(value)) = types.get_item(typ) {
-                return Ok(value.unbind());
+
+        let mro = obj.get_type().mro();
+        for typ in mro {
+            if let Some(attr) = types.get_item(typ)? {
+                return Ok(VGetResult::NeedsBind(attr.into()));
             }
         }
     }
 
-    Err(PyErr::new::<pyo3::exceptions::PyAttributeError, _>(
-        format!(
-            "'{}' object has no v-attribute '{}'",
-            obj.get_type().name()?,
-            name
-        ),
-    ))
+    let traits_vtbl = module.getattr("traits_vtbl")?.downcast_into::<PyDict>()?;
+
+    if let Ok(Some(traits)) = traits_vtbl.get_item(name) {
+        let types = traits.downcast::<PyDict>()?;
+
+        for (typ, attr) in types.iter() {
+            if obj.is_instance(&typ)? {
+                return Ok(VGetResult::NeedsBind(attr.into()));
+            }
+        }
+    }
+
+    Ok(VGetResult::None)
+}
+
+#[pyfunction(signature=(obj, name))]
+fn tl_vcheck(obj: &Bound<'_, PyAny>, name: &Bound<'_, PyString>) -> PyResult<bool> {
+    match get_virtual(obj, name)? {
+        VGetResult::Value(_) => Ok(true),
+        VGetResult::NeedsBind(_) => Ok(true),
+        VGetResult::None => Ok(false),
+    }
+}
+
+#[pyfunction(signature=(obj, name))]
+fn tl_vget(obj: &Bound<'_, PyAny>, name: &Bound<'_, PyString>) -> PyResult<PyObject> {
+    fn bind_attr<'py>(obj: &Bound<'py, PyAny>, attr: &Bound<'py, PyAny>) -> PyResult<PyObject> {
+        if attr.hasattr("ext_prop")? {
+            return Ok(attr.call1((obj,))?.unbind());
+        }
+
+        let g = PyModule::import(obj.py(), "functools")?;
+        Ok(g.getattr("partial")?.call1((attr, obj))?.unbind())
+    }
+
+    let got = get_virtual(obj, name)?;
+
+    match got {
+        VGetResult::Value(value) => return Ok(value.into()),
+        VGetResult::NeedsBind(attr) => return bind_attr(obj, &attr),
+        VGetResult::None => Err(PyErr::new::<pyo3::exceptions::PyAttributeError, _>(
+            format!(
+                "'{}' object has no v-attribute '{}'",
+                obj.get_type().name()?,
+                name
+            ),
+        )),
+    }
 }
 
 #[pymodule(name = "_rs")]
 fn py_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(transpile, m)?)?;
     m.add_class::<Record>()?;
-    m.add("vtbl", PyDict::new(m.py()))?;
-    m.add_function(wrap_pyfunction!(vget, m)?)?;
+    m.add("types_vtbl", PyDict::new(m.py()))?;
+    m.add("traits_vtbl", PyDict::new(m.py()))?;
+
+    m.add_function(wrap_pyfunction!(tl_vget, m)?)?;
+    m.add_function(wrap_pyfunction!(tl_vcheck, m)?)?;
     Ok(())
 }
