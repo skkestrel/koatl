@@ -9,10 +9,30 @@ export Async = class:
 
     __repr__ = self => "Async(...)"
 
-    run = self => asyncio.run(async_util.await_one(self))
+    from_generator_fn = &[staticmethod] (generator_fn, *args, **kwargs) =>
+        m = object.__new__(Async)
+        m.generator = generator_fn(*args, **kwargs)
+        return m
 
-    bind_once = (self, f) => Async(async_util.bind_async(self, f))
-    pure = &[staticmethod] x => Async(async_util.pure(x))
+    run = self => asyncio.run(async_util.to_coro(self))
+
+    bind_once = (self, f) => Async.from_generator_fn(
+        () =>
+            result = f(yield from self.__await__())
+
+            if hasattr(result, "__await__"):
+                return yield from result.__await__()
+
+            return result
+    )
+
+    pure = &[staticmethod] x => Async.from_generator_fn(
+        () =>
+            return x
+            yield None
+    )
 
     sleep = &[staticmethod] x => Async(asyncio.sleep(x))
-    gather = &[staticmethod] (*args) => Async(async_util.defer_await(asyncio.gather, *args))
+
+    #- TODO: Why is asyncio.gather eager? -#
+    gather = &[staticmethod] (*args) => Async.from_generator_fn(() => yield from asyncio.gather(*args))
