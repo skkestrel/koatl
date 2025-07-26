@@ -1807,7 +1807,7 @@ fn transform_postfix_expr<'src, 'ast>(
 
         let guard_if_expr = |expr| {
             a.if_expr(
-                a.call(a.tl_builtin("Ok"), vec![a.call_arg(lhs.clone())]),
+                a.call(a.tl_builtin("ok"), vec![a.call_arg(lhs.clone())]),
                 expr,
                 lhs.clone(),
             )
@@ -2285,7 +2285,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                         let a = PyAstBuilder::new(*span);
 
                         let expr = a.if_expr(
-                            a.call(a.tl_builtin("Ok"), vec![a.call_arg(lhs.value.clone())]),
+                            a.call(a.tl_builtin("ok"), vec![a.call_arg(lhs.value.clone())]),
                             lhs.value,
                             rhs.value,
                         );

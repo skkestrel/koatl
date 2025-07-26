@@ -5,6 +5,7 @@ use koatl_core::{
     transpile as transpile_to_source, transpile_to_py_ast, TranspileOptions,
 };
 use pyo3::{
+    exceptions::PyBaseException,
     ffi::{self},
     prelude::*,
     types::{PyDict, PyList, PyRange, PySlice, PyString},
@@ -285,14 +286,25 @@ fn vget(obj: &Bound<'_, PyAny>, name: &Bound<'_, PyString>) -> PyResult<PyObject
     }
 }
 
+#[pyfunction(signature=(obj,))]
+fn ok(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+    return Ok(if obj.is_none() {
+        false
+    } else if obj.is_instance_of::<PyBaseException>() {
+        false
+    } else {
+        true
+    });
+}
+
 #[pymodule(name = "_rs")]
 fn py_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(transpile, m)?)?;
-    m.add_class::<Record>()?;
     m.add("types_vtbl", PyDict::new(m.py()))?;
     m.add("traits_vtbl", PyDict::new(m.py()))?;
-
+    m.add_class::<Record>()?;
+    m.add_function(wrap_pyfunction!(transpile, m)?)?;
     m.add_function(wrap_pyfunction!(vget, m)?)?;
     m.add_function(wrap_pyfunction!(vcheck, m)?)?;
+    m.add_function(wrap_pyfunction!(ok, m)?)?;
     Ok(())
 }

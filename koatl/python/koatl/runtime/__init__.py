@@ -48,7 +48,7 @@ def unpack_record(obj):
 
 
 from types import SimpleNamespace
-from .._rs import Record, vget
+from .._rs import Record, vget, ok
 from .traits import *
 
 __tl__ = SimpleNamespace(
@@ -57,6 +57,7 @@ __tl__ = SimpleNamespace(
     unpack_record=unpack_record,
     set_exports=set_exports,
     vget=vget,
+    ok=ok,
     **{name: traits.__dict__[name] for name in traits.__all__}
 )
 

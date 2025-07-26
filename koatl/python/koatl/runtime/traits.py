@@ -40,53 +40,6 @@ def Trait(module, name, methods, *, requires=[]):
     return typ
 
 
-def PseudoType(module, name, methods, instancecheck):
-    fix_methods(name, methods)
-
-    meta = type(
-        name,
-        (type,),
-        {"__instancecheck__": lambda cls, instance: cls(instance)},
-    )
-
-    def populate(ns):
-        for method_name, method in methods.items():
-            ns[method_name] = method
-        ns["__module__"] = module
-        ns["__new__"] = lambda cls, *args, **kwargs: instancecheck(*args, **kwargs)
-
-    typ = types.new_class(name, (), {"metaclass": meta}, populate)
-    typ._methods = methods
-
-    return typ
-
-
-def check_ok(value):
-    if value is None:
-        return False
-    elif isinstance(value, BaseException):
-        return False
-    return True
-
-
-def check_not_ok(value):
-    return not check_ok(value)
-
-
-def check_some(value):
-    return value is not None
-
-
-def check_err(value):
-    return isinstance(value, BaseException)
-
-
-Ok = PseudoType("koatl.runtime.traits", "Ok", {}, check_ok)
-NotOk = PseudoType("koatl.runtime.traits", "NotOk", {}, check_not_ok)
-Some = PseudoType("koatl.runtime.traits", "Some", {}, check_some)
-Err = PseudoType("koatl.runtime.traits", "Err", {}, check_err)
-
-
 def ExtensionProperty(f):
     f.ext_prop = True
     return f
@@ -108,10 +61,6 @@ def register_global_trait(type):
 __all__ = [
     "Trait",
     "ExtensionProperty",
-    "Ok",
-    "NotOk",
-    "Some",
-    "Err",
     "register_global_attr",
     "register_global_trait",
 ]

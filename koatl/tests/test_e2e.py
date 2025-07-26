@@ -7,11 +7,15 @@ sys.path.append(str(Path(__file__).parent / "e2e"))
 
 
 def get_test_data():
-    data_dir = Path(__file__).parent / "e2e"
+    data_dirs = [
+        Path(__file__).parent / "e2e" / "base",
+        Path(__file__).parent / "e2e" / "prelude",
+    ]
 
     test_cases = []
-    for file_path in data_dir.glob("*.tl"):
-        test_cases.append(pytest.param(file_path, id=str(file_path)))
+    for data_dir in data_dirs:
+        for file_path in data_dir.glob("*.tl"):
+            test_cases.append(pytest.param(file_path, id=str(file_path)))
         print(file_path)
 
     return test_cases

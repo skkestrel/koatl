@@ -11,18 +11,18 @@ import os.*
 
 assert_eq(getcwd, os.getcwd)
 
-import import_helpers.module0
+import util.module0
 
 assert_eq(set(module0.__all__), set(["z"]))
 assert_eq(module0.z, 3)
 
-import import_helpers.module1
+import util.module1
 
 assert_eq(set(module1.__all__), set(["a", "z"]))
 assert_eq(module1.a, 1)
 assert_eq(module1.z, 3)
 
-import import_helpers.module2
+import util.module2
 
 assert_eq(set(module2.__all__), set(["b"]))
 assert_eq(module2.b, 3)

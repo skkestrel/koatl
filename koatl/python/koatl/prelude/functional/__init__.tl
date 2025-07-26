@@ -2,6 +2,8 @@ import asyncio
 import functools.wraps
 import koatl.runtime.traits.register_global_attr
 
+export import .ok.*
+
 export Fn = class:
     compose = staticmethod(
         (*args) =>
@@ -46,29 +48,6 @@ export Async = class:
     wait = staticmethod(asyncio.wait)
     run = asyncio.run
 
-Ok.do = staticmethod(
-    f => (*args, **kwargs) =>
-            gen = f(*args, **kwargs)
-
-            try:
-                x = gen.send(None)
-                while True:
-                    if not Ok(x):
-                        return x
-
-                    x = gen.send(x)
-            except StopIteration(value=value) as e:
-                return value
-        | wraps(f)
-)
-
-Ok.assert = staticmethod(
-    value =>
-        value match:
-            BaseException() as e => raise e
-            None => raise ValueError("Expected a value, got None")
-            default value
-)
 
 register_global_attr(
     object,
