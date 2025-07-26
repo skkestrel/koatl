@@ -7,12 +7,14 @@ API_RESPONSE = {
         orders: [{id: 1, total: 100}, {id: 2, total: 150}]
     }
     user_b: {
-        profile: {name: "Bob"} # "contact" is missing
+        # contact is missing
+        profile: {name: "Bob"}
         orders: []
     }
     user_c: {
         profile: None
-        orders: 1 # Invalid orders data
+        # Invalid orders data
+        orders: 1
     }
 }
 
@@ -22,14 +24,14 @@ get_user_details = (data, user_id) =>
 
     profile = try user.profile
 
-    profile matches Err() then:
+    profile matches not Ok() then:
         print(f"Profile not found.")
     else:
         print(f"Name: {try profile.name ?? "N/A"}")
 
         contact = try profile.contact
 
-        contact matches Err() then:
+        contact matches not Ok() then:
             print(f"Contact not found.")
         else:
             print(f"Email: {try contact.email ?? "N/A"}")
