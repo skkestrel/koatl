@@ -1062,18 +1062,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                     PyPattern::Singleton(literal.0.transform(ctx)?)
                 }
             },
-            Pattern::Capture(v) => {
-                if v.as_ref()
-                    .is_some_and(|x| char::is_uppercase(x.0.chars().nth(0).unwrap_or('_')))
-                {
-                    return Err(TfErrBuilder::default()
-                        .message("Capture patterns must start with a lowercase letter; to match a type, add '()'")
-                        .span(*span)
-                        .build_errs());
-                }
-
-                PyPattern::As(None, capture_slot(v))
-            }
+            Pattern::Capture(v) => PyPattern::As(None, capture_slot(v)),
             Pattern::Value(v) => {
                 let v_node = bind_pre(&mut pre, v.transform(ctx)?);
 
@@ -1233,7 +1222,7 @@ fn create_matcher<'src, 'ast>(
     on_success: PyBlock<'src>,
     on_fail: PyBlock<'src>,
 ) -> TfResult<PyBlock<'src>> {
-    if is_default_pattern(pattern) {
+    if is_default_pattern(pattern)? {
         return Ok(on_success);
     }
 
@@ -1289,8 +1278,14 @@ fn transform_match_expr<'src, 'ast>(
     let mut has_default_case = false;
 
     for case in cases {
-        if case.pattern.as_ref().is_none_or(is_default_pattern) && case.guard.is_none() {
-            has_default_case = true;
+        if case.guard.is_none() {
+            if let Some(pattern) = &case.pattern {
+                if is_default_pattern(pattern)? {
+                    has_default_case = true;
+                }
+            } else {
+                has_default_case = true;
+            }
         }
 
         // TODO verify binding same names
@@ -1877,13 +1872,41 @@ fn transform_postfix_expr<'src, 'ast>(
     })
 }
 
-fn is_default_pattern<'src>(pattern: &SPattern<'src>) -> bool {
-    match &pattern.0 {
-        Pattern::Capture(_) => true,
-        Pattern::As(pattern, _) => is_default_pattern(pattern),
-        Pattern::Or(items) => items.iter().any(is_default_pattern),
+fn is_default_pattern<'src>(pattern: &SPattern<'src>) -> TfResult<bool> {
+    Ok(match &pattern.0 {
+        Pattern::Capture(cap) => {
+            // Make sure that capture patterns do not start with an uppercase letter to
+            // prevent unexpectedly shadowing a type
+
+            if cap
+                .as_ref()
+                .is_some_and(|x| char::is_uppercase(x.0.chars().nth(0).unwrap_or('_')))
+            {
+                return Err(TfErrBuilder::default()
+                    .message(
+                        "Capture patterns must start with a lowercase letter; to match a type, add '()'",
+                    )
+                    .span(pattern.1)
+                    .build_errs()
+                );
+            }
+
+            true
+        }
+        Pattern::As(pattern, _) => is_default_pattern(pattern)?,
+        Pattern::Or(items) => {
+            let mut is_default = false;
+            for item in items {
+                if is_default_pattern(item)? {
+                    is_default = true;
+                    break;
+                }
+            }
+
+            is_default
+        }
         _ => false,
-    }
+    })
 }
 
 fn matching_except_handler<'src>(

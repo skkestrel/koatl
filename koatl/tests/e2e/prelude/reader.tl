@@ -1,7 +1,11 @@
 import util.assert_eq
 
-f = Reader.do(() =>
-    @"a", @"b"
+g = Reader.do(() =>
+    @"c"
 )
 
-assert_eq(f().run({ a: 1, b: 2 }), (1, 2))
+f = Reader.do(() =>
+    @"a", @"b", @g()
+)
+
+assert_eq(f().run({ a: 1, b: 2, c: 3 }), (1, 2, 3))

@@ -13,7 +13,11 @@ export Reader = class:
         try:
             x = gen.send(None)
             while True:
-                to_send = ctx[x]
+                if x matches Reader():
+                    to_send = x.run(ctx)
+                else:
+                    to_send = ctx[x]
+
                 x = gen.send(to_send)
         except StopIteration(value=value) as e:
             return value
