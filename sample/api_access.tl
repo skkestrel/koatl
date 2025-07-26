@@ -16,7 +16,7 @@ API_RESPONSE = {
     }
 }
 
-get_user_details = [&Ok.do] (data, user_id) =>
+get_user_details = (data, user_id) =>
     user = @(try data[user_id] except KeyError())
         !map_err(e => KeyError(f"User {user_id} not found: {e}"))
 
@@ -53,8 +53,8 @@ get_user_details = [&Ok.do] (data, user_id) =>
         print(f"Searching for id: {id}")
         get_user_details(API_RESPONSE, id) match:
             Err() as e => print(f"Error fetching details: {repr(e)}")
-            Some() => print("Details fetched successfully.")
-            default print("Unexpected return status!")
+            None => print("Unexpected return status!")
+            default print("Details fetched successfully.")
         print("-" * 20)
       )
     !list()

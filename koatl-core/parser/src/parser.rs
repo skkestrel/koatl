@@ -592,7 +592,7 @@ where
         )
         .boxed();
 
-    let (pattern, nary_pattern) = match_pattern(
+    let (closed_pattern, nary_pattern) = match_pattern(
         ident.clone(),
         qualified_ident.clone(),
         expr.clone(),
@@ -895,7 +895,7 @@ where
             .ignore_then(not_or_try.clone())
             .then(
                 just(Token::Kw("except"))
-                    .ignore_then(pattern.clone())
+                    .ignore_then(closed_pattern.clone())
                     .or_not(),
             )
             .map(|(expr, typs)| Expr::Checked(Box::new(expr), typs.map(Box::new)))
@@ -908,7 +908,7 @@ where
         expr_or_inline_stmt_or_block.clone(),
         ident.clone(),
         expr.clone(),
-        pattern.clone(),
+        closed_pattern.clone(),
     );
 
     not_or_try.define(choice((not, checked, binary3.clone())));
@@ -1022,12 +1022,23 @@ where
     let matches = match_
         .then(
             just(Token::Ident("matches"))
-                .ignore_then(pattern.clone())
+                .ignore_then(just(Token::Kw("not")).to(0).or_not())
+                .then(closed_pattern.clone())
                 .or_not(),
         )
-        .map_with(|(expr, pattern), e| {
-            if let Some(pattern) = pattern {
-                (Expr::Matches(Box::new(expr), Box::new(pattern)), e.span())
+        .map_with(|(expr, matches_part), e| {
+            if let Some((not, pattern)) = matches_part {
+                if not.is_some() {
+                    (
+                        Expr::Unary(
+                            UnaryOp::Not,
+                            Box::new((Expr::Matches(Box::new(expr), Box::new(pattern)), e.span())),
+                        ),
+                        e.span(),
+                    )
+                } else {
+                    (Expr::Matches(Box::new(expr), Box::new(pattern)), e.span())
+                }
             } else {
                 expr
             }

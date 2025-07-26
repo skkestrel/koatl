@@ -96,3 +96,17 @@ Matches-expressions resolve to either True or False depending on whether the val
 >>>    print(a, b)
 1 [2, 3]
 ```
+
+`matches not` is just the inverse of `matches`.
+
+```koatl
+>>> 1 matches 1
+True
+>>> 1 matches not 1
+False
+```
+
+```koatl
+>>> [1, 2, 3] matches not [x, y]
+True
+```
