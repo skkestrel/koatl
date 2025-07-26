@@ -156,6 +156,12 @@ where
         .spanned()
         .boxed();
 
+    let sequence_pattern2 = enumeration(sequence_item.clone(), symbol(","))
+        .map(Pattern::Sequence)
+        .delimited_by_with_eol(symbol("("), symbol(")"))
+        .spanned()
+        .boxed();
+
     let nary_sequence_pattern = sequence_item
         .separated_by(symbol(","))
         .at_least(1)
@@ -236,6 +242,7 @@ where
         value_pattern.clone(),
         group_pattern,
         sequence_pattern,
+        sequence_pattern2,
         mapping_pattern,
     ))
     .boxed();

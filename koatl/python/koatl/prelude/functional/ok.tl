@@ -29,7 +29,7 @@ export Ok = class(metaclass=pseudo_type_meta(__tl__.ok)):
                             return x
 
                         x = gen.send(x)
-                except StopIteration(value=value) as e:
+                except StopIteration(value=value):
                     return value
             | wraps(f)
     )

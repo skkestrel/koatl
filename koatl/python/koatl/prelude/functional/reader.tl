@@ -19,7 +19,7 @@ export Reader = class:
                     to_send = ctx[x]
 
                 x = gen.send(to_send)
-        except StopIteration(value=value) as e:
+        except StopIteration(value=value):
             return value
 
     do = staticmethod(f => wraps(f)((*args, **kwargs) => Reader(f(*args, **kwargs))))
