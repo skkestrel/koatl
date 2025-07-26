@@ -160,7 +160,7 @@ pub fn transpile_to_py_ast<'src>(
     Ok(py_ast)
 }
 
-pub fn transpile(src: &str, options: TranspileOptions) -> TlResult<EmitCtx> {
+pub fn transpile_to_source(src: &str, options: TranspileOptions) -> TlResult<EmitCtx> {
     let mut py_ast = transpile_to_py_ast(src, options)?;
 
     let mut ctx = EmitCtx::new();

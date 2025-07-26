@@ -6,14 +6,14 @@ use std::{
 };
 
 use ariadne::{Color, Label, Report, ReportKind, sources};
-use koatl_core::{TlErrKind, TranspileOptions, transpile};
+use koatl_core::{TlErrKind, TranspileOptions, transpile_to_source};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cmd = std::env::args().nth(1).ok_or("Missing command argument")?;
     let filename = std::env::args().nth(2).ok_or("Missing filename argument")?;
     let src = std::fs::read_to_string(&filename).unwrap();
 
-    match transpile(&src, TranspileOptions::module()) {
+    match transpile_to_source(&src, TranspileOptions::module()) {
         Ok(ctx) => match cmd.as_str() {
             "trans" => {
                 println!("{}", ctx.source);
