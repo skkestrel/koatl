@@ -1,5 +1,6 @@
 export import .ok.*
 export import .async.*
+export import .reader.*
 
 export Fn = class:
     compose = staticmethod(
