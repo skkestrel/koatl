@@ -1,4 +1,5 @@
 import functools.wraps
+import koatl.runtime.traits.register_global_attr
 
 pseudo_type_meta = (instancecheck) =>
     meta = type(
@@ -52,3 +53,13 @@ export NotErr = class(metaclass=pseudo_type_meta(v => not (v matches BaseExcepti
 
 export NotOk = class(metaclass=pseudo_type_meta(v => not __tl__.ok(v))):
     None
+
+register_global_attr(
+    object,
+    "map_err",
+    (self, f) =>
+        if self matches Err():
+            return f(self)
+        else:
+            return self
+)
