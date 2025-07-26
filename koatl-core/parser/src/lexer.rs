@@ -140,7 +140,7 @@ where
         static KEYWORDS: &[&str] = &[
             "match", "if", "then", "else", "import", "export", "as", "class", "while", "for", "in",
             "break", "continue", "with", "yield", "global", "nonlocal", "return", "raise", "try",
-            "except", "finally", "and", "or", "not",
+            "except", "finally", "and", "or", "not", "await",
         ];
 
         let keywords = HashSet::<String>::from_iter(KEYWORDS.iter().map(|s| s.to_string()));
@@ -266,7 +266,7 @@ where
 
     fn parse_symbol(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
         const POLYGRAMS: &[&str] = &[
-            "===", "<=>", "=>", "..", "==", "<>", "<=", ">=", "//", "**", "??", "@@", ".=",
+            "===", "<=>", "=>", "..", "==", "<>", "<=", ">=", "//", "**", "??", ".=",
         ];
         const MONOGRAMS: &str = "[](){}<>.,;:!?@$%^&*+-=|\\/`~";
 

@@ -1,32 +1,18 @@
 import functools.wraps
 import asyncio
-import .ok.Ok
-
-import ._async_util
-
-#-
-    Wraps a raw Python awaitable into an Async object.
-    - creates a generator object that yields a single value
--#
-wrap_awaitable = v => &[Async.do] () => @v
+import .async_util
 
 export Async = class:
-    __init__ = (self, generator) =>
-        self.generator = generator
+    __init__ = (self, awaitable) => self.generator = awaitable.__await__()
 
-    __await__ = self =>
-        for future in self.generator:
-            @@(try future.__await__() except AttributeError())
-                !map_err(e => TypeError(f"Object {future} is not awaitable: {e}"))
-                .(Ok.assert)
+    __await__ = self => self.generator
 
-    __repr__ = self =>
-        return "Async(...)"
+    __repr__ = self => "Async(...)"
 
-    run = self => self | _async_util.wrap | asyncio.run
+    run = self => asyncio.run(async_util.await_one(self))
 
-    do = &[staticmethod] f => &[wraps(f)] (*args, **kwargs) => Async(f(*args, **kwargs))
-    sleep = &[staticmethod, do] x => @asyncio.sleep(x)
-    create_task = &[staticmethod, do] x => @asyncio.create_task(x)
-    gather = &[staticmethod, do] (*args) => @asyncio.gather(*args)
-    wait = &[staticmethod, do] (*args) => @asyncio.wait(*args)
+    bind_once = (self, f) => Async(async_util.bind_async(self, f))
+    pure = &[staticmethod] x => Async(async_util.pure(x))
+
+    sleep = &[staticmethod] x => Async(asyncio.sleep(x))
+    gather = &[staticmethod] (*args) => Async(async_util.defer_await(asyncio.gather, *args))

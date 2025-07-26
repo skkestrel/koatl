@@ -1,25 +1,24 @@
 import functools.wraps
 
 export Reader = class:
-    __init__ = (self, generator) =>
-        self.generator = generator
+    NoKey = object()
 
-    __repr__ = self =>
-        return "Reader(...)"
+    __init__ = (self, fn) => self.fn = fn
 
-    run = (self, ctx) =>
-        gen = self.generator
+    __repr__ = self => "Reader(...)"
 
-        try:
-            x = gen.send(None)
-            while True:
-                if x matches Reader():
-                    to_send = x.run(ctx)
-                else:
-                    to_send = ctx[x]
+    run = (self, ctx) => self.fn(ctx)
 
-                x = gen.send(to_send)
-        except StopIteration(value=value):
-            return value
+    # TODO - can can this be optimized?
+    bind_once = (self, f) => &[Reader] ctx =>
+            v = f(self.fn(ctx))
+            if v matches Reader():
+                v.run(ctx)
+            else:
+                v
 
-    do = &[staticmethod] f => &[wraps(f)] (*args, **kwargs) => Reader(f(*args, **kwargs))
+    ask = &[staticmethod] (key=NoKey) => Reader(
+        key === Reader.NoKey then ctx => ctx else ctx => ctx[key]
+    )
+
+    pure = &[staticmethod] value => Reader(ctx => value)

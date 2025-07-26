@@ -609,13 +609,6 @@ where
         .as_context()
         .boxed();
 
-    let await_ = just(Token::Ident("await"))
-        .ignore_then(expr.clone())
-        .map(|x| Expr::Unary(UnaryOp::Await, Box::new(x)))
-        .spanned()
-        .labelled("await")
-        .boxed();
-
     let tuple = choice((
         symbol("(")
             .then(symbol(")"))
@@ -640,13 +633,43 @@ where
         .spanned()
         .labelled("fn");
 
+    enum ControlKw {
+        Await,
+        Yield,
+        YieldFrom,
+    }
+
+    let control_kw = choice((
+        just(Token::Kw("await")).map(|_| ControlKw::Await),
+        just(Token::Kw("yield"))
+            .ignore_then(just(Token::Ident("from")).or_not())
+            .map(|star| {
+                if star.is_some() {
+                    ControlKw::YieldFrom
+                } else {
+                    ControlKw::Yield
+                }
+            }),
+    ))
+    .repeated()
+    .at_least(1)
+    .foldr_with(expr.clone(), |lhs, expr, e| {
+        let expr = match lhs {
+            ControlKw::Await => Expr::Await(Box::new(expr)),
+            ControlKw::Yield => Expr::Yield(Box::new(expr)),
+            ControlKw::YieldFrom => Expr::YieldFrom(Box::new(expr)),
+        };
+        (expr, e.span())
+    })
+    .labelled("control-expression");
+
     atom.define(
         choice((
             decorated,
-            await_,
             ident_expr.clone(),
             classic_if,
             classic_match,
+            control_kw,
             class_,
             literal_expr.clone(),
             placeholder,
@@ -767,8 +790,7 @@ where
 
     unary.define(
         select! {
-            Token::Symbol("@") => UnaryOp::Yield,
-            Token::Symbol("@@") => UnaryOp::YieldFrom,
+            Token::Symbol("@") => UnaryOp::Bind,
             Token::Symbol("+") => UnaryOp::Pos,
             Token::Symbol("-") => UnaryOp::Neg,
             Token::Symbol("~") => UnaryOp::Inv,
@@ -861,19 +883,16 @@ where
         false,
     );
 
-    let not = select! {
-        Token::Kw("not") => UnaryOp::Not,
-    }
-    .repeated()
-    .foldr_with(binary3.clone(), |op: UnaryOp, rhs: SExpr, e| {
-        (Expr::Unary(op, Box::new(rhs)), e.span())
-    })
-    .labelled("unary-await")
-    .boxed();
+    let mut not_or_try = Recursive::<Indirect<TInput, SExpr, TExtra>>::declare();
+
+    let not = just(Token::Kw("not"))
+        .ignore_then(not_or_try.clone())
+        .map_with(|expr, e| (Expr::Unary(UnaryOp::Not, Box::new(expr)), e.span()))
+        .boxed();
 
     checked.define(
         just(Token::Kw("try"))
-            .ignore_then(not.clone())
+            .ignore_then(not_or_try.clone())
             .then(
                 just(Token::Kw("except"))
                     .ignore_then(pattern.clone())
@@ -892,8 +911,10 @@ where
         pattern.clone(),
     );
 
+    not_or_try.define(choice((not, checked, binary3.clone())));
+
     let binary4 = make_binary_op(
-        choice((checked, fn_, not.clone())),
+        choice((fn_, not_or_try)),
         select! {
             Token::Symbol("??") => BinaryOp::Coalesce,
         },

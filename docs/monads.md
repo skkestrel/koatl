@@ -1,16 +1,20 @@
-# Generators in Koatl
+# Monads
 
-Koatl uses generators to simulate some common and useful monads.
-
-Python's `yield` keyword is represented by the prefix `@` operator in Koatl:
+Koatl uses `@` as a bind-operator to simulate some common and useful monads:
 
 ```koatl
 f = () =>
-    @1
-    @2
-    @3
+    @x
+    @y
+```
 
-f() | list == [1, 2, 3]
+becomes
+
+```python
+@__tl__.do
+def f():
+    yield x
+    return (yield y)
 ```
 
 ## Ok
@@ -18,19 +22,21 @@ f() | list == [1, 2, 3]
 Koatl defines a pseudo-class called Ok, which is used to check that a value is not None and not an error:
 
 ```koatl
-Ok(None) == False
-Ok(ValueError()) == False
-Ok(1) == True
+isinstance(None, Ok) == False
+# same as
+None matches Ok() == False
+
+ValueError() matches Ok() == False
+1 matches Ok() == True
 ```
 
-To use the Ok monad, wrap a generator function in `Ok.do`:
+Ok is the default monad that all types are coerced to:
 
 ```koatl
-f = Ok.do(() =>
+f = () =>
     x = @get_some_value_or_none()
     y = @get_some_other_value_or_error(x)
     x + y
-)
 
 print(f())
 ```
@@ -65,31 +71,22 @@ While errors typically aren't returned from functions in Python, the `try` opera
 
 ## Async
 
-Koatl uses the same syntax and mechanisms to write async code, where `@` can be thought of as `await`:
-
 ```koatl
-f = Async.do(() =>
+f = () =>
     print("sleepy")
     @Async.sleep(1)
     print("refreshed!")
-)
 
 >>> f()
 Async(...)
->>> f().run()
+>>> f().run()   # creates a new event loop
 sleepy
 refreshed!
-```
 
-This is equivalent to the Python code:
-
-```python
-async def f():
-    print("sleepy")
-    await asyncio.sleep(1)
-    print("refreshed!")
-
-asyncio.run(f())
+>>> # Async instances can be awaited,
+>>> # so if inside a notebook,
+>>> # or interfacing with Python code, do this instead:
+>>> await f()
 ```
 
 ## Reader
@@ -110,15 +107,13 @@ f(ctx)
 We can use the Reader monad:
 
 ```koatl
-g = Reader.do(() =>
-    @"third_num"
-)
+{ ask } = Reader
 
-f = Reader.do(() =>
-    @"first_num" + @"second_num" + @g()
-)
+g = () =>
+    @ask("third_num")
+
+f = () =>
+    @ask("first_num") + @ask("second_num") + @g()
 
 f().run(ctx)
 ```
-
-Specifically, here `@` means "`bind` the argument if it's a Reader, otherwise get it from the context object's `__getitem__`.

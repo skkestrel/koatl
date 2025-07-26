@@ -1,36 +1,12 @@
 import functools.wraps
 import koatl.runtime.traits.register_global_attr
 
-pseudo_type_meta = (instancecheck) =>
-    meta = type(
-        "PseudoMeta"
-        (type,)
-        {
-            __new__: (mcs, name, bases, attrs) =>
-                attrs["__new__"] = (cls, value) =>
-                    instancecheck(value)
-                type.__new__(mcs, name, bases, attrs)
+OkMeta = class(type):
+    __instancecheck__ = (cls, instance) => __tl__.ok(instance)
 
-            __instancecheck__: (cls, instance) => instancecheck(instance)
-        }
-    )
-
-    meta
-
-export Ok = class(metaclass=pseudo_type_meta(__tl__.ok)):
-    do = &[staticmethod] f =>
-        &[wraps(f)] (*args, **kwargs) =>
-            gen = f(*args, **kwargs)
-
-            try:
-                x = gen.send(None)
-                while True:
-                    if not Ok(x):
-                        return x
-
-                    x = gen.send(x)
-            except StopIteration(value=value):
-                return value
+export Ok = class(metaclass=OkMeta):
+    __init__ = (self, value) =>
+        self.value = value
 
     assert = &[staticmethod] value =>
         value match:
@@ -38,17 +14,31 @@ export Ok = class(metaclass=pseudo_type_meta(__tl__.ok)):
             None => raise ValueError("Expected a value, got None")
             default value
 
-export Err = class(metaclass=pseudo_type_meta(v => v matches BaseException())):
-    None
+export Err = BaseException
 
-export Some = class(metaclass=pseudo_type_meta(v => v <=> None)):
-    None
+register_global_attr(
+    type(None),
+    "bind_once",
+    (self, f) => self
+)
 
-export NotErr = class(metaclass=pseudo_type_meta(v => not (v matches BaseException()))):
-    None
+register_global_attr(
+    BaseException,
+    "bind_once",
+    (self, f) => self
+)
 
-export NotOk = class(metaclass=pseudo_type_meta(v => not __tl__.ok(v))):
-    None
+register_global_attr(
+    Ok,
+    "bind_once",
+    (self, f) => f(self.value)
+)
+
+register_global_attr(
+    object,
+    "bind_once",
+    (self, f) => f(self)
+)
 
 register_global_attr(
     object,

@@ -854,10 +854,17 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                             .build_errs());
                     }
 
+                    if fn_ctx.is_do {
+                        return Err(TfErrBuilder::default()
+                            .message("Binding is not allowed in this complex loop condition")
+                            .span(*span)
+                            .build_errs());
+                    }
+
                     let aux_fn = make_fn_exp(
                         ctx,
                         FnDefArgs::PyArgList(vec![]),
-                        FnDefBody::PyStmts(cond_node.pre),
+                        FnDefBody::PyStmts(cond_node.pre, false, false),
                         span,
                     )?;
 
@@ -1396,7 +1403,8 @@ fn make_class_def<'src, 'ast>(
 }
 
 enum FnDefBody<'src, 'ast> {
-    PyStmts(PyBlock<'src>),
+    // Body, is_do, is_async
+    PyStmts(PyBlock<'src>, bool, bool),
     Expr(&'ast SExpr<'src>),
 }
 
@@ -1456,16 +1464,35 @@ fn prepare_py_fn<'src, 'ast>(
     arglist: FnDefArgs<'src, 'ast>,
     body: FnDefBody<'src, 'ast>,
     span: &Span,
-) -> TfResult<(PyBlock<'src>, PyBlock<'src>, Vec<PyArgDefItem<'src>>)> {
+) -> TfResult<(
+    PyBlock<'src>,
+    PyBlock<'src>,
+    Vec<PyArgDefItem<'src>>,
+    PyDecorators<'src>,
+)> {
     let mut aux_stmts = PyBlock::new();
     let mut body_stmts = PyBlock::new();
+    let mut decorators = PyDecorators(vec![]);
+
+    let a = PyAstBuilder::new(*span);
 
     let (pre, post, args) = make_arglist(ctx, arglist)?;
     aux_stmts.extend(pre);
     body_stmts.extend(post);
 
     body_stmts.extend(match body {
-        FnDefBody::PyStmts(stmts) => stmts,
+        FnDefBody::PyStmts(stmts, is_do, is_async) => {
+            if is_async {
+                // TODO revisit this!
+                return Err(await_error(span));
+            }
+
+            if is_do {
+                decorators.push(a.tl_builtin("do"));
+            }
+
+            stmts
+        }
         FnDefBody::Expr(block) => {
             ctx.fn_ctx_stack.push(FnCtx::new());
             let block = block.transform(ctx)?;
@@ -1476,13 +1503,17 @@ fn prepare_py_fn<'src, 'ast>(
                 return Err(await_error(span));
             }
 
+            if fn_ctx.is_do {
+                decorators.push(a.tl_builtin("do"));
+            }
+
             let mut stmts = block.pre;
-            stmts.push((PyStmt::Return(block.value), *span).into());
+            stmts.push(a.return_(block.value));
             stmts
         }
     });
 
-    Ok((aux_stmts, body_stmts, args))
+    Ok((aux_stmts, body_stmts, args, decorators))
 }
 
 fn make_fn_exp<'src, 'ast>(
@@ -1491,14 +1522,29 @@ fn make_fn_exp<'src, 'ast>(
     body: FnDefBody<'src, 'ast>,
     span: &Span,
 ) -> TfResult<SPyExprWithPre<'src>> {
-    let (mut aux_stmts, body_stmts, args) = prepare_py_fn(ctx, arglist, body, span)?;
+    let (mut aux_stmts, body_stmts, args, decorators) = prepare_py_fn(ctx, arglist, body, span)?;
+    let a = PyAstBuilder::new(*span);
 
     if body_stmts.0.len() == 1 {
-        // TODO maybe refactor prepare_py_fn to return body_stmts as PyExprWithPre
-        if let PyStmt::Return(expr) = &body_stmts.0[0].value {
+        // TODO maybe refactor prepare_py_fn to return body_stmts as PyExprWithPre instead of pattern matching Return
+
+        if let PyStmt::Return(_) = &body_stmts.0[0].value {
+            let PyStmt::Return(expr) = body_stmts.0.into_iter().next().unwrap().value else {
+                return Err(TfErrBuilder::default()
+                    .message("Internal error: Expected a single return statement in function body")
+                    .span(*span)
+                    .build_errs());
+            };
+
+            let mut inner = a.lambda(args, expr);
+
+            for deco in decorators.0.into_iter().rev() {
+                inner = a.call(deco, vec![a.call_arg(inner)]);
+            }
+
             return Ok(SPyExprWithPre {
-                value: (PyExpr::Lambda(args, Box::new(expr.clone())), *span).into(),
-                pre: PyBlock::new(),
+                value: inner,
+                pre: aux_stmts,
             });
         }
     }
@@ -1506,7 +1552,7 @@ fn make_fn_exp<'src, 'ast>(
     let name = ctx.temp_var_name("fnexp", span.start);
     aux_stmts.push(
         (
-            PyStmt::FnDef(name.clone().into(), args, body_stmts, PyDecorators::new()),
+            PyStmt::FnDef(name.clone().into(), args, body_stmts, decorators),
             *span,
         )
             .into(),
@@ -1522,10 +1568,14 @@ fn make_fn_def<'src, 'ast>(
     name: Cow<'src, str>,
     arglist: FnDefArgs<'src, 'ast>,
     body: FnDefBody<'src, 'ast>,
-    decorators: PyDecorators<'src>,
+    mut decorators: PyDecorators<'src>,
     span: &Span,
 ) -> TfResult<PyBlock<'src>> {
-    let (mut aux_stmts, body_stmts, args) = prepare_py_fn(ctx, arglist, body, span)?;
+    let (mut aux_stmts, body_stmts, args, inner_decorators) =
+        prepare_py_fn(ctx, arglist, body, span)?;
+
+    decorators.0.extend(inner_decorators.0);
+
     aux_stmts.push(
         (
             PyStmt::FnDef(name.into(), args, body_stmts, decorators),
@@ -1639,6 +1689,7 @@ fn transform_subscript_items<'src, 'ast>(
 
 struct FnCtx {
     is_async: bool,
+    is_do: bool,
     is_also_placeholder_ctx: bool,
 }
 
@@ -1646,6 +1697,7 @@ impl FnCtx {
     fn new() -> Self {
         Self {
             is_async: false,
+            is_do: false,
             is_also_placeholder_ctx: false,
         }
     }
@@ -1671,9 +1723,36 @@ impl PlaceholderCtx {
 
 fn await_error<'src>(span: &Span) -> TfErrs {
     TfErrBuilder::default()
-        .message("Await is not allowed except at the top level in interactive contexts; use the Async.do monad instead")
+        .message("Await is not allowed except at the top level in interactive contexts; use the Async monad instead")
         .span(*span)
         .build_errs()
+}
+
+fn set_async_ctx<'src>(
+    stack: &mut Vec<FnCtx>,
+    allow_top_level_await: bool,
+    span: &Span,
+) -> TfResult<()> {
+    if let Some(fn_ctx) = stack.last_mut() {
+        fn_ctx.is_async = true;
+    } else if !allow_top_level_await {
+        return Err(await_error(span));
+    }
+
+    Ok(())
+}
+
+fn set_do_ctx<'src>(stack: &mut Vec<FnCtx>, span: &Span) -> TfResult<()> {
+    if let Some(fn_ctx) = stack.last_mut() {
+        fn_ctx.is_do = true;
+    } else {
+        return Err(TfErrBuilder::default()
+            .message("Bind operator is only allowed in a function context")
+            .span(*span)
+            .build_errs());
+    }
+
+    Ok(())
 }
 
 fn placeholder_guard<'src, F>(
@@ -1712,7 +1791,7 @@ where
         let fn_exp = make_fn_exp(
             ctx,
             FnDefArgs::PyArgList(vec![PyArgDefItem::Arg(var_name, None)]),
-            FnDefBody::PyStmts(body),
+            FnDefBody::PyStmts(body, fn_ctx.is_do, false),
             span,
         )?;
 
@@ -1722,13 +1801,15 @@ where
         })
     } else {
         if fn_ctx.is_async {
-            // this potential placeholder ctx generated an async ctx, but wasn't actually a placeholder
+            // this potential placeholder ctx generated an async ctx,
+            // but wasn't actually a placeholder,
             // so we forward it down to the next fn_ctx
-            if let Some(fn_ctx) = ctx.fn_ctx_stack.last_mut() {
-                fn_ctx.is_async = true;
-            } else if !ctx.allow_top_level_await {
-                return Err(await_error(span));
-            }
+            set_async_ctx(&mut ctx.fn_ctx_stack, ctx.allow_top_level_await, span)?;
+        }
+
+        if fn_ctx.is_do {
+            // same as above
+            set_do_ctx(&mut ctx.fn_ctx_stack, span)?;
         }
 
         Ok(inner_expr)
@@ -2350,58 +2431,63 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     pre: aux_stmts,
                 });
             }
-            Expr::Unary(op, expr) => {
-                let expr = match op {
-                    UnaryOp::Await => expr.transform_with_placeholder_guard(ctx)?,
-                    _ => expr.transform(ctx)?,
-                };
+            Expr::Await(expr) => {
+                set_async_ctx(&mut ctx.fn_ctx_stack, ctx.allow_top_level_await, span)?;
 
-                let aux_stmts = expr.pre;
+                let expr = expr.transform(ctx)?;
+
+                return Ok(SPyExprWithPre {
+                    value: (PyExpr::Await(Box::new(expr.value)), *span).into(),
+                    pre: expr.pre,
+                });
+            }
+            Expr::Yield(expr) => {
+                let expr = expr.transform(ctx)?;
+
+                return Ok(SPyExprWithPre {
+                    value: (PyExpr::Yield(Box::new(expr.value)), *span).into(),
+                    pre: expr.pre,
+                });
+            }
+            Expr::YieldFrom(expr) => {
+                let expr = expr.transform(ctx)?;
+
+                return Ok(SPyExprWithPre {
+                    value: (
+                        PyExpr::YieldFrom(Box::new(a.call(
+                            a.tl_builtin("vget"),
+                            vec![
+                                a.call_arg(expr.value),
+                                a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
+                            ],
+                        ))),
+                        *span,
+                    )
+                        .into(),
+                    pre: expr.pre,
+                });
+            }
+            Expr::Unary(op, expr) => {
+                let expr = expr.transform(ctx)?;
 
                 let py_op = match op {
                     UnaryOp::Neg => PyUnaryOp::Neg,
                     UnaryOp::Pos => PyUnaryOp::Pos,
                     UnaryOp::Inv => PyUnaryOp::Inv,
                     UnaryOp::Not => PyUnaryOp::Not,
-                    UnaryOp::Await => {
-                        if let Some(fn_ctx) = ctx.fn_ctx_stack.last_mut() {
-                            fn_ctx.is_async = true;
-                        } else if !ctx.allow_top_level_await {
-                            return Err(await_error(span));
-                        }
+                    UnaryOp::Bind => {
+                        set_do_ctx(&mut ctx.fn_ctx_stack, span)?;
 
                         return Ok(SPyExprWithPre {
-                            value: (PyExpr::Await(Box::new(expr.value)), *span).into(),
-                            pre: aux_stmts,
-                        });
-                    }
-                    UnaryOp::Yield => {
-                        return Ok(SPyExprWithPre {
                             value: (PyExpr::Yield(Box::new(expr.value)), *span).into(),
-                            pre: aux_stmts,
-                        });
-                    }
-                    UnaryOp::YieldFrom => {
-                        return Ok(SPyExprWithPre {
-                            value: (
-                                PyExpr::YieldFrom(Box::new(a.call(
-                                    a.tl_builtin("vget"),
-                                    vec![
-                                        a.call_arg(expr.value),
-                                        a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
-                                    ],
-                                ))),
-                                *span,
-                            )
-                                .into(),
-                            pre: aux_stmts,
+                            pre: expr.pre,
                         });
                     }
                 };
 
                 return Ok(SPyExprWithPre {
                     value: (PyExpr::Unary(py_op, Box::new(expr.value)), *span).into(),
-                    pre: aux_stmts,
+                    pre: expr.pre,
                 });
             }
             Expr::List(exprs) => {

@@ -5,10 +5,13 @@ and also declares functions that are required for certain tl features to work,
 such as coalescing and module exports.
 """
 
+from functools import wraps
+from types import SimpleNamespace
+
 from . import meta_finder
+from .._rs import Record, vget, ok
 
 meta_finder.install_hook()
-del meta_finder
 
 
 class MatchError(Exception):
@@ -47,9 +50,34 @@ def unpack_record(obj):
         return Record(obj.__dict__)
 
 
-from types import SimpleNamespace
-from .._rs import Record, vget, ok
+def do(f):
+    @wraps(f)
+    def impl(*args, **kwargs):
+        coro = f(*args, **kwargs)
+
+        try:
+            m = coro.send(None)
+        except StopIteration as e:
+            return e.value
+
+        def recurse(v):
+            nonlocal m
+            try:
+                m = coro.send(v)
+                return vget(m, "bind_once")(recurse)
+            except StopIteration as e:
+                try:
+                    return vget(m, "pure")(e.value)
+                except AttributeError:
+                    return e.value
+
+        return vget(m, "bind_once")(recurse)
+
+    return impl
+
+
 from .traits import *
+
 
 __tl__ = SimpleNamespace(
     Record=Record,
@@ -58,8 +86,10 @@ __tl__ = SimpleNamespace(
     set_exports=set_exports,
     vget=vget,
     ok=ok,
+    do=do,
     **{name: traits.__dict__[name] for name in traits.__all__}
 )
+
 
 __all__ = [
     "__tl__",

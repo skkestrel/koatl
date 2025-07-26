@@ -1,16 +1,16 @@
 methods = {
     map: (x, f) =>
         for i in x:
-            @f(i)
+            yield f(i)
 
     filter: (x, f) =>
         for i in x:
             if f(i):
-                @i
+                yield i
 
     flat_map: (x, f) =>
         for i in x:
-            @@f(i)
+            yield from f(i)
 
     fold: (x, init, f) =>
         acc = init

@@ -16,7 +16,6 @@ def get_test_data():
     for data_dir in data_dirs:
         for file_path in data_dir.glob("*.tl"):
             test_cases.append(pytest.param(file_path, id=str(file_path)))
-        print(file_path)
 
     return test_cases
 

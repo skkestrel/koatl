@@ -18,6 +18,12 @@ def run_from_source(source, mode="script", script_path="<string>"):
     exec(code_obj, script_globals)
 
 
+def transpile_from_path(script_path, mode="script"):
+    with open(script_path, "r") as f:
+        original_script_code = f.read()
+    transpile_from_source(original_script_code, mode=mode, script_path=script_path)
+
+
 def run_from_path(script_path, mode="script"):
     with open(script_path, "r") as f:
         original_script_code = f.read()

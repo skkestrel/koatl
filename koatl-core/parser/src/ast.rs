@@ -37,9 +37,7 @@ pub enum UnaryOp {
     Pos,
     Neg,
     Not,
-    Await,
-    Yield,
-    YieldFrom,
+    Bind,
 }
 
 pub type Ident<'a> = Cow<'a, str>;
@@ -164,6 +162,10 @@ pub enum Expr<'a> {
 
     Unary(UnaryOp, Box<SExpr<'a>>),
     Binary(BinaryOp, Box<SExpr<'a>>, Box<SExpr<'a>>),
+
+    Await(Box<SExpr<'a>>),
+    Yield(Box<SExpr<'a>>),
+    YieldFrom(Box<SExpr<'a>>),
 
     If(Box<SExpr<'a>>, Box<SExpr<'a>>, Option<Box<SExpr<'a>>>),
     Match(Box<SExpr<'a>>, Vec<MatchCase<'a>>),

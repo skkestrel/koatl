@@ -1,5 +1,5 @@
 -   [Intro](intro)
--   [Generators](monads)
+-   [Common monads](monads)
 -   [Formatting](formatting)
 -   [New operators](operators)
 -   [Lists, records, and tuples](containers)
