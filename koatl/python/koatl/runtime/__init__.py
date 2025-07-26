@@ -3,6 +3,9 @@ This module initializes the environment for koatl.
 It sets up the meta-finder hook to enable importing .tl files,
 and also declares functions that are required for certain tl features to work,
 such as coalescing and module exports.
+
+koatl.runtime should be written in Python only since otherwise
+it would create a circular dependency.
 """
 
 from functools import wraps

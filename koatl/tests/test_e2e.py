@@ -26,7 +26,7 @@ def test_e2e_native_emit(test_file):
 
     with open(test_file, "r") as f:
         source = f.read()
-    source, source_map = koatl.transpile(source, mode="script", sourcemap=True)
+    source, source_map = koatl.transpile_raw(source, mode="script")
 
     global_dict = {}
 

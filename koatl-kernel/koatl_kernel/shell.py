@@ -48,7 +48,7 @@ class KoatlShell(ZMQInteractiveShell):
         cell = super().transform_cell(raw_cell)
 
         self._koatl_cell = cell
-        (cell, sourcemap) = koatl.transpile(cell, mode="interactive", sourcemap=True)
+        cell, sourcemap = koatl.transpile_raw(cell, mode="interactive")
         _source_map_override.clear()
 
         last_seen_line = 0

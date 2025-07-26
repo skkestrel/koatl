@@ -1,8 +1,10 @@
 """
 At the time of writing, I haven't implemented async def
-in Koatl, so this is a workaround.
+in Koatl, so this is a workaround to provide implementations
+for Async.
 
-(In practice, async def should never be needed anyways, since we have Async.do)
+(In practice, async def shouldn't be needed anyways,
+since we have the Async monad.)
 """
 
 
