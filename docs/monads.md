@@ -17,6 +17,9 @@ def f():
     return (yield y)
 ```
 
+Due to limitations of generators (they can't be copied), monads in Koatl define `bind_once(self, f)` instead of the usual `bind(self, f)`;
+the difference is that `f` should called at most once in `bind_once(self, f)`.
+
 ## Ok
 
 Koatl defines a pseudo-class called Ok, which is used to check that a value is not None and not an error:

@@ -101,9 +101,3 @@ odds_only = [1, 2, 3, 4, 5][1....2]
 my_saved_slice = ..5
 some_other_array[my_saved_slice]
 ```
-
-## Super-vcalls
-
-(experimental)
-
-A super-vcall, denoted by `value!function()` might, in the future, allow the user to conveniently define and call extension methods on builtin and external types.

@@ -5,6 +5,7 @@
 -   [Lists, records, and tuples](containers)
 -   [Pattern matching](match)
 -   [Modules](modules)
+-   [Extension attributes](extensions)
 -   **Links**
 -   [Github](https://github.com/skkestrel/koatl)
 -   [pypi](https://pypi.org/project/koatl/)

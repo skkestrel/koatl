@@ -32,11 +32,9 @@ From any Python file, run:
 import koatl.runtime
 ```
 
-Now, you can import Koatl `.tl` files just like regular Python modules.
+Now, we can import Koatl `.tl` files just like regular Python modules.
 
-## Troubleshooting Koatl
-
-Here are two things you can do to troubleshoot Koatl code:
+## Viewing transpiled output
 
 ```koatl
 import ast

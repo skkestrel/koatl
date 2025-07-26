@@ -40,7 +40,10 @@ def set_exports(package_name, globals_dict, exports, module_star_exports):
 
                 exports.add(name)
 
-    globals_dict["__all__"] = tuple(exports)
+    if "__all__" not in globals_dict:
+        globals_dict["__all__"] = ()
+
+    globals_dict["__all__"] = tuple(set(globals_dict["__all__"]) | exports)
 
 
 def unpack_record(obj):
