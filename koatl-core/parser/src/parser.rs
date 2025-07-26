@@ -359,7 +359,9 @@ where
     let mut inline_stmt = Recursive::<Indirect<TInput, SStmt, TExtra>>::declare();
     let mut atom = Recursive::<Indirect<TInput, SExpr, TExtra>>::declare();
     let mut expr = Recursive::<Indirect<TInput, SExpr, TExtra>>::declare();
+    let mut unary = Recursive::<Indirect<TInput, SExpr, TExtra>>::declare();
     let mut cases = Recursive::<Indirect<TInput, _, TExtra>>::declare();
+    let mut below_pipe = Recursive::<Indirect<TInput, _, TExtra>>::declare();
 
     let stmts = stmt
         .clone()
@@ -614,8 +616,33 @@ where
         .labelled("await")
         .boxed();
 
+    let tuple = choice((
+        symbol("(")
+            .then(symbol(")"))
+            .map(|_| Expr::Tuple(vec![]))
+            .spanned(),
+        nary_tuple
+            .clone()
+            .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
+    ))
+    .boxed();
+
+    let deco_list = enumeration(expr.clone(), symbol(","))
+        .delimited_by_with_eol(just(Token::Symbol("[")), just(Token::Symbol("]")))
+        .labelled("decorators")
+        .boxed();
+
+    let decorators = symbol("&").ignore_then(deco_list.clone());
+
+    let decorated = decorators
+        .then(below_pipe.clone())
+        .map(|(decorators, expr)| Expr::Decorated(decorators, Box::new(expr)))
+        .spanned()
+        .labelled("fn");
+
     atom.define(
         choice((
+            decorated,
             await_,
             ident_expr.clone(),
             classic_if,
@@ -626,16 +653,10 @@ where
             list.clone(),
             mapping,
             fstr,
-            symbol("(")
-                .then(symbol(")"))
-                .map(|_| Expr::Tuple(vec![]))
-                .spanned(),
+            tuple.clone(),
             block
                 .clone()
                 .delimited_by_with_eol(symbol("("), symbol(")")),
-            nary_tuple
-                .clone()
-                .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
         ))
         .labelled("atom"),
     );
@@ -744,20 +765,22 @@ where
 
     let mut checked = Recursive::<Indirect<TInput, SExpr, TExtra>>::declare();
 
-    let unary = select! {
-        Token::Symbol("@") => UnaryOp::Yield,
-        Token::Symbol("@@") => UnaryOp::YieldFrom,
-        Token::Symbol("+") => UnaryOp::Pos,
-        Token::Symbol("-") => UnaryOp::Neg,
-        Token::Symbol("~") => UnaryOp::Inv,
-    }
-    .repeated()
-    .foldr_with(
-        choice((postfix, checked.clone())),
-        |op: UnaryOp, rhs: SExpr, e| (Expr::Unary(op, Box::new(rhs)), e.span()),
-    )
-    .labelled("unary-expression")
-    .boxed();
+    unary.define(
+        select! {
+            Token::Symbol("@") => UnaryOp::Yield,
+            Token::Symbol("@@") => UnaryOp::YieldFrom,
+            Token::Symbol("+") => UnaryOp::Pos,
+            Token::Symbol("-") => UnaryOp::Neg,
+            Token::Symbol("~") => UnaryOp::Inv,
+        }
+        .repeated()
+        .foldr_with(
+            choice((postfix, checked.clone())),
+            |op: UnaryOp, rhs: SExpr, e| (Expr::Unary(op, Box::new(rhs)), e.span()),
+        )
+        .labelled("unary-expression")
+        .boxed(),
+    );
 
     fn make_binary_op<'tokens, 'src: 'tokens, I, POp, PArg>(
         arg: PArg,
@@ -1024,8 +1047,10 @@ where
             }
         });
 
+    below_pipe.define(if_);
+
     let binary6 = make_binary_op(
-        if_,
+        below_pipe.clone(),
         select! {
             Token::Symbol("|") => BinaryOp::Pipe,
         },

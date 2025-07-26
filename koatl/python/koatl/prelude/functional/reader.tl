@@ -22,4 +22,4 @@ export Reader = class:
         except StopIteration(value=value):
             return value
 
-    do = staticmethod(f => wraps(f)((*args, **kwargs) => Reader(f(*args, **kwargs))))
+    do = &[staticmethod] f => &[wraps(f)] (*args, **kwargs) => Reader(f(*args, **kwargs))

@@ -18,29 +18,25 @@ pseudo_type_meta = (instancecheck) =>
     meta
 
 export Ok = class(metaclass=pseudo_type_meta(__tl__.ok)):
-    do = staticmethod(
-        f => (*args, **kwargs) =>
-                gen = f(*args, **kwargs)
+    do = &[staticmethod] f =>
+        &[wraps(f)] (*args, **kwargs) =>
+            gen = f(*args, **kwargs)
 
-                try:
-                    x = gen.send(None)
-                    while True:
-                        if not Ok(x):
-                            return x
+            try:
+                x = gen.send(None)
+                while True:
+                    if not Ok(x):
+                        return x
 
-                        x = gen.send(x)
-                except StopIteration(value=value):
-                    return value
-            | wraps(f)
-    )
+                    x = gen.send(x)
+            except StopIteration(value=value):
+                return value
 
-    assert = staticmethod(
-        value =>
-            value match:
-                BaseException() as e => raise e
-                None => raise ValueError("Expected a value, got None")
-                default value
-    )
+    assert = &[staticmethod] value =>
+        value match:
+            BaseException() as e => raise e
+            None => raise ValueError("Expected a value, got None")
+            default value
 
 export Err = class(metaclass=pseudo_type_meta(v => v matches BaseException())):
     None

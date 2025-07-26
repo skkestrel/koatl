@@ -635,7 +635,7 @@ fn transform_assignment<'src, 'ast>(
     if let Expr::Ident(ident) = &lhs.0 {
         let py_ident = ctx.escape_ident(&ident.0);
 
-        let mut decorators = vec![];
+        let mut decorators: Vec<&SExpr> = vec![];
         let mut cur_node = &rhs.0;
 
         loop {
@@ -647,6 +647,10 @@ fn transform_assignment<'src, 'ast>(
                 Expr::Binary(BinaryOp::Pipe, left, right) => {
                     cur_node = &left.0;
                     decorators.push(right);
+                }
+                Expr::Decorated(deco, right) => {
+                    cur_node = &right.0;
+                    decorators.extend(deco);
                 }
                 Expr::Call(left, right) => {
                     if right.len() != 1 {
@@ -2182,6 +2186,23 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     value: (PyExpr::Ident(name, PyAccessCtx::Load), *span).into(),
                     pre: aux_stmts,
                 })
+            }
+            Expr::Decorated(decorators, expr) => {
+                let mut pre = PyBlock::new();
+                let mut node = bind_pre(&mut pre, expr.transform(ctx)?);
+
+                for item in decorators.iter().rev() {
+                    node = (
+                        PyExpr::Call(
+                            Box::new(bind_pre(&mut pre, item.transform(ctx)?)),
+                            vec![PyCallItem::Arg(node)],
+                        ),
+                        item.1,
+                    )
+                        .into();
+                }
+
+                Ok(SPyExprWithPre { value: node, pre })
             }
             Expr::Literal(lit) => Ok(SPyExprWithPre {
                 value: (PyExpr::Literal(lit.0.transform(ctx)?), *span).into(),

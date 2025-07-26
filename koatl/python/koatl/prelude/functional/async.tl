@@ -8,7 +8,7 @@ import ._async_util
     Wraps a raw Python awaitable into an Async object.
     - creates a generator object that yields a single value
 -#
-wrap_awaitable = v => Async.do((() => @v))
+wrap_awaitable = v => &[Async.do] () => @v
 
 export Async = class:
     __init__ = (self, generator) =>
@@ -25,11 +25,8 @@ export Async = class:
 
     run = self => self | _async_util.wrap | asyncio.run
 
-    do = staticmethod(
-        f => wraps(f)((*args, **kwargs) => Async(f(*args, **kwargs)))
-    )
-
-    sleep = staticmethod(do(x => @asyncio.sleep(x)))
-    create_task = staticmethod(do(x => @asyncio.create_task(x)))
-    gather = staticmethod(do((*args) => @asyncio.gather(*args)))
-    wait = staticmethod(do((*args) => @asyncio.wait(*args)))
+    do = &[staticmethod] f => &[wraps(f)] (*args, **kwargs) => Async(f(*args, **kwargs))
+    sleep = &[staticmethod, do] x => @asyncio.sleep(x)
+    create_task = &[staticmethod, do] x => @asyncio.create_task(x)
+    gather = &[staticmethod, do] (*args) => @asyncio.gather(*args)
+    wait = &[staticmethod, do] (*args) => @asyncio.wait(*args)

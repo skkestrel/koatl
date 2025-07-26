@@ -187,6 +187,8 @@ pub enum Expr<'a> {
     Fn(Vec<ArgDefItem<'a>>, Box<SExpr<'a>>),
     Fstr(Spanned<String>, Vec<(SFmtExpr<'a>, Spanned<String>)>),
 
+    Decorated(Vec<SExpr<'a>>, Box<SExpr<'a>>),
+
     Block(Vec<SStmt<'a>>),
 }
 

@@ -4,7 +4,7 @@ API_RESPONSE = {
             name: "Alice"
             contact: {email: "alice@example.com", phone: None}
         }
-        orders: [{"id": 1, "total": 100}, {"id": 2, "total": 150}]
+        orders: [{id: 1, total: 100}, {id: 2, total: 150}]
     }
     user_b: {
         profile: {name: "Bob"} # "contact" is missing
@@ -12,23 +12,24 @@ API_RESPONSE = {
     }
     user_c: {
         profile: None
+        orders: 1 # Invalid orders data
     }
 }
 
-get_user_details = Ok.do((data, user_id) =>
+get_user_details = [&Ok.do] (data, user_id) =>
     user = @(try data[user_id] except KeyError())
         !map_err(e => KeyError(f"User {user_id} not found: {e}"))
 
     profile = try user.profile
 
-    not Ok(profile) then:
+    profile matches Err() then:
         print(f"Profile not found.")
     else:
         print(f"Name: {try profile.name ?? "N/A"}")
 
         contact = try profile.contact
 
-        not Ok(contact) then:
+        contact matches Err() then:
             print(f"Contact not found.")
         else:
             print(f"Email: {try contact.email ?? "N/A"}")
@@ -46,14 +47,13 @@ get_user_details = Ok.do((data, user_id) =>
     )
 
     ()
-)
 
 ["user_a", "user_b", "user_c", "user_d"]
     !map(id =>
-        print(f"Searching for id {id}")
+        print(f"Searching for id: {id}")
         get_user_details(API_RESPONSE, id) match:
             Err() as e => print(f"Error fetching details: {repr(e)}")
-            [] => print("Details fetched successfully.")
+            Some() => print("Details fetched successfully.")
             default print("Unexpected return status!")
         print("-" * 20)
       )
