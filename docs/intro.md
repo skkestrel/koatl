@@ -7,8 +7,8 @@
 Koatl also supports Jupyter notebooks out of the box.
 
 ```koatl
->>> fib = x => x match 0 | 1 => 1 default fib(x-1) + fib(x-2)
->>> (..10).map(fib).list()
+>>> fib = x => x matches (0 | 1) then 1 else fib(x-1) + fib(x-2)
+>>> (..10)!map(fib)!list()
 [1, 1, 2, 3, 5, 8, 13, 21, 34, 55]
 ```
 
