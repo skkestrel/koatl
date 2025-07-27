@@ -2,37 +2,26 @@
 
 Extension attributes allow us to bestow properties and methods on other types (including builtin types) without having to edit their type definition or use a library like `forbiddenfruit`.
 
-A virtual-get takes the syntax `value!attr`, and should be thought of as an alternative to the Python syntax of `value.attr`.
-
-Specifically, `value!attr` transpiles to:
+In Koatl, `value.attr` transpiles to:
 
 ```python
 __tl__.vget(value, "attr")
 ```
 
-where `attr` is dynamically looked up using two global dictionaries, `koatl.runtime.virtual.types_vtbl` and `koatl.runtime.virtual.traits_vtbl`.
+where `attr` is dynamically looked up using two global tables: one for types, and one for "traits".
+A "trait" is a type of abstract base class that doesn't need to be inherited from; membership is dynamically determined based on the object
+having all of the required attributes (which can also be extension attributes).
 
-The structure of both dictionaries look like:
-
-```python
-types_vtbl = {
-    "attr": {
-        MyType: method_for_type
-        MyOtherType: other_method
-    }
-}
-```
+Extension attributes are registered globally using `koatl.runtime.virtual.register_global_attr(concrete_type, attr_name, method)`
+or `koatl.runtime.virtual.register_global_trait(trait, attr_name, method)`.
+`trait` should be `koatl.runtime.virtual.Trait(module_name, trait_name, trait_methods, *, requires)`.
 
 Virtual resolution order is as follows:
 
 1. Attempt `object.__getattr__(obj, "attr")`.
-2. Attempt `types_vtbl["attr"][t]` for each `t` in `type(obj).mro()`.
-3. Attempt `traits_vtbl["attr"][t]` for each `t`, but only if `isinstance(obj, t)`.
+2. Attempt to look up the extension attribute in the type table using referential equality, for each type in the object's `mro()`.
+3. Attempt to look up the extension attribute in the trait table.
 4. Raise AttributeError.
-
-Virtual tables should be interfaced with using `koatl.runtime.virtual.register_global_attr(concrete_type, attr_name, method)`
-or `koatl.runtime.virtual.register_global_trait(trait, attr_name, method)`.
-`trait` should be `koatl.runtime.virtual.Trait(module_name, trait_name, trait_methods, required_attrs)`.
 
 One-argument `method`s can be decorated with the `__tl__.ExtensionProperty` decorator to have it behave as a property.
 
