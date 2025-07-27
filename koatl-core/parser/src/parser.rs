@@ -689,6 +689,7 @@ where
         Subscript(Vec<ListItem<'a>>),
         Extension(SIdent<'a>),
         Then(SExpr<'a>),
+        ThenCall(SExpr<'a>, Vec<SCallItem<'a>>),
         Attribute(SIdent<'a>),
     }
 
@@ -734,22 +735,26 @@ where
 
     let attribute = symbol(".")
         .ignore_then(ident.clone())
-        .map(Postfix::Attribute)
-        .labelled("attr");
+        .map(Postfix::Extension)
+        .labelled("extension-attribute");
 
     let then = symbol(".")
-        .ignore_then(
-            expr.clone()
-                .delimited_by_with_eol(symbol("("), symbol(")"))
-                .map(Postfix::Then),
-        )
-        .labelled("attr")
+        .ignore_then(expr.clone().delimited_by_with_eol(symbol("("), symbol(")")))
+        .then(call_args.or_not())
+        .map(|(rhs, args)| {
+            if let Some(args) = args {
+                Postfix::ThenCall(rhs, args)
+            } else {
+                Postfix::Then(rhs)
+            }
+        })
+        .labelled("then-attribute")
         .boxed();
 
     let extension = symbol("!")
         .ignore_then(ident.clone())
-        .map(Postfix::Extension)
-        .labelled("extension")
+        .map(Postfix::Attribute)
+        .labelled("native-attribute")
         .boxed();
 
     let postfix = atom
@@ -767,7 +772,17 @@ where
                             Postfix::Call(args) => Expr::Call(Box::new(expr), args),
                             Postfix::Subscript(args) => Expr::Subscript(Box::new(expr), args),
                             Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
-                            Postfix::Then(rhs) => Expr::Then(Box::new(expr), Box::new(rhs)),
+                            Postfix::Then(rhs) => {
+                                Expr::ScopedExtension(Box::new(expr), Box::new(rhs))
+                            }
+                            Postfix::ThenCall(rhs, args) => Expr::Call(
+                                // TODO optimize this case in the AST by skipping partial application
+                                Box::new((
+                                    Expr::ScopedExtension(Box::new(expr), Box::new(rhs)),
+                                    e.span(),
+                                )),
+                                args,
+                            ),
                             Postfix::Extension(rhs) => Expr::Extension(Box::new(expr), rhs),
                         }
                     } else {
@@ -776,6 +791,13 @@ where
                             Postfix::Subscript(args) => Expr::MappedSubscript(Box::new(expr), args),
                             Postfix::Attribute(attr) => Expr::MappedAttribute(Box::new(expr), attr),
                             Postfix::Then(rhs) => Expr::MappedThen(Box::new(expr), Box::new(rhs)),
+                            Postfix::ThenCall(rhs, args) => Expr::Call(
+                                Box::new((
+                                    Expr::MappedThen(Box::new(expr), Box::new(rhs)),
+                                    e.span(),
+                                )),
+                                args,
+                            ),
                             Postfix::Extension(rhs) => Expr::MappedExtension(Box::new(expr), rhs),
                         }
                     },

@@ -175,7 +175,7 @@ pub enum Expr<'a> {
     Call(Box<SExpr<'a>>, Vec<SCallItem<'a>>),
     Subscript(Box<SExpr<'a>>, Vec<ListItem<'a>>),
     Attribute(Box<SExpr<'a>>, SIdent<'a>),
-    Then(Box<SExpr<'a>>, Box<SExpr<'a>>),
+    ScopedExtension(Box<SExpr<'a>>, Box<SExpr<'a>>),
     Extension(Box<SExpr<'a>>, SIdent<'a>),
 
     MappedCall(Box<SExpr<'a>>, Vec<SCallItem<'a>>),

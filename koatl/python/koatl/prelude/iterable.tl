@@ -44,10 +44,10 @@ methods = {
         acc
 
     list: x =>
-        list(x!iter)
+        list(x.iter)
 
     record: x =>
-        Record(x!iter)
+        Record(x.iter)
 }
 
 # TODO merge this with typing.Iterable?

@@ -8,6 +8,7 @@ koatl.runtime should be written in Python only since otherwise
 it would create a circular dependency.
 """
 
+import functools
 from types import SimpleNamespace
 
 from . import meta_finder
@@ -26,6 +27,7 @@ __tl__ = SimpleNamespace(
     do=helpers.do,
     vget=helpers.vget,
     ok=helpers.ok,
+    partial=functools.partial,
     **{name: helpers.__dict__[name] for name in helpers.__all__},
     **{name: record.__dict__[name] for name in record.__all__},
     **{name: virtual.__dict__[name] for name in virtual.__all__}

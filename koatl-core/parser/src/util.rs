@@ -153,7 +153,10 @@ impl AstBuilder {
     }
 
     pub fn then<'src>(&self, left: SExpr<'src>, right: SExpr<'src>) -> SExpr<'src> {
-        (Expr::Then(Box::new(left), Box::new(right)), self.span)
+        (
+            Expr::ScopedExtension(Box::new(left), Box::new(right)),
+            self.span,
+        )
     }
 
     pub fn function<'src>(&self, args: Vec<ArgDefItem<'src>>, body: SExpr<'src>) -> SExpr<'src> {

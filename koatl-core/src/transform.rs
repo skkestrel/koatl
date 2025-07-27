@@ -505,10 +505,11 @@ fn destructure<'src, 'ast>(
     let assign_to: SPyExpr<'src>;
 
     match &target.0 {
-        Expr::Ident(..) | Expr::Attribute(..) | Expr::Subscript(..) => {
-            match &target.0 {
+        Expr::Ident(..) | Expr::Attribute(..) | Expr::Extension(..) | Expr::Subscript(..) => {
+            let target_node = match &target.0 {
                 Expr::Ident(id) => {
                     decls.push(ctx.escape_ident(&id.0));
+                    target.transform_with_access(ctx, PyAccessCtx::Store)?
                 }
                 Expr::Attribute(..) | Expr::Subscript(..) => {
                     if decl_only {
@@ -517,13 +518,29 @@ fn destructure<'src, 'ast>(
                             .span(target.1)
                             .build_errs());
                     }
+                    target.transform_with_access(ctx, PyAccessCtx::Store)?
+                }
+                Expr::Extension(lhs, ext) => {
+                    if decl_only {
+                        return Err(TfErrBuilder::default()
+                            .message("Only identifiers allowed in this destructuring")
+                            .span(target.1)
+                            .build_errs());
+                    }
+
+                    // we need to replace an extension with a regular attribute
+                    // when assigning to it
+
+                    // TODO avoid this clone
+                    let new_target = (Expr::Attribute(lhs.clone(), ext.clone()), target.1);
+
+                    new_target.transform_with_access(ctx, PyAccessCtx::Store)?
                 }
                 _ => {
                     panic!();
                 }
-            }
+            };
 
-            let target_node = target.transform_with_access(ctx, PyAccessCtx::Store)?;
             post_stmts.extend(target_node.pre);
 
             assign_to = target_node.value;
@@ -640,10 +657,6 @@ fn transform_assignment<'src, 'ast>(
 
         loop {
             match cur_node {
-                Expr::Then(left, right) => {
-                    cur_node = &left.0;
-                    decorators.push(right);
-                }
                 Expr::Binary(BinaryOp::Pipe, left, right) => {
                     cur_node = &left.0;
                     decorators.push(right);
@@ -1850,7 +1863,7 @@ fn transform_postfix_expr<'src, 'ast>(
         Expr::Attribute(obj, _) => (false, obj),
         Expr::Subscript(obj, _) => (false, obj),
         Expr::Call(obj, _) => (false, obj),
-        Expr::Then(obj, _) => (false, obj),
+        Expr::ScopedExtension(obj, _) => (false, obj),
         Expr::Extension(obj, _) => (false, obj),
         Expr::MappedAttribute(obj, _) => (true, obj),
         Expr::MappedSubscript(obj, _) => (true, obj),
@@ -1918,10 +1931,13 @@ fn transform_postfix_expr<'src, 'ast>(
             Expr::MappedAttribute(_, attr) => {
                 guard_if_expr(a.attribute(lhs.clone(), ctx.escape_ident(&attr.0), access_ctx))
             }
-            Expr::Then(_, rhs) => {
+            Expr::ScopedExtension(_, rhs) => {
                 let rhs_node = rhs.transform_with_placeholder_guard(ctx)?;
                 aux.extend(rhs_node.pre);
-                a.call(rhs_node.value, vec![PyCallItem::Arg(lhs)])
+                a.call(
+                    a.tl_builtin("partial"),
+                    vec![PyCallItem::Arg(rhs_node.value), PyCallItem::Arg(lhs)],
+                )
             }
             Expr::MappedThen(_, rhs) => {
                 let rhs_node = rhs.transform_with_placeholder_guard(ctx)?;
@@ -2299,7 +2315,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             | Expr::MappedCall(..)
             | Expr::Subscript(..)
             | Expr::MappedSubscript(..)
-            | Expr::Then(..)
+            | Expr::ScopedExtension(..)
             | Expr::MappedThen(..)
             | Expr::Extension(..)
             | Expr::MappedExtension(..) => transform_postfix_expr(ctx, self, access_ctx),
