@@ -7,9 +7,32 @@
 Koatl also supports Jupyter notebooks out of the box.
 
 ```koatl
+>>> #       Arrow syntax for functions (multiline lambdas also supported)
+>>> #       |
+>>> #       |           Easy pattern matching expressions
+>>> #       v           v
 >>> fib = x => x matches (0 | 1) then 1 else fib(x-1) + fib(x-2)
+
+>>> # Painlessly define slices and ranges
+>>> # |
+>>> # |     Iterators as first-class abstractions
+>>> # v     v
 >>> (..10).map(fib).list()
 [1, 1, 2, 3, 5, 8, 13, 21, 34, 55]
+
+>>> #         Convenient syntax for defining small functions
+>>> #         |
+>>> #         |                Get errors as values instead of having to guard with try/except
+>>> #         v                v
+>>> (..5).map($ - 1).map(x => try [1, 2, 3][x]).list()
+[IndexError(...), 1, 2, 3, IndexError(...)]
+
+>>> #                                Quickly create records with Javascript-like syntax
+>>> #                                |
+>>> #                                |                         Coalesce errors and Nones
+>>> #                                v                         v
+>>> ["key0", "key1"].map(x => try { key0: "Queried value" }[x] ?? "Default").list()
+["Queried value", "Default"]
 ```
 
 > Note: Koatl is under heavy development. Features may be broken, added, or removed at any time.

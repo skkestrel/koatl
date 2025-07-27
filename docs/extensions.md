@@ -25,13 +25,31 @@ Virtual resolution order is as follows:
 
 One-argument `method`s can be decorated with the `__tl__.ExtensionProperty` decorator to have it behave as a property.
 
-## The builtin `iter` extension attribute
+## The builtin `iter` extension property
 
 The `iter` extension attribute is built in to the Koatl runtime and is used in `for .. in` loops as well as `yield from`;
 it always delegates to `items()` if possible (to make dict iteration more sane) and also provides an implementation for slices.
 
 `koatl.prelude.iterable.Iterable` is automatically registered as an extension trait for all types with an `iter`, and provides common methods for working with iterators.
 
-## The builtin `pure` and `bind_once` extension attributes
+## The builtin `pure` and `bind_once` extension method
 
-These extension attributes provide default Monad implementations (in the Ok monad) to all types (see [monads](Monads)).
+These extension methods provide default Monad implementations (in the Ok monad) to _all_ objects (see [Monads](monads)).
+
+```koatl
+
+# BaseException and NoneType
+bind_once = (self, f) => self
+
+# All other objects (fallback)
+bind_once = (self, f) => f(self)
+pure = &[staticmethod] v => v
+```
+
+## The builtin `map_err` extension method
+
+This method provides a utility for working with error objects.
+
+```koatl
+map_err = (self, f) => self matches Err() then f(self) else self
+```
