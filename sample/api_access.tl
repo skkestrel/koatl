@@ -20,7 +20,7 @@ API_RESPONSE = {
 
 get_user_details = (data, user_id) =>
     user = @(try data[user_id] except KeyError())
-        !map_err(e => KeyError(f"User {user_id} not found: {e}"))
+        .map_err(e => KeyError(f"User {user_id} not found: {e}"))
 
     profile = try user.profile
 
@@ -39,7 +39,7 @@ get_user_details = (data, user_id) =>
 
     orders = try user.orders ?? []
     n_orders = @(try len(orders))
-        !map_err(e => ValueError("Orders is malformed."))
+        .map_err(e => ValueError("Orders is malformed."))
 
     print(
         n_orders > 0 then:
@@ -51,12 +51,11 @@ get_user_details = (data, user_id) =>
     ()
 
 ["user_a", "user_b", "user_c", "user_d"]
-    !map(id =>
+    .map(id =>
         print(f"Searching for id: {id}")
         get_user_details(API_RESPONSE, id) match:
             Err() as e => print(f"Error fetching details: {repr(e)}")
             None => print("Unexpected return status!")
             default print("Details fetched successfully.")
-        print("-" * 20)
-      )
-    !list()
+        print("-" * 20))
+    .list()

@@ -1,6 +1,1 @@
-print("hello world")
-
-(
-    () =>
-        raise ValueError("hello exception")
-)()
+"hello world" | print
