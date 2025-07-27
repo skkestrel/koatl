@@ -15,7 +15,7 @@ from . import meta_finder
 meta_finder.install_hook()
 
 
-from .traits import *
+from .virtual import *
 from .record import *
 from .helpers import *
 
@@ -28,7 +28,7 @@ __tl__ = SimpleNamespace(
     ok=helpers.ok,
     **{name: helpers.__dict__[name] for name in helpers.__all__},
     **{name: record.__dict__[name] for name in record.__all__},
-    **{name: traits.__dict__[name] for name in traits.__all__}
+    **{name: virtual.__dict__[name] for name in virtual.__all__}
 )
 
 
@@ -36,5 +36,5 @@ __all__ = [
     "__tl__",
     *helpers.__all__,
     *record.__all__,
-    *traits.__all__,
+    *virtual.__all__,
 ]

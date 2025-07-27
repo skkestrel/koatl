@@ -1,5 +1,5 @@
 from functools import wraps
-from .traits import vget
+from .virtual import vget
 from .record import Record
 
 

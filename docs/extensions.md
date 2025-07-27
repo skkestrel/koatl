@@ -10,7 +10,7 @@ Specifically, `value!attr` transpiles to:
 __tl__.vget(value, "attr")
 ```
 
-where `attr` is dynamically looked up using two global dictionaries, `koatl.runtime.traits.types_vtbl` and `koatl.runtime.traits.traits_vtbl`.
+where `attr` is dynamically looked up using two global dictionaries, `koatl.runtime.virtual.types_vtbl` and `koatl.runtime.virtual.traits_vtbl`.
 
 The structure of both dictionaries look like:
 
@@ -30,8 +30,10 @@ Virtual resolution order is as follows:
 3. Attempt `traits_vtbl["attr"][t]` for each `t`, but only if `isinstance(obj, t)`.
 4. Raise AttributeError.
 
-Virtual tables should be interfaced with using `koatl.runtime.traits.register_global_attr(concrete_type, attr_name, method)`
-or `koatl.runtime.traits.register_global_trait(abstract_type, attr_name, method)`.
+Virtual tables should be interfaced with using `koatl.runtime.virtual.register_global_attr(concrete_type, attr_name, method)`
+or `koatl.runtime.virtual.register_global_trait(trait, attr_name, method)`.
+`trait` should be `koatl.runtime.virtual.Trait(module_name, trait_name, trait_methods, required_attrs)`.
+
 One-argument `method`s can be decorated with the `__tl__.ExtensionProperty` decorator to have it behave as a property.
 
 ## The builtin `iter` extension attribute

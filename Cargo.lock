@@ -103,6 +103,7 @@ version = "0.1.11"
 dependencies = [
  "ariadne",
  "koatl-core",
+ "once_cell",
  "pyo3",
 ]
 

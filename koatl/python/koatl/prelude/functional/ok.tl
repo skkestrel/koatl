@@ -1,5 +1,5 @@
 import functools.wraps
-import koatl.runtime.traits.register_global_attr
+import koatl.runtime.virtual.register_global_attr
 
 OkMeta = class(type):
     __instancecheck__ = (cls, instance) => __tl__.ok(instance)

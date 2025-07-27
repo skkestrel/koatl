@@ -1,11 +1,7 @@
-from collections import defaultdict
 from functools import partial
 from itertools import count
 from types import new_class
-
-
-types_vtbl = defaultdict(dict)
-traits_vtbl = defaultdict(dict)
+from .._rs import fast_vget, fast_vset, fast_vset_trait
 
 
 def ExtensionProperty(f):
@@ -35,15 +31,12 @@ def vget(obj, name):
 
             return iter(obj)
 
-        if name in types_vtbl:
-            for o in type(obj).mro():
-                if o in types_vtbl[name]:
-                    return partial(types_vtbl[name][o], obj)
+        v = fast_vget(obj, name)
+        if v is not None:
+            if hasattr(v, "ext_prop"):
+                return v(obj)
 
-        if name in traits_vtbl:
-            for key, value in traits_vtbl[name].items():
-                if isinstance(obj, key):
-                    return partial(value, obj)
+            return partial(v, obj)
 
         raise AttributeError(
             f"'{type(obj).__name__}' object has no v-attribute '{name}'"
@@ -82,24 +75,21 @@ def Trait(module, name, methods, *, requires=[]):
         for method_name, method in methods.items():
             ns[method_name] = method
         ns["__module__"] = module
+        ns["_methods"] = methods
+        ns["_requires"] = requires
 
     typ = new_class(name, (), {"metaclass": meta}, populate)
-    typ._methods = methods
 
     return typ
 
 
 def register_global_attr(type, name, value):
-    if name not in types_vtbl:
-        types_vtbl[name] = {}
-    types_vtbl[name][type] = value
+    fast_vset(type, name, value)
 
 
 def register_global_trait(type):
     for name, method in type._methods.items():
-        if name not in traits_vtbl:
-            traits_vtbl[name] = {}
-        traits_vtbl[name][type] = method
+        fast_vset_trait(type.__name__, type._requires, name, method)
 
 
 __all__ = [
