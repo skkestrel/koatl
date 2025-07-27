@@ -29,7 +29,10 @@ def vget(obj, name):
             except AttributeError:
                 pass
 
-            return iter(obj)
+            try:
+                return iter(obj)
+            except TypeError:
+                pass
 
         v = fast_vget(obj, name)
         if v is not None:
@@ -61,6 +64,10 @@ def Trait(module, name, methods, *, requires=[]):
     fix_methods(name, methods)
 
     def instancecheck(cls, instance):
+        if cls != typ:
+            # if not checking for the trait itself, use the default behavior
+            return type.__instancecheck__(cls, instance)
+
         for req in requires:
             try:
                 vget(instance, req)
@@ -69,7 +76,11 @@ def Trait(module, name, methods, *, requires=[]):
 
         return True
 
-    meta = type(name, (type,), {"__instancecheck__": instancecheck})
+    meta = type(
+        f"{name}Meta",
+        (type,),
+        {"__instancecheck__": instancecheck, "__module__": "types"},
+    )
 
     def populate(ns):
         for method_name, method in methods.items():
