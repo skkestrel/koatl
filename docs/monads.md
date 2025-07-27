@@ -17,7 +17,7 @@ def f():
     return (yield y)
 ```
 
-Due to limitations of generators (they can't be copied), monads in Koatl define `bind_once(self, f)` instead of the usual `bind(self, f)`;
+Due to limitations of generators (they can't be copied), `@` specifically requires `bind_once(self, f)` instead of the usual `bind(self, f)`;
 the difference is that `f` should called at most once in `bind_once(self, f)`.
 
 ## Ok
@@ -25,15 +25,12 @@ the difference is that `f` should called at most once in `bind_once(self, f)`.
 Koatl defines a pseudo-class called Ok, which is used to check that a value is not None and not an error:
 
 ```koatl
-isinstance(None, Ok) == False
-# same as
 None matches Ok() == False
-
 ValueError() matches Ok() == False
 1 matches Ok() == True
 ```
 
-Ok is the default monad that all types are coerced to:
+Ok represents error handling and early return.
 
 ```koatl
 f = () =>
@@ -44,17 +41,16 @@ f = () =>
 print(f())
 ```
 
-The essence is that the function will immediately return whenever @ "sees" a value that is not Ok, but continue otherwise.
-It's the same as:
+can be thought of as the same as
 
 ```python
 def f():
     x = get_some_value_or_none()
-    if x is None:
+    if isinstance(x, (NoneType, BaseException)):
         return
 
     y = get_some_other_value_or_error(x)
-    if isinstance(y, BaseException):
+    if isinstance(x, (NoneType, BaseException)):
         return y
 
     return x + y
@@ -72,6 +68,8 @@ fn f() -> Result<T, E> {
 
 While errors typically aren't returned from functions in Python, the `try` operator (see [Operators](operators)) makes it very easy to use these constructions to interface with external code.
 
+Note that Ok provides the default `bind_once` implementation for types that don't otherwise have `bind_once`.
+
 ## Async
 
 ```koatl
@@ -88,13 +86,13 @@ refreshed!
 
 >>> # Async instances can be awaited,
 >>> # so if inside a notebook,
->>> # or interfacing with Python code, do this instead:
+>>> # or if using Async from regular Python, do this instead:
 >>> await f()
 ```
 
 ## Reader
 
-The Reader monad allows easy passing around with, or interfacing with an external context object.
+The Reader monad allows interfacing with an external context object.
 Instead of having to pass around a context object as an explicit parameter:
 
 ```koatl

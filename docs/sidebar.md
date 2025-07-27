@@ -6,6 +6,7 @@
 -   [Pattern matching](match)
 -   [Modules](modules)
 -   [Extension attributes](extensions)
+-   [Troubleshooting](troubleshooting)
 -   **Links**
 -   [Github](https://github.com/skkestrel/koatl)
 -   [pypi](https://pypi.org/project/koatl/)

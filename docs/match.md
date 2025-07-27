@@ -97,7 +97,7 @@ Matches-expressions resolve to either True or False depending on whether the val
 1 [2, 3]
 ```
 
-`matches not` is just the inverse of `matches`.
+`matches not` is the inverse of `matches`.
 
 ```koatl
 >>> 1 matches 1
