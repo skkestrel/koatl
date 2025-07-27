@@ -147,14 +147,14 @@ impl AstBuilder {
         attr: impl Into<Cow<'src, str>>,
     ) -> SExpr<'src> {
         (
-            Expr::Attribute(Box::new(value), (attr.into(), self.span)),
+            Expr::RawAttribute(Box::new(value), (attr.into(), self.span)),
             self.span,
         )
     }
 
     pub fn then<'src>(&self, left: SExpr<'src>, right: SExpr<'src>) -> SExpr<'src> {
         (
-            Expr::ScopedExtension(Box::new(left), Box::new(right)),
+            Expr::ScopedAttribute(Box::new(left), Box::new(right)),
             self.span,
         )
     }

@@ -174,15 +174,15 @@ pub enum Expr<'a> {
 
     Call(Box<SExpr<'a>>, Vec<SCallItem<'a>>),
     Subscript(Box<SExpr<'a>>, Vec<ListItem<'a>>),
+    RawAttribute(Box<SExpr<'a>>, SIdent<'a>),
+    ScopedAttribute(Box<SExpr<'a>>, Box<SExpr<'a>>),
     Attribute(Box<SExpr<'a>>, SIdent<'a>),
-    ScopedExtension(Box<SExpr<'a>>, Box<SExpr<'a>>),
-    Extension(Box<SExpr<'a>>, SIdent<'a>),
 
     MappedCall(Box<SExpr<'a>>, Vec<SCallItem<'a>>),
     MappedSubscript(Box<SExpr<'a>>, Vec<ListItem<'a>>),
+    MappedRawAttribute(Box<SExpr<'a>>, SIdent<'a>),
+    MappedScopedAttribute(Box<SExpr<'a>>, Box<SExpr<'a>>),
     MappedAttribute(Box<SExpr<'a>>, SIdent<'a>),
-    MappedThen(Box<SExpr<'a>>, Box<SExpr<'a>>),
-    MappedExtension(Box<SExpr<'a>>, SIdent<'a>),
 
     Checked(Box<SExpr<'a>>, Option<Box<SPattern<'a>>>),
 

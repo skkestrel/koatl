@@ -121,7 +121,7 @@ where
         .or_not()
         .then(qualified_ident.clone())
         .try_map(|(q, value), _e| {
-            Ok(if let Expr::Attribute(..) = value.0 {
+            Ok(if let Expr::RawAttribute(..) = value.0 {
                 Pattern::Value(value)
             } else if q.is_some() {
                 Pattern::Value(value)
@@ -588,7 +588,7 @@ where
         .clone()
         .foldl_with(
             symbol(".").ignore_then(ident.clone()).repeated(),
-            |lhs, rhs, e| (Expr::Attribute(Box::new(lhs), rhs), e.span()),
+            |lhs, rhs, e| (Expr::RawAttribute(Box::new(lhs), rhs), e.span()),
         )
         .boxed();
 
@@ -687,10 +687,10 @@ where
     enum Postfix<'a> {
         Call(Vec<SCallItem<'a>>),
         Subscript(Vec<ListItem<'a>>),
-        Extension(SIdent<'a>),
-        Then(SExpr<'a>),
-        ThenCall(SExpr<'a>, Vec<SCallItem<'a>>),
         Attribute(SIdent<'a>),
+        ScopedAttribute(SExpr<'a>),
+        ScopedAttributeCall(SExpr<'a>, Vec<SCallItem<'a>>),
+        RawAttribute(SIdent<'a>),
     }
 
     let call_args = enumeration(
@@ -735,7 +735,7 @@ where
 
     let attribute = symbol(".")
         .ignore_then(ident.clone())
-        .map(Postfix::Extension)
+        .map(Postfix::Attribute)
         .labelled("extension-attribute");
 
     let then = symbol(".")
@@ -743,9 +743,9 @@ where
         .then(call_args.or_not())
         .map(|(rhs, args)| {
             if let Some(args) = args {
-                Postfix::ThenCall(rhs, args)
+                Postfix::ScopedAttributeCall(rhs, args)
             } else {
-                Postfix::Then(rhs)
+                Postfix::ScopedAttribute(rhs)
             }
         })
         .labelled("then-attribute")
@@ -753,8 +753,8 @@ where
 
     let extension = symbol("!")
         .ignore_then(ident.clone())
-        .map(Postfix::Attribute)
-        .labelled("native-attribute")
+        .map(Postfix::RawAttribute)
+        .labelled("raw-attribute")
         .boxed();
 
     let postfix = atom
@@ -771,34 +771,38 @@ where
                         match op {
                             Postfix::Call(args) => Expr::Call(Box::new(expr), args),
                             Postfix::Subscript(args) => Expr::Subscript(Box::new(expr), args),
-                            Postfix::Attribute(attr) => Expr::Attribute(Box::new(expr), attr),
-                            Postfix::Then(rhs) => {
-                                Expr::ScopedExtension(Box::new(expr), Box::new(rhs))
+                            Postfix::RawAttribute(attr) => Expr::RawAttribute(Box::new(expr), attr),
+                            Postfix::ScopedAttribute(rhs) => {
+                                Expr::ScopedAttribute(Box::new(expr), Box::new(rhs))
                             }
-                            Postfix::ThenCall(rhs, args) => Expr::Call(
+                            Postfix::ScopedAttributeCall(rhs, args) => Expr::Call(
                                 // TODO optimize this case in the AST by skipping partial application
                                 Box::new((
-                                    Expr::ScopedExtension(Box::new(expr), Box::new(rhs)),
+                                    Expr::ScopedAttribute(Box::new(expr), Box::new(rhs)),
                                     e.span(),
                                 )),
                                 args,
                             ),
-                            Postfix::Extension(rhs) => Expr::Extension(Box::new(expr), rhs),
+                            Postfix::Attribute(rhs) => Expr::Attribute(Box::new(expr), rhs),
                         }
                     } else {
                         match op {
                             Postfix::Call(args) => Expr::MappedCall(Box::new(expr), args),
                             Postfix::Subscript(args) => Expr::MappedSubscript(Box::new(expr), args),
-                            Postfix::Attribute(attr) => Expr::MappedAttribute(Box::new(expr), attr),
-                            Postfix::Then(rhs) => Expr::MappedThen(Box::new(expr), Box::new(rhs)),
-                            Postfix::ThenCall(rhs, args) => Expr::Call(
+                            Postfix::RawAttribute(attr) => {
+                                Expr::MappedRawAttribute(Box::new(expr), attr)
+                            }
+                            Postfix::ScopedAttribute(rhs) => {
+                                Expr::MappedScopedAttribute(Box::new(expr), Box::new(rhs))
+                            }
+                            Postfix::ScopedAttributeCall(rhs, args) => Expr::Call(
                                 Box::new((
-                                    Expr::MappedThen(Box::new(expr), Box::new(rhs)),
+                                    Expr::MappedScopedAttribute(Box::new(expr), Box::new(rhs)),
                                     e.span(),
                                 )),
                                 args,
                             ),
-                            Postfix::Extension(rhs) => Expr::MappedExtension(Box::new(expr), rhs),
+                            Postfix::Attribute(rhs) => Expr::MappedAttribute(Box::new(expr), rhs),
                         }
                     },
                     e.span(),

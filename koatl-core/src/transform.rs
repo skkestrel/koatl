@@ -505,13 +505,13 @@ fn destructure<'src, 'ast>(
     let assign_to: SPyExpr<'src>;
 
     match &target.0 {
-        Expr::Ident(..) | Expr::Attribute(..) | Expr::Extension(..) | Expr::Subscript(..) => {
+        Expr::Ident(..) | Expr::RawAttribute(..) | Expr::Attribute(..) | Expr::Subscript(..) => {
             let target_node = match &target.0 {
                 Expr::Ident(id) => {
                     decls.push(ctx.escape_ident(&id.0));
                     target.transform_with_access(ctx, PyAccessCtx::Store)?
                 }
-                Expr::Attribute(..) | Expr::Subscript(..) => {
+                Expr::RawAttribute(..) | Expr::Subscript(..) => {
                     if decl_only {
                         return Err(TfErrBuilder::default()
                             .message("Only identifiers allowed in this destructuring")
@@ -520,7 +520,7 @@ fn destructure<'src, 'ast>(
                     }
                     target.transform_with_access(ctx, PyAccessCtx::Store)?
                 }
-                Expr::Extension(lhs, ext) => {
+                Expr::Attribute(lhs, ext) => {
                     if decl_only {
                         return Err(TfErrBuilder::default()
                             .message("Only identifiers allowed in this destructuring")
@@ -532,7 +532,7 @@ fn destructure<'src, 'ast>(
                     // when assigning to it
 
                     // TODO avoid this clone
-                    let new_target = (Expr::Attribute(lhs.clone(), ext.clone()), target.1);
+                    let new_target = (Expr::RawAttribute(lhs.clone(), ext.clone()), target.1);
 
                     new_target.transform_with_access(ctx, PyAccessCtx::Store)?
                 }
@@ -1860,16 +1860,16 @@ fn transform_postfix_expr<'src, 'ast>(
 ) -> TfResult<SPyExprWithPre<'src>> {
     let mut aux = PyBlock::new();
     let (lift_lhs, lhs_node) = match &expr.0 {
-        Expr::Attribute(obj, _) => (false, obj),
+        Expr::RawAttribute(obj, _) => (false, obj),
         Expr::Subscript(obj, _) => (false, obj),
         Expr::Call(obj, _) => (false, obj),
-        Expr::ScopedExtension(obj, _) => (false, obj),
-        Expr::Extension(obj, _) => (false, obj),
-        Expr::MappedAttribute(obj, _) => (true, obj),
+        Expr::ScopedAttribute(obj, _) => (false, obj),
+        Expr::Attribute(obj, _) => (false, obj),
+        Expr::MappedRawAttribute(obj, _) => (true, obj),
         Expr::MappedSubscript(obj, _) => (true, obj),
         Expr::MappedCall(obj, _) => (true, obj),
-        Expr::MappedThen(obj, _) => (true, obj),
-        Expr::MappedExtension(obj, _) => (true, obj),
+        Expr::MappedScopedAttribute(obj, _) => (true, obj),
+        Expr::MappedAttribute(obj, _) => (true, obj),
         _ => {
             return Err(TfErrBuilder::default()
                 .message("Internal error: Postfix expressions can only be attributes, subscripts, calls, or extensions")
@@ -1927,11 +1927,11 @@ fn transform_postfix_expr<'src, 'ast>(
                 aux.extend(t.0);
                 guard_if_expr(a.subscript(lhs.clone(), t.1, access_ctx))
             }
-            Expr::Attribute(_, attr) => a.attribute(lhs, ctx.escape_ident(&attr.0), access_ctx),
-            Expr::MappedAttribute(_, attr) => {
+            Expr::RawAttribute(_, attr) => a.attribute(lhs, ctx.escape_ident(&attr.0), access_ctx),
+            Expr::MappedRawAttribute(_, attr) => {
                 guard_if_expr(a.attribute(lhs.clone(), ctx.escape_ident(&attr.0), access_ctx))
             }
-            Expr::ScopedExtension(_, rhs) => {
+            Expr::ScopedAttribute(_, rhs) => {
                 let rhs_node = rhs.transform_with_placeholder_guard(ctx)?;
                 aux.extend(rhs_node.pre);
                 a.call(
@@ -1939,19 +1939,19 @@ fn transform_postfix_expr<'src, 'ast>(
                     vec![PyCallItem::Arg(rhs_node.value), PyCallItem::Arg(lhs)],
                 )
             }
-            Expr::MappedThen(_, rhs) => {
+            Expr::MappedScopedAttribute(_, rhs) => {
                 let rhs_node = rhs.transform_with_placeholder_guard(ctx)?;
                 aux.extend(rhs_node.pre);
                 guard_if_expr(a.call(rhs_node.value, vec![PyCallItem::Arg(lhs.clone())]))
             }
-            Expr::Extension(_, rhs) => a.call(
+            Expr::Attribute(_, rhs) => a.call(
                 a.tl_builtin("vget"),
                 vec![
                     a.call_arg(lhs),
                     a.call_arg(a.literal(PyLiteral::Str(ctx.escape_ident(&rhs.0)))),
                 ],
             ),
-            Expr::MappedExtension(_, rhs) => guard_if_expr(a.call(
+            Expr::MappedAttribute(_, rhs) => guard_if_expr(a.call(
                 a.tl_builtin("vget"),
                 vec![
                     a.call_arg(lhs.clone()),
@@ -2203,7 +2203,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
         let a = PyAstBuilder::new(*span);
 
         match &expr {
-            Expr::Attribute(..) | Expr::Subscript(..) | Expr::Ident(..) => {}
+            Expr::RawAttribute(..) | Expr::Subscript(..) | Expr::Ident(..) => {}
             _ => {
                 if access_ctx != PyAccessCtx::Load {
                     return Err(TfErrBuilder::default()
@@ -2309,16 +2309,16 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 value: (PyExpr::Ident(ctx.escape_ident(&ident.0), access_ctx), *span).into(),
                 pre: PyBlock::new(),
             }),
-            Expr::Attribute(..)
-            | Expr::MappedAttribute(..)
+            Expr::RawAttribute(..)
+            | Expr::MappedRawAttribute(..)
             | Expr::Call(..)
             | Expr::MappedCall(..)
             | Expr::Subscript(..)
             | Expr::MappedSubscript(..)
-            | Expr::ScopedExtension(..)
-            | Expr::MappedThen(..)
-            | Expr::Extension(..)
-            | Expr::MappedExtension(..) => transform_postfix_expr(ctx, self, access_ctx),
+            | Expr::ScopedAttribute(..)
+            | Expr::MappedScopedAttribute(..)
+            | Expr::Attribute(..)
+            | Expr::MappedAttribute(..) => transform_postfix_expr(ctx, self, access_ctx),
             Expr::If(cond, then_block, else_block) => transform_if_expr(
                 ctx,
                 cond,
