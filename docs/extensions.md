@@ -27,10 +27,10 @@ One-argument `method`s can be decorated with the `__tl__.ExtensionProperty` deco
 
 ## The builtin `iter` extension attribute
 
-The `!iter` extension attribute is built in to the Koatl runtime and is used in `for .. in` loops as well as `yield from`;
+The `iter` extension attribute is built in to the Koatl runtime and is used in `for .. in` loops as well as `yield from`;
 it always delegates to `items()` if possible (to make dict iteration more sane) and also provides an implementation for slices.
 
-`koatl.prelude.iterable.Iterable` is automatically registered as an extension trait for all types with an `!iter`, and provides common methods for working with iterators.
+`koatl.prelude.iterable.Iterable` is automatically registered as an extension trait for all types with an `iter`, and provides common methods for working with iterators.
 
 ## The builtin `pure` and `bind_once` extension attributes
 
