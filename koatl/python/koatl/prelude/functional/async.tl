@@ -28,10 +28,7 @@ export Async = class:
         nonlocal self = self
         try:
             while True:
-                if hasattr(self, "__await__"):
-                    self = yield from self.__await__()
-
-                self = gen.send(self)
+                self = gen.send(yield from self.__await__())
         except StopIteration(value=value):
             return value
 

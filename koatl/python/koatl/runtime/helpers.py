@@ -75,6 +75,7 @@ def do(f):
                     return e.value
 
         try:
+            print(m, gen)
             return vget(m, "bind_gen")(gen)
         except (NotImplementedError, AttributeError):
             return vget(m, "bind_once")(recurse)

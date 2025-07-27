@@ -14,14 +14,13 @@ export Reader = class:
         else:
             v
 
+    # TODO: this is a workaround to avoid recursion.
+    # how to get bind_gen directly from bind_once?
     bind_gen = (self, gen) => Reader& ctx =>
         nonlocal self = self
         try:
             while True:
-                if self matches Reader():
-                    self = self.fn(ctx)
-
-                self = gen.send(self)
+                self = gen.send(self.fn(ctx))
         except StopIteration(value=value):
             return value
 
