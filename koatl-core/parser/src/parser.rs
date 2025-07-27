@@ -620,19 +620,6 @@ where
     ))
     .boxed();
 
-    let deco_list = enumeration(expr.clone(), symbol(","))
-        .delimited_by_with_eol(just(Token::Symbol("[")), just(Token::Symbol("]")))
-        .labelled("decorators")
-        .boxed();
-
-    let decorators = symbol("&").ignore_then(deco_list.clone());
-
-    let decorated = decorators
-        .then(below_pipe.clone())
-        .map(|(decorators, expr)| Expr::Decorated(decorators, Box::new(expr)))
-        .spanned()
-        .labelled("fn");
-
     enum ControlKw {
         Await,
         Yield,
@@ -665,7 +652,6 @@ where
 
     atom.define(
         choice((
-            decorated,
             ident_expr.clone(),
             classic_if,
             classic_match,
@@ -751,7 +737,7 @@ where
         .labelled("then-attribute")
         .boxed();
 
-    let extension = symbol("!")
+    let raw_attr = symbol("!")
         .ignore_then(ident.clone())
         .map(Postfix::RawAttribute)
         .labelled("raw-attribute")
@@ -763,7 +749,7 @@ where
             symbol("?")
                 .to(1)
                 .or_not()
-                .then(choice((call, subscript, attribute, then, extension)))
+                .then(choice((call, subscript, attribute, then, raw_attr)))
                 .repeated(),
             |expr, (coal, op), e| -> SExpr {
                 (
@@ -812,6 +798,19 @@ where
         .labelled("postfix")
         .boxed();
 
+    let decorator = postfix
+        .clone()
+        .then(symbol("&").ignore_then(expr.clone()).or_not())
+        .map_with(|(lhs, rhs), e| {
+            if let Some(rhs) = rhs {
+                (Expr::Decorated(Box::new(lhs), Box::new(rhs)), e.span())
+            } else {
+                lhs
+            }
+        })
+        .labelled("decorator")
+        .boxed();
+
     let mut checked = Recursive::<Indirect<TInput, SExpr, TExtra>>::declare();
 
     unary.define(
@@ -823,7 +822,7 @@ where
         }
         .repeated()
         .foldr_with(
-            choice((postfix, checked.clone())),
+            choice((decorator, checked.clone())),
             |op: UnaryOp, rhs: SExpr, e| (Expr::Unary(op, Box::new(rhs)), e.span()),
         )
         .labelled("unary-expression")

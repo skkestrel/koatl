@@ -8,7 +8,7 @@ export Ok = class(metaclass=OkMeta):
     __init__ = (self, value) =>
         self.value = value
 
-    assert = &[staticmethod] value =>
+    assert = staticmethod& value =>
         value match:
             BaseException() as e => raise e
             None => raise ValueError("Expected a value, got None")

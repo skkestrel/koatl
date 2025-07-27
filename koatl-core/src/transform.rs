@@ -663,7 +663,7 @@ fn transform_assignment<'src, 'ast>(
                 }
                 Expr::Decorated(deco, right) => {
                     cur_node = &right.0;
-                    decorators.extend(deco);
+                    decorators.push(deco);
                 }
                 Expr::Call(left, right) => {
                     if right.len() != 1 {
@@ -2285,20 +2285,18 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     pre: aux_stmts,
                 })
             }
-            Expr::Decorated(decorators, expr) => {
+            Expr::Decorated(deco, expr) => {
                 let mut pre = PyBlock::new();
                 let mut node = bind_pre(&mut pre, expr.transform(ctx)?);
 
-                for item in decorators.iter().rev() {
-                    node = (
-                        PyExpr::Call(
-                            Box::new(bind_pre(&mut pre, item.transform(ctx)?)),
-                            vec![PyCallItem::Arg(node)],
-                        ),
-                        item.1,
-                    )
-                        .into();
-                }
+                node = (
+                    PyExpr::Call(
+                        Box::new(bind_pre(&mut pre, deco.transform(ctx)?)),
+                        vec![PyCallItem::Arg(node)],
+                    ),
+                    *span,
+                )
+                    .into();
 
                 Ok(SPyExprWithPre { value: node, pre })
             }

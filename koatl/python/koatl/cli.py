@@ -2,7 +2,7 @@ def transpile_from_source(source, mode="script", script_path="<string>"):
     from koatl import transpile
     import ast
 
-    transpiled_code = transpile(source, mode=mode)
+    transpiled_code = transpile(source, mode=mode, filename=str(script_path))
 
     return ast.unparse(transpiled_code)
 
@@ -10,7 +10,7 @@ def transpile_from_source(source, mode="script", script_path="<string>"):
 def run_from_source(source, mode="script", script_path="<string>"):
     from koatl import transpile
 
-    transpiled_code = transpile(source, mode=mode)
+    transpiled_code = transpile(source, mode=mode, filename=str(script_path))
     code_obj = compile(transpiled_code, script_path, "exec")
 
     script_globals = {"__name__": "__main__"}

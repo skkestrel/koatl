@@ -2,10 +2,6 @@
 
 [Koatl](https://github.com/skkestrel/koatl) is a functional-first language transpiling to Python.
 
-`.tl` files can be imported from Python and vice-versa, making integration with existing projects seamless.
-
-Koatl also supports Jupyter notebooks out of the box.
-
 ```koatl
 >>> #       Arrow syntax for functions (multiline lambdas also supported)
 >>> #       |
@@ -45,14 +41,28 @@ pip install koatl koatl-kernel
 
 ...and optionally install the `quetzal-koatl` extension on VSCode for rudimentary syntax highlighting.
 
-Start an interactive console session with `koatl` in your terminal!
+Try this:
+
+```koatl
+# hello_world.tl
+
+(..10).map("hello world" | print)
+```
+
+```bash
+koatl hello_world.tl
+```
+
+## In IPython
+
+With the `koatl-kernel` module, Koatl also supports Jupyter notebooks.
+Select it as your kernel in Jupyter, or start an interactive session with `koatl` in the terminal.
 
 ## Using Koatl from Python
 
-From any Python file, run:
+`.tl` files can be imported from Python and vice-versa, making integration with existing projects seamless.
 
 ```python
-import koatl.runtime
+import koatl.runtime # enables importing .tl files
+import hello_world
 ```
-
-Now, we can import Koatl `.tl` files just like regular Python modules.

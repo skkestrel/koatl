@@ -43,7 +43,7 @@ bind_once = (self, f) => self
 
 # All other objects (fallback)
 bind_once = (self, f) => f(self)
-pure = &[staticmethod] v => v
+pure = staticmethod& v => v
 ```
 
 ## The builtin `map_err` extension method

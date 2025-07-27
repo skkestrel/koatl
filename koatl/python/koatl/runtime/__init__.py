@@ -22,10 +22,11 @@ from .helpers import *
 
 
 __tl__ = SimpleNamespace(
+    vget=virtual.vget,
+    vhas=virtual.vhas,
     unpack_record=helpers.unpack_record,
     set_exports=helpers.set_exports,
     do=helpers.do,
-    vget=helpers.vget,
     ok=helpers.ok,
     partial=functools.partial,
     **{name: helpers.__dict__[name] for name in helpers.__all__},

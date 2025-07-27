@@ -56,17 +56,17 @@ def ok(obj):
 def do(f):
     @wraps(f)
     def impl(*args, **kwargs):
-        coro = f(*args, **kwargs)
+        gen = f(*args, **kwargs)
 
         try:
-            m = coro.send(None)
+            m = gen.send(None)
         except StopIteration as e:
             return e.value
 
         def recurse(v):
             nonlocal m
             try:
-                m = coro.send(v)
+                m = gen.send(v)
                 return vget(m, "bind_once")(recurse)
             except StopIteration as e:
                 try:
@@ -74,6 +74,9 @@ def do(f):
                 except AttributeError:
                     return e.value
 
-        return vget(m, "bind_once")(recurse)
+        try:
+            return vget(m, "bind_gen")(gen)
+        except (NotImplementedError, AttributeError):
+            return vget(m, "bind_once")(recurse)
 
     return impl

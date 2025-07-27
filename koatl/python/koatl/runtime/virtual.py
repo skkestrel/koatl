@@ -46,6 +46,33 @@ def vget(obj, name):
         ) from None
 
 
+def vhas(obj, name):
+    if hasattr(obj, name):
+        return True
+
+    if name == "iter":
+        if isinstance(obj, slice):
+            return True
+
+        try:
+            obj.items()
+            return True
+        except AttributeError:
+            pass
+
+        try:
+            iter(obj)
+            return True
+        except TypeError:
+            pass
+
+    v = fast_vget(obj, name)
+    if v is not None:
+        return True
+
+    return False
+
+
 def Trait(module, name, methods, *, requires=[]):
     def fix_methods(type_name, methods):
         import inspect
