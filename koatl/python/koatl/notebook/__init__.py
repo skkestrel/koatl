@@ -21,14 +21,23 @@ def source_code_transformer(lines):
     return lines
 
 
-def import_prelude(namespace):
-    exec("from koatl.runtime import *", namespace)
-    exec("from koatl.prelude import *", namespace)
+def try_import_prelude(namespace):
+    try:
+        exec("from koatl.runtime import *", namespace)
+        exec("from koatl.prelude import *", namespace)
+    except Exception as e:
+        import traceback
+
+        print(
+            "There was an error importing the Koatl prelude. Some features may not work."
+        )
+        traceback.print_exc()
 
 
 def load_ipython_extension(ipython):
-    import_prelude(ipython.user_ns)
-    print("koatl enabled")
+    print("Switched notebook to Koatl.")
+
+    try_import_prelude(ipython.user_ns)
 
     ttm = ipython.input_transformer_manager
 

@@ -1,6 +1,7 @@
 import functools.wraps
+import .monad.Monad
 
-export Reader = class:
+export Reader = class(Monad):
     __init__ = (self, fn) => self.fn = fn
 
     __repr__ = self => "Reader(...)"
@@ -14,8 +15,6 @@ export Reader = class:
         else:
             v
 
-    # TODO: this is a workaround to avoid recursion.
-    # how to get bind_gen directly from bind_once?
     bind_gen = (self, gen) => Reader& ctx =>
         nonlocal self = self
         try:

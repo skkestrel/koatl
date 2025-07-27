@@ -20,7 +20,7 @@ def f():
 Due to limitations of generators (they can't be copied), `@` specifically requires `bind_once(self, f)` instead of the usual `bind(self, f)`;
 the difference is that `f` should called at most once in `bind_once(self, f)`.
 
-## Ok
+## Result
 
 Koatl defines a pseudo-class called Ok, which is used to check that a value is not None and not an error:
 
@@ -30,7 +30,13 @@ ValueError() matches Ok() == False
 1 matches Ok() == True
 ```
 
-Ok represents error handling and early return.
+`Err` is the same as `BaseException`:
+
+```koatl
+ValueError() matches Err() == True
+```
+
+The Result monad represents error handling and early return.
 
 ```koatl
 f = () =>
@@ -66,9 +72,11 @@ fn f() -> Result<T, E> {
 }
 ```
 
+To explicitly mark an exception or None as an Ok value, simply use `Ok(error)`.
+
 While errors typically aren't returned from functions in Python, the `try` operator (see [Operators](operators)) makes it very easy to use these constructions to interface with external code.
 
-Note that Ok provides the default `bind_once` implementation for types that don't otherwise have `bind_once`.
+Note that Result provides the default `bind_once` implementation for types that don't otherwise have `bind_once`.
 
 ## Async
 

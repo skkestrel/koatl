@@ -58,6 +58,14 @@ koatl hello_world.tl
 With the `koatl-kernel` module, Koatl also supports Jupyter notebooks.
 Select it as your kernel in Jupyter, or start an interactive session with `koatl` in the terminal.
 
+Or, from an IPython kernel, run
+
+```python
+%load_ext koatl.notebook
+```
+
+to convert the current notebook to use Koatl instead.
+
 ## Using Koatl from Python
 
 `.tl` files can be imported from Python and vice-versa, making integration with existing projects seamless.

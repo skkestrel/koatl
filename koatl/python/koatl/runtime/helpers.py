@@ -75,7 +75,9 @@ def do(f):
                     return e.value
 
         try:
-            print(m, gen)
+            # TODO: this is a workaround to avoid recursion.
+            # is it possible to get bind_gen directly from bind_once?
+
             return vget(m, "bind_gen")(gen)
         except (NotImplementedError, AttributeError):
             return vget(m, "bind_once")(recurse)

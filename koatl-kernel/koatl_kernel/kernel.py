@@ -1,6 +1,6 @@
 from ipykernel.ipkernel import IPythonKernel
 from IPython.core.inputtransformer2 import find_last_indent
-from koatl.notebook import source_code_transformer, import_prelude
+from koatl.notebook import source_code_transformer, try_import_prelude
 from koatl.notebook.magic import koatl_cell_magic
 from .shell import KoatlShell
 
@@ -37,7 +37,7 @@ class KoatlKernel(IPythonKernel):
         itm.line_transforms.insert(0, koatl_cell_magic)
         itm.check_complete = self._itm_check_complete
 
-        import_prelude(self.shell.user_ns)
+        self.prelude_imported = False
 
     def _itm_check_complete(self, cell):
         import re
@@ -64,4 +64,9 @@ class KoatlKernel(IPythonKernel):
         return "complete", None
 
     async def do_execute(self, code, *args, **kwargs):
+        if not self.prelude_imported:
+            try_import_prelude(self.shell.user_ns)
+
+            self.prelude_imported = True
+
         return await super().do_execute(code, *args, **kwargs)

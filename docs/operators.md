@@ -101,3 +101,14 @@ odds_only = [1, 2, 3, 4, 5][1....2]
 my_saved_slice = ..5
 some_other_array[my_saved_slice]
 ```
+
+## Decorators
+
+Koatl uses the `&` operator to represent function application which is primarily used for decorating functions:
+
+```koatl
+Foo = class:
+    do_something = staticmethod& () => ...
+```
+
+`a & b` is equivalent to `a(b)`.

@@ -34,7 +34,7 @@ it always delegates to `items()` if possible (to make dict iteration more sane) 
 
 ## The builtin `pure` and `bind_once` extension method
 
-These extension methods provide default Monad implementations (in the Ok monad) to _all_ objects (see [Monads](monads)).
+These extension methods provide default Monad implementations (in the Result monad) to _all_ objects (see [Monads](monads)).
 
 ```koatl
 
@@ -46,10 +46,10 @@ bind_once = (self, f) => f(self)
 pure = staticmethod& v => v
 ```
 
-## The builtin `map_err` extension method
+### `map_err`
 
-This method provides a utility for working with error objects.
+Like above, this is available on all objects, and is roughly equivalent to:
 
 ```koatl
-map_err = (self, f) => self matches Err() then f(self) else self
+map_err = (self, f) => self matches BaseException() then f(self) else self
 ```

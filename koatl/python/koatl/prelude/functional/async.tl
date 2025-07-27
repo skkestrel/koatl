@@ -1,8 +1,10 @@
 import functools.wraps
 import asyncio
-import .async_util
 
-export Async = class:
+import .async_util
+import .monad.Monad
+
+export Async = class(Monad):
     __init__ = (self, awaitable) => self.generator = awaitable.__await__()
 
     __await__ = self => self.generator
