@@ -1218,19 +1218,19 @@ fn prepare_py_fn<'src, 'ast>(
     body: FnDefBody<'src, 'ast>,
     span: &Span,
 ) -> TfResult<WithPre<'src, PartialPyFnDef<'src>>> {
-    let mut aux_stmts = PyBlock::new();
-    let mut body_stmts = PyBlock::new();
+    let mut pre = PyBlock::new();
+    let mut py_body = PyBlock::new();
     let mut decorators = PyDecorators(vec![]);
 
     let a = PyAstBuilder::new(*span);
 
-    let (pre, post, args) = make_arglist(ctx, arglist)?;
-    aux_stmts.extend(pre);
-    body_stmts.extend(post);
+    let (arg_pre, post, args) = make_arglist(ctx, arglist)?;
+    pre.extend(arg_pre);
+    py_body.extend(post);
 
     let mut async_ = false;
 
-    body_stmts.extend(match body {
+    py_body.extend(match body {
         FnDefBody::PyStmts(stmts, is_do, is_async) => {
             if is_async {
                 async_ = true;
@@ -1262,9 +1262,9 @@ fn prepare_py_fn<'src, 'ast>(
     });
 
     Ok(WithPre {
-        pre: aux_stmts,
+        pre,
         value: PartialPyFnDef {
-            body: body_stmts,
+            body: py_body,
             args,
             decorators,
             async_,
@@ -1362,107 +1362,6 @@ fn make_fn_def<'src, 'ast>(
     );
 
     Ok(pre)
-}
-
-fn transform_call_items<'src, 'ast>(
-    ctx: &mut TfCtx<'src>,
-    args: &'ast [SCallItem<'src>],
-    span: &Span,
-) -> TfResult<(PyBlock<'src>, Vec<PyCallItem<'src>>)> {
-    let mut started_kwargs = false;
-    let mut call_items = vec![];
-    let mut aux_stmts = PyBlock::new();
-
-    for arg in args {
-        match &arg.0 {
-            CallItem::Arg(expr) => {
-                if started_kwargs {
-                    return Err(TfErrBuilder::default()
-                        .message("Cannot have args after kwargs")
-                        .span(*span)
-                        .build_errs());
-                }
-
-                let e = expr.transform_with_deep_placeholder_guard(ctx)?;
-                aux_stmts.extend(e.pre);
-                call_items.push(PyCallItem::Arg(e.value));
-            }
-            CallItem::Kwarg(name, expr) => {
-                started_kwargs = true;
-                let e = expr.transform_with_deep_placeholder_guard(ctx)?;
-                aux_stmts.extend(e.pre);
-                call_items.push(PyCallItem::Kwarg(name.transform(), e.value));
-            }
-            CallItem::ArgSpread(expr) => {
-                if started_kwargs {
-                    return Err(TfErrBuilder::default()
-                        .message("Cannot have arg spread after kwargs")
-                        .span(*span)
-                        .build_errs());
-                }
-
-                let e = expr.transform_with_deep_placeholder_guard(ctx)?;
-                aux_stmts.extend(e.pre);
-                call_items.push(PyCallItem::ArgSpread(e.value));
-            }
-            CallItem::KwargSpread(expr) => {
-                started_kwargs = true;
-                let e = expr.transform_with_deep_placeholder_guard(ctx)?;
-                aux_stmts.extend(e.pre);
-                call_items.push(PyCallItem::KwargSpread(e.value));
-            }
-        };
-    }
-
-    Ok((aux_stmts, call_items))
-}
-
-fn transform_subscript_items<'src, 'ast>(
-    ctx: &mut TfCtx<'src>,
-    indices: &'ast [ListItem<'src>],
-    span: &Span,
-) -> TfResult<(PyBlock<'src>, SPyExpr<'src>)> {
-    let mut aux_stmts = PyBlock::new();
-
-    let single_item = if indices.len() == 1 {
-        match &indices[0] {
-            ListItem::Item(item) => Some(item),
-            ListItem::Spread(_) => None,
-        }
-    } else {
-        None
-    };
-
-    let subscript_expr = if let Some(single_item) = single_item {
-        let e = single_item.transform(ctx)?;
-        aux_stmts.extend(e.pre);
-        e.value
-    } else {
-        (
-            PyExpr::Tuple(
-                indices
-                    .into_iter()
-                    .map(|i| match i {
-                        ListItem::Item(expr) => {
-                            let e = expr.transform(ctx)?;
-                            aux_stmts.extend(e.pre);
-                            Ok(PyListItem::Item(e.value))
-                        }
-                        ListItem::Spread(expr) => {
-                            let e = expr.transform(ctx)?;
-                            aux_stmts.extend(e.pre);
-                            Ok(PyListItem::Spread(e.value))
-                        }
-                    })
-                    .collect::<TfResult<Vec<_>>>()?,
-                PyAccessCtx::Load,
-            ),
-            *span,
-        )
-            .into()
-    };
-
-    Ok((aux_stmts, subscript_expr))
 }
 
 struct FnCtx {
@@ -1563,8 +1462,9 @@ where
         let var_name = placeholder_ctx.var_name(ctx);
 
         let mut body = PyBlock::new();
-        body.extend(inner_expr.pre);
-        body.push((PyStmt::Return(inner_expr.value), *span).into());
+        let inner_expr = body.bind(inner_expr);
+
+        body.push((PyStmt::Return(inner_expr), *span).into());
 
         let fn_exp = make_fn_exp(
             ctx,
@@ -1573,10 +1473,7 @@ where
             span,
         )?;
 
-        Ok(SPyExprWithPre {
-            value: fn_exp.value,
-            pre: fn_exp.pre,
-        })
+        Ok(fn_exp)
     } else {
         if fn_ctx.is_async {
             // this potential placeholder ctx generated an async ctx,
@@ -1618,12 +1515,109 @@ fn transform_placeholder<'src>(
     }
 }
 
+fn transform_call_items<'src, 'ast>(
+    ctx: &mut TfCtx<'src>,
+    args: &'ast [SCallItem<'src>],
+    span: &Span,
+) -> TfResult<WithPre<'src, Vec<PyCallItem<'src>>>> {
+    let mut started_kwargs = false;
+    let mut call_items = vec![];
+
+    let mut pre = PyBlock::new();
+
+    for arg in args {
+        match &arg.0 {
+            CallItem::Arg(expr) => {
+                if started_kwargs {
+                    return Err(TfErrBuilder::default()
+                        .message("Cannot have args after kwargs")
+                        .span(*span)
+                        .build_errs());
+                }
+
+                let e = pre.bind(expr.transform_with_deep_placeholder_guard(ctx)?);
+                call_items.push(PyCallItem::Arg(e));
+            }
+            CallItem::Kwarg(name, expr) => {
+                started_kwargs = true;
+                let e = pre.bind(expr.transform_with_deep_placeholder_guard(ctx)?);
+                call_items.push(PyCallItem::Kwarg(name.transform(), e));
+            }
+            CallItem::ArgSpread(expr) => {
+                if started_kwargs {
+                    return Err(TfErrBuilder::default()
+                        .message("Cannot have arg spread after kwargs")
+                        .span(*span)
+                        .build_errs());
+                }
+
+                let e = pre.bind(expr.transform_with_deep_placeholder_guard(ctx)?);
+                call_items.push(PyCallItem::ArgSpread(e));
+            }
+            CallItem::KwargSpread(expr) => {
+                started_kwargs = true;
+                let e = pre.bind(expr.transform_with_deep_placeholder_guard(ctx)?);
+                call_items.push(PyCallItem::KwargSpread(e));
+            }
+        };
+    }
+
+    Ok(WithPre {
+        pre,
+        value: call_items,
+    })
+}
+
+fn transform_subscript_items<'src, 'ast>(
+    ctx: &mut TfCtx<'src>,
+    indices: &'ast [ListItem<'src>],
+    span: &Span,
+) -> TfResult<WithPre<'src, SPyExpr<'src>>> {
+    let mut pre = PyBlock::new();
+
+    let single_item = if indices.len() == 1 {
+        match &indices[0] {
+            ListItem::Item(item) => Some(item),
+            ListItem::Spread(_) => None,
+        }
+    } else {
+        None
+    };
+
+    let subscript_expr = if let Some(single_item) = single_item {
+        pre.bind(single_item.transform(ctx)?)
+    } else {
+        (
+            PyExpr::Tuple(
+                indices
+                    .into_iter()
+                    .map(|i| match i {
+                        ListItem::Item(expr) => {
+                            Ok(PyListItem::Item(pre.bind(expr.transform(ctx)?)))
+                        }
+                        ListItem::Spread(expr) => {
+                            Ok(PyListItem::Spread(pre.bind(expr.transform(ctx)?)))
+                        }
+                    })
+                    .collect::<TfResult<Vec<_>>>()?,
+                PyAccessCtx::Load,
+            ),
+            *span,
+        )
+            .into()
+    };
+
+    Ok(WithPre {
+        pre,
+        value: subscript_expr,
+    })
+}
+
 fn transform_postfix_expr<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     expr: &'ast SExpr<'src>,
     access_ctx: PyAccessCtx,
 ) -> TfResult<SPyExprWithPre<'src>> {
-    let mut aux = PyBlock::new();
     let (lift_lhs, lhs_node) = match &expr.0 {
         Expr::RawAttribute(obj, _) => (false, obj),
         Expr::Subscript(obj, _) => (false, obj),
@@ -1643,24 +1637,24 @@ fn transform_postfix_expr<'src, 'ast>(
         }
     };
 
-    if lift_lhs && access_ctx != PyAccessCtx::Load {
-        return Err(TfErrBuilder::default()
-            .message("Internal error: Cannot use null-coalescing in a non-Load context")
-            .span(expr.1)
-            .build_errs());
+    if let Expr::Attribute(..) | Expr::RawAttribute(..) = &expr.0 {
+    } else {
+        if access_ctx != PyAccessCtx::Load {
+            return Err(TfErrBuilder::default()
+                .message("Internal error: Cannot use null-coalescing in a non-Load context")
+                .span(expr.1)
+                .build_errs());
+        }
     }
 
-    let lhs = if lift_lhs {
-        let t = lhs_node.transform_lifted(ctx)?;
-        aux.extend(t.pre);
-        t.value
-    } else {
-        let t = lhs_node.transform(ctx)?;
-        aux.extend(t.pre);
-        t.value
-    };
-
+    let mut pre = PyBlock::new();
     let a = PyAstBuilder::new(expr.1);
+
+    let lhs = if lift_lhs {
+        pre.bind(lhs_node.transform_lifted(ctx)?)
+    } else {
+        pre.bind(lhs_node.transform(ctx)?)
+    };
 
     let guard_if_expr = |expr| {
         a.if_expr(
@@ -1672,46 +1666,37 @@ fn transform_postfix_expr<'src, 'ast>(
 
     let node = match &expr.0 {
         Expr::Call(_, list) => {
-            let t = transform_call_items(ctx, &list, &expr.1)?;
-            aux.extend(t.0);
-            a.call(lhs, t.1)
+            let t = pre.bind(transform_call_items(ctx, &list, &expr.1)?);
+            a.call(lhs, t)
         }
         Expr::MappedCall(_, list) => {
-            let t = transform_call_items(ctx, &list, &expr.1)?;
-            aux.extend(t.0);
-            guard_if_expr(a.call(lhs.clone(), t.1))
+            let t = pre.bind(transform_call_items(ctx, &list, &expr.1)?);
+            guard_if_expr(a.call(lhs.clone(), t))
         }
         Expr::Subscript(_, list) => {
-            let t = transform_subscript_items(ctx, &list, &expr.1)?;
-            aux.extend(t.0);
-            a.subscript(lhs, t.1, access_ctx)
+            let t = pre.bind(transform_subscript_items(ctx, &list, &expr.1)?);
+            a.subscript(lhs, t, access_ctx)
         }
         Expr::MappedSubscript(_, list) => {
-            let t = transform_subscript_items(ctx, &list, &expr.1)?;
-            aux.extend(t.0);
-            guard_if_expr(a.subscript(lhs.clone(), t.1, access_ctx))
+            let t = pre.bind(transform_subscript_items(ctx, &list, &expr.1)?);
+            guard_if_expr(a.subscript(lhs.clone(), t, access_ctx))
         }
         Expr::RawAttribute(_, attr) => a.attribute(lhs, attr.transform(), access_ctx),
         Expr::MappedRawAttribute(_, attr) => {
-            guard_if_expr(a.attribute(lhs.clone(), attr.transform(), access_ctx))
+            guard_if_expr(a.attribute(lhs.clone(), attr.transform(), PyAccessCtx::Load))
         }
         Expr::ScopedAttribute(_, rhs) => {
-            let rhs_node = rhs.transform_with_placeholder_guard(ctx)?;
-            aux.extend(rhs_node.pre);
+            let t = pre.bind(rhs.transform_with_placeholder_guard(ctx)?);
             a.call(
                 a.tl_builtin("partial"),
-                vec![PyCallItem::Arg(rhs_node.value), PyCallItem::Arg(lhs)],
+                vec![PyCallItem::Arg(t), PyCallItem::Arg(lhs)],
             )
         }
         Expr::MappedScopedAttribute(_, rhs) => {
-            let rhs_node = rhs.transform_with_placeholder_guard(ctx)?;
-            aux.extend(rhs_node.pre);
+            let t = pre.bind(rhs.transform_with_placeholder_guard(ctx)?);
             guard_if_expr(a.call(
                 a.tl_builtin("partial"),
-                vec![
-                    PyCallItem::Arg(rhs_node.value),
-                    PyCallItem::Arg(lhs.clone()),
-                ],
+                vec![PyCallItem::Arg(t), PyCallItem::Arg(lhs.clone())],
             ))
         }
         Expr::Attribute(_, rhs) => a.call(
@@ -1736,10 +1721,7 @@ fn transform_postfix_expr<'src, 'ast>(
         }
     };
 
-    Ok(SPyExprWithPre {
-        value: node,
-        pre: aux,
-    })
+    Ok(SPyExprWithPre { value: node, pre })
 }
 
 fn is_default_pattern<'src>(pattern: &SPattern<'src>) -> TfResult<bool> {
@@ -2182,14 +2164,15 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 let a = PyAstBuilder::new(*span);
                 let b = AstBuilder::new(*span);
 
-                let t = expr.transform(ctx)?;
                 let var_name = ctx.create_aux_var("chk", span.start);
 
                 // exception variable doesn't leave the except slope, so rebind it to chk
                 let err_name = ctx.create_aux_var("e", span.start);
 
-                let mut try_body = t.pre;
-                try_body.push(a.assign(a.ident(var_name.clone(), PyAccessCtx::Store), t.value));
+                let mut try_body = PyBlock::new();
+
+                let t = try_body.bind(expr.transform(ctx)?);
+                try_body.push(a.assign(a.ident(var_name.clone(), PyAccessCtx::Store), t));
 
                 let mut catch_body = PyBlock::new();
                 catch_body.push(a.assign(
@@ -2477,15 +2460,16 @@ pub fn transform_ast<'src, 'ast>(
     let mut ctx = TfCtx::new(source)?;
     ctx.allow_top_level_await = allow_await;
 
-    let mut stmts = block.transform(&mut ctx)?;
+    let mut py_block = PyBlock::new();
+    let block = py_block.bind(block.transform(&mut ctx)?);
 
-    if let PyBlockExpr::Expr(value) = stmts.value {
+    if let PyBlockExpr::Expr(value) = block {
         let span = value.tl_span;
-        stmts.pre.push((PyStmt::Expr(value), span).into());
+        py_block.push((PyStmt::Expr(value), span).into());
     }
 
     Ok(TransformOutput {
-        py_block: stmts.pre,
+        py_block,
         exports: ctx.exports,
         module_star_exports: ctx.module_star_exports,
     })
