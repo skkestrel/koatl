@@ -2188,40 +2188,22 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
      * x
      */
     fn transform_lifted<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>> {
-        let mut aux_stmts = PyBlock::new();
-        let value = self.transform(ctx)?;
-        aux_stmts.extend(value.pre);
-
-        // TODO skip if value is already ident
+        let mut pre = PyBlock::new();
+        let value = bind_pre(&mut pre, self.transform(ctx)?);
+        let a = PyAstBuilder::new(self.1);
 
         let expr = match self.0 {
-            Expr::Ident(..) => value.value,
+            Expr::Ident(..) | Expr::Literal(..) => value,
             _ => {
                 let temp_var = ctx.create_aux_var("tmp", self.1.start);
 
-                aux_stmts.push(
-                    (
-                        PyStmt::Assign(
-                            (
-                                PyExpr::Ident(temp_var.clone().into(), PyAccessCtx::Store),
-                                self.1,
-                            )
-                                .into(),
-                            value.value,
-                        ),
-                        self.1,
-                    )
-                        .into(),
-                );
+                pre.push(a.assign(a.ident(temp_var.clone(), PyAccessCtx::Store), value));
 
-                (PyExpr::Ident(temp_var.into(), PyAccessCtx::Load), self.1).into()
+                a.ident(temp_var, PyAccessCtx::Load)
             }
         };
 
-        Ok(SPyExprWithPre {
-            value: expr,
-            pre: aux_stmts,
-        })
+        Ok(SPyExprWithPre { value: expr, pre })
     }
 
     fn transform_with_placeholder_guard<'ast>(
