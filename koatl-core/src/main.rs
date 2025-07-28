@@ -39,6 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             errs.into_iter().for_each(|e| {
                 let range = e.span.map(|e| e.into_range()).unwrap_or(0..0);
                 let err_prefix = match e.kind {
+                    TlErrKind::Tokenize => "Tokenization Error: ",
                     TlErrKind::Parse => "Parser Error: ",
                     TlErrKind::Transform => "Transformation Error: ",
                     TlErrKind::Emit => "Emission Error: ",

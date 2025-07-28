@@ -685,7 +685,13 @@ impl SPyStmt<'_> {
                 }
                 ctx.emit_endl();
             }
-            PyStmt::FnDef(name, args, body, decorators) => {
+            PyStmt::FnDef(PyFnDef {
+                name,
+                body,
+                args,
+                decorators,
+                async_,
+            }) => {
                 for d in &mut decorators.0 {
                     ctx.emit_indent();
                     ctx.emit("@");
@@ -694,6 +700,9 @@ impl SPyStmt<'_> {
                 }
 
                 ctx.emit_indent();
+                if *async_ {
+                    ctx.emit("async ");
+                }
                 ctx.emit("def ");
                 ctx.emit(&name);
                 ctx.emit("(");
@@ -707,7 +716,12 @@ impl SPyStmt<'_> {
                 ctx.emit_endl();
                 body.emit_to(ctx, 1)?;
             }
-            PyStmt::ClassDef(name, bases, body, decorators) => {
+            PyStmt::ClassDef(PyClassDef {
+                name,
+                bases,
+                body,
+                decorators,
+            }) => {
                 for d in &mut decorators.0 {
                     ctx.emit_indent();
                     ctx.emit("@");

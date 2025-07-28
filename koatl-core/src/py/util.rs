@@ -61,9 +61,16 @@ impl PyAstBuilder {
         name: impl Into<PyIdent<'src>>,
         args: Vec<PyArgDefItem<'src>>,
         body: PyBlock<'src>,
+        async_: bool,
     ) -> SPyStmt<'src> {
         (
-            PyStmt::FnDef(name.into(), args, body, PyDecorators::new()),
+            PyStmt::FnDef(PyFnDef {
+                name: name.into(),
+                args,
+                body,
+                decorators: PyDecorators::new(),
+                async_,
+            }),
             self.span,
         )
             .into()
@@ -76,7 +83,12 @@ impl PyAstBuilder {
         body: PyBlock<'src>,
     ) -> SPyStmt<'src> {
         (
-            PyStmt::ClassDef(name.into(), bases, body, PyDecorators::new()),
+            PyStmt::ClassDef(PyClassDef {
+                name: name.into(),
+                bases,
+                body,
+                decorators: PyDecorators::new(),
+            }),
             self.span,
         )
             .into()

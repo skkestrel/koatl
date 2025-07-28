@@ -1370,9 +1370,9 @@ fn make_class_def<'src, 'ast>(
     span: &Span,
 ) -> TfResult<PyBlock<'src>> {
     let mut stmts = PyBlock::new();
-    let mut bases_nodes: Vec<PyCallItem<'src>> = vec![];
+    let mut py_bases: Vec<PyCallItem<'src>> = vec![];
 
-    let mut block = body.transform(ctx)?.drop_expr(ctx)?;
+    let mut py_body = body.transform(ctx)?.drop_expr(ctx)?;
 
     for base in bases {
         let call_item: PyCallItem<'src> = match &base.0 {
@@ -1394,16 +1394,21 @@ fn make_class_def<'src, 'ast>(
             }
         };
 
-        bases_nodes.push(call_item);
+        py_bases.push(call_item);
     }
 
-    if block.is_empty() {
-        block.push((PyStmt::Pass, *span).into());
+    if py_body.is_empty() {
+        py_body.push((PyStmt::Pass, *span).into());
     }
 
     stmts.push(
         (
-            PyStmt::ClassDef(name, bases_nodes, block, decorators),
+            PyStmt::ClassDef(PyClassDef {
+                name,
+                bases: py_bases,
+                body: py_body,
+                decorators,
+            }),
             *span,
         )
             .into(),
@@ -1465,6 +1470,13 @@ fn make_arglist<'src, 'ast>(
     Ok((pre, post, args))
 }
 
+struct PartialPyFnDef<'a> {
+    body: PyBlock<'a>,
+    decorators: PyDecorators<'a>,
+    args: Vec<PyArgDefItem<'a>>,
+    async_: bool,
+}
+
 /**
  * Note: whenever calling this function with body as `FnDefBody::PyStmts`, the caller
  * should interact with ctx.fn_ctx_stack, similar to below.
@@ -1474,12 +1486,7 @@ fn prepare_py_fn<'src, 'ast>(
     arglist: FnDefArgs<'src, 'ast>,
     body: FnDefBody<'src, 'ast>,
     span: &Span,
-) -> TfResult<(
-    PyBlock<'src>,
-    PyBlock<'src>,
-    Vec<PyArgDefItem<'src>>,
-    PyDecorators<'src>,
-)> {
+) -> TfResult<WithPre<'src, PartialPyFnDef<'src>>> {
     let mut aux_stmts = PyBlock::new();
     let mut body_stmts = PyBlock::new();
     let mut decorators = PyDecorators(vec![]);
@@ -1490,11 +1497,12 @@ fn prepare_py_fn<'src, 'ast>(
     aux_stmts.extend(pre);
     body_stmts.extend(post);
 
+    let mut async_ = false;
+
     body_stmts.extend(match body {
         FnDefBody::PyStmts(stmts, is_do, is_async) => {
             if is_async {
-                // TODO revisit this!
-                return Err(await_error(span));
+                async_ = true;
             }
 
             if is_do {
@@ -1509,8 +1517,7 @@ fn prepare_py_fn<'src, 'ast>(
             let fn_ctx = ctx.fn_ctx_stack.pop().unwrap();
 
             if fn_ctx.is_async {
-                // TODO revisit this!
-                return Err(await_error(span));
+                async_ = true;
             }
 
             if fn_ctx.is_do {
@@ -1523,7 +1530,15 @@ fn prepare_py_fn<'src, 'ast>(
         }
     });
 
-    Ok((aux_stmts, body_stmts, args, decorators))
+    Ok(WithPre {
+        pre: aux_stmts,
+        value: PartialPyFnDef {
+            body: body_stmts,
+            args,
+            decorators,
+            async_,
+        },
+    })
 }
 
 fn make_fn_exp<'src, 'ast>(
@@ -1532,14 +1547,20 @@ fn make_fn_exp<'src, 'ast>(
     body: FnDefBody<'src, 'ast>,
     span: &Span,
 ) -> TfResult<SPyExprWithPre<'src>> {
-    let (mut aux_stmts, body_stmts, args, decorators) = prepare_py_fn(ctx, arglist, body, span)?;
+    let mut pre = PyBlock::new();
+    let PartialPyFnDef {
+        body,
+        args,
+        decorators,
+        async_,
+    } = bind_pre(&mut pre, prepare_py_fn(ctx, arglist, body, span)?);
     let a = PyAstBuilder::new(*span);
 
-    if body_stmts.0.len() == 1 {
+    if body.0.len() == 1 {
         // TODO maybe refactor prepare_py_fn to return body_stmts as PyExprWithPre instead of pattern matching Return
 
-        if let PyStmt::Return(_) = &body_stmts.0[0].value {
-            let PyStmt::Return(expr) = body_stmts.0.into_iter().next().unwrap().value else {
+        if let PyStmt::Return(_) = &body.0[0].value {
+            let PyStmt::Return(expr) = body.0.into_iter().next().unwrap().value else {
                 return Err(TfErrBuilder::default()
                     .message("Internal error: Expected a single return statement in function body")
                     .span(*span)
@@ -1552,24 +1573,28 @@ fn make_fn_exp<'src, 'ast>(
                 inner = a.call(deco, vec![a.call_arg(inner)]);
             }
 
-            return Ok(SPyExprWithPre {
-                value: inner,
-                pre: aux_stmts,
-            });
+            return Ok(SPyExprWithPre { value: inner, pre });
         }
     }
 
     let name = ctx.temp_var_name("fnexp", span.start);
-    aux_stmts.push(
+    pre.push(
         (
-            PyStmt::FnDef(name.clone().into(), args, body_stmts, decorators),
+            PyStmt::FnDef(PyFnDef {
+                name: name.clone().into(),
+                args: args,
+                body,
+                decorators: decorators,
+                async_,
+            }),
             *span,
         )
             .into(),
     );
+
     Ok(SPyExprWithPre {
         value: (PyExpr::Ident(name.into(), PyAccessCtx::Load), *span).into(),
-        pre: aux_stmts,
+        pre,
     })
 }
 
@@ -1581,19 +1606,31 @@ fn make_fn_def<'src, 'ast>(
     mut decorators: PyDecorators<'src>,
     span: &Span,
 ) -> TfResult<PyBlock<'src>> {
-    let (mut aux_stmts, body_stmts, args, inner_decorators) =
-        prepare_py_fn(ctx, arglist, body, span)?;
+    let mut pre = PyBlock::new();
+    let PartialPyFnDef {
+        body,
+        args,
+        decorators: inner_decorators,
+        async_,
+    } = bind_pre(&mut pre, prepare_py_fn(ctx, arglist, body, span)?);
 
     decorators.0.extend(inner_decorators.0);
 
-    aux_stmts.push(
+    pre.push(
         (
-            PyStmt::FnDef(name.into(), args, body_stmts, decorators),
+            PyStmt::FnDef(PyFnDef {
+                name: name.into(),
+                args,
+                body,
+                decorators,
+                async_,
+            }),
             *span,
         )
             .into(),
     );
-    Ok(aux_stmts)
+
+    Ok(pre)
 }
 
 fn transform_call_items<'src, 'ast>(

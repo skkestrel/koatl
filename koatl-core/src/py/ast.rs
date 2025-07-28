@@ -45,6 +45,23 @@ impl<'a> PyDecorators<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub struct PyFnDef<'a> {
+    pub name: PyIdent<'a>,
+    pub args: Vec<PyArgDefItem<'a>>,
+    pub body: PyBlock<'a>,
+    pub decorators: PyDecorators<'a>,
+    pub async_: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PyClassDef<'a> {
+    pub name: PyIdent<'a>,
+    pub bases: Vec<PyCallItem<'a>>,
+    pub body: PyBlock<'a>,
+    pub decorators: PyDecorators<'a>,
+}
+
+#[derive(Debug, Clone)]
 pub enum PyStmt<'a> {
     Expr(SPyExpr<'a>),
     If(SPyExpr<'a>, PyBlock<'a>, Option<PyBlock<'a>>),
@@ -57,18 +74,8 @@ pub enum PyStmt<'a> {
     Nonlocal(Vec<PyIdent<'a>>),
     Import(Vec<PyImportAlias<'a>>),
     ImportFrom(Option<PyIdent<'a>>, Vec<PyImportAlias<'a>>, usize),
-    FnDef(
-        PyIdent<'a>,
-        Vec<PyArgDefItem<'a>>,
-        PyBlock<'a>,
-        PyDecorators<'a>,
-    ),
-    ClassDef(
-        PyIdent<'a>,
-        Vec<PyCallItem<'a>>,
-        PyBlock<'a>,
-        PyDecorators<'a>,
-    ),
+    FnDef(PyFnDef<'a>),
+    ClassDef(PyClassDef<'a>),
     While(SPyExpr<'a>, PyBlock<'a>),
     For(SPyExpr<'a>, SPyExpr<'a>, PyBlock<'a>),
     Try(PyBlock<'a>, Vec<PyExceptHandler<'a>>, Option<PyBlock<'a>>),

@@ -333,18 +333,31 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                     &self.tl_span,
                 )
             }
-            PyStmt::FnDef(name, args, body, decorators) => {
-                let arguments = args.emit_py(ctx)?;
-                let body_ast = body.emit_py(ctx)?;
-                let decorators = decorators.emit_py(ctx)?;
+            PyStmt::FnDef(fndef) => {
+                let arguments = fndef.args.emit_py(ctx)?;
+                let body_ast = fndef.body.emit_py(ctx)?;
+                let decorators = fndef.decorators.emit_py(ctx)?;
 
-                ctx.ast_node(
-                    "FunctionDef",
-                    (name.as_ref(), arguments, body_ast, decorators),
-                    &self.tl_span,
-                )
+                if fndef.async_ {
+                    ctx.ast_node(
+                        "AsyncFunctionDef",
+                        (fndef.name.as_ref(), arguments, body_ast, decorators),
+                        &self.tl_span,
+                    )
+                } else {
+                    ctx.ast_node(
+                        "FunctionDef",
+                        (fndef.name.as_ref(), arguments, body_ast, decorators),
+                        &self.tl_span,
+                    )
+                }
             }
-            PyStmt::ClassDef(name, bases, body, decorators) => {
+            PyStmt::ClassDef(PyClassDef {
+                name,
+                bases,
+                body,
+                decorators,
+            }) => {
                 let mut bases_ast = Vec::new();
                 let mut keywords_ast = Vec::new();
 
