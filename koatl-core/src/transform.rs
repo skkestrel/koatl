@@ -170,24 +170,10 @@ impl<'src> ExprWithPreExt<'src> for PyBlockExprWithPre<'src> {
 
 trait BlockExt<'src> {
     fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlockExprWithPre<'src>>;
-
-    fn transform_with_depth<'ast>(
-        &'ast self,
-        ctx: &mut TfCtx<'src>,
-        is_top_level: bool,
-    ) -> TfResult<PyBlockExprWithPre<'src>>;
 }
 
 impl<'src> BlockExt<'src> for [SStmt<'src>] {
     fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlockExprWithPre<'src>> {
-        self.transform_with_depth(ctx, false)
-    }
-
-    fn transform_with_depth<'ast>(
-        &'ast self,
-        ctx: &mut TfCtx<'src>,
-        is_top_level: bool,
-    ) -> TfResult<PyBlockExprWithPre<'src>> {
         if self.is_empty() {
             return Ok(WithPre {
                 pre: PyBlock::new(),
@@ -200,7 +186,7 @@ impl<'src> BlockExt<'src> for [SStmt<'src>] {
         let mut ok = true;
 
         let mut handle_stmt = |stmt: &SStmt<'src>| {
-            match stmt.transform_with_depth(ctx, is_top_level) {
+            match stmt.transform(ctx) {
                 Ok(transformed) => {
                     pre.extend(transformed);
                 }
@@ -744,258 +730,6 @@ fn transform_assignment<'src, 'ast>(
     stmts.extend(destructure.post_stmts);
 
     Ok((stmts, destructure.declarations))
-}
-
-trait SStmtExt<'src> {
-    fn transform_with_depth<'ast>(
-        &'ast self,
-        ctx: &mut TfCtx<'src>,
-        top_level: bool,
-    ) -> TfResult<PyBlock<'src>>;
-}
-
-impl<'src> SStmtExt<'src> for SStmt<'src> {
-    fn transform_with_depth<'ast>(
-        &'ast self,
-        ctx: &mut TfCtx<'src>,
-        top_level: bool,
-    ) -> TfResult<PyBlock<'src>> {
-        let (stmt, span) = self;
-        let a = PyAstBuilder::new(*span);
-
-        match &stmt {
-            Stmt::Expr(expr) => {
-                let expr = expr.transform_with_placeholder_guard(ctx)?;
-                let mut stmts = expr.pre;
-                stmts.push((PyStmt::Expr(expr.value), *span).into());
-
-                Ok(stmts)
-            }
-            Stmt::Assert(expr, msg) => {
-                let expr_node = expr.transform_with_placeholder_guard(ctx)?;
-                let msg = msg
-                    .as_ref()
-                    .map(|x| x.transform_with_placeholder_guard(ctx))
-                    .transpose()?;
-
-                let mut stmts = expr_node.pre;
-                let mut msg_node = None;
-                if let Some(msg) = msg {
-                    stmts.extend(msg.pre);
-                    msg_node = Some(msg.value);
-                }
-
-                stmts.push((PyStmt::Assert(expr_node.value, msg_node), *span).into());
-
-                Ok(stmts)
-            }
-            Stmt::Return(expr) => {
-                let value = expr.transform_with_placeholder_guard(ctx)?;
-                let mut stmts = value.pre;
-
-                stmts.push((PyStmt::Return(value.value), *span).into());
-
-                Ok(stmts)
-            }
-            Stmt::Assign(target, value, modifiers) => {
-                let scope_modifier = get_scope_modifier(modifiers, top_level, span)?;
-
-                let (binding_stmts, decls): (PyBlock, Vec<PyIdent>) =
-                    transform_assignment(ctx, target, value, scope_modifier, span)?;
-
-                let mut stmts = PyBlock::new();
-
-                stmts.extend(get_scope_modifying_statements(
-                    ctx,
-                    scope_modifier,
-                    decls,
-                    span,
-                )?);
-                stmts.extend(binding_stmts);
-
-                Ok(stmts)
-            }
-            Stmt::Raise(expr) => {
-                let mut stmts = PyBlock::new();
-                let expr_node = expr
-                    .as_ref()
-                    .map(|x| {
-                        let t = x.transform(ctx)?;
-                        stmts.extend(t.pre);
-                        Ok(t.value)
-                    })
-                    .transpose()?;
-
-                stmts.push((PyStmt::Raise(expr_node), *span).into());
-
-                Ok(stmts)
-            }
-            Stmt::For(target, iter, body) => {
-                let mut pre = PyBlock::new();
-                let iter_node = bind_pre(&mut pre, iter.transform_with_placeholder_guard(ctx)?);
-
-                let mut body_block = PyBlock::new();
-
-                let (matcher, cursor) = create_throwing_matcher(ctx, target)?;
-                body_block.extend(matcher);
-                body_block.extend(body.transform(ctx)?.drop_expr(ctx)?);
-
-                pre.push(a.for_(
-                    a.ident(cursor.clone(), PyAccessCtx::Store),
-                    a.call(
-                        a.tl_builtin("vget"),
-                        vec![
-                            a.call_arg(iter_node),
-                            a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
-                        ],
-                    ),
-                    body_block,
-                ));
-
-                Ok(pre)
-            }
-            Stmt::While(cond, body) => {
-                let cond_node = cond.transform_with_placeholder_guard(ctx)?;
-
-                ctx.fn_ctx_stack.push(FnCtx::new());
-                let body_block = body.transform(ctx)?.drop_expr(ctx)?;
-                let fn_ctx = ctx.fn_ctx_stack.pop().unwrap();
-
-                let mut stmts = PyBlock::new();
-
-                let cond: SPyExpr<'src> = if cond_node.pre.is_empty() {
-                    cond_node.value
-                } else {
-                    if fn_ctx.is_async {
-                        // TODO revisit this!
-                        return Err(TfErrBuilder::default()
-                            .message("Await is not allowed in this complex loop condition")
-                            .span(*span)
-                            .build_errs());
-                    }
-
-                    if fn_ctx.is_do {
-                        return Err(TfErrBuilder::default()
-                            .message("Binding is not allowed in this complex loop condition")
-                            .span(*span)
-                            .build_errs());
-                    }
-
-                    let aux_fn = make_fn_exp(
-                        ctx,
-                        FnDefArgs::PyArgList(vec![]),
-                        FnDefBody::PyStmts(cond_node.pre, false, false),
-                        span,
-                    )?;
-
-                    stmts.extend(aux_fn.pre);
-
-                    (PyExpr::Call(Box::new(aux_fn.value), vec![]), *span).into()
-                };
-
-                stmts.push((PyStmt::While(cond, body_block), *span).into());
-
-                Ok(stmts)
-            }
-            Stmt::Try(body, excepts, finally) => {
-                let body_block = body.transform(ctx)?.drop_expr(ctx)?;
-                let finally_block = finally
-                    .as_ref()
-                    .map(|f| f.transform(ctx)?.drop_expr(ctx))
-                    .transpose()?;
-
-                let mut stmts = PyBlock::new();
-                let var_name = ctx.create_aux_var("e", span.start);
-
-                let excepts = matching_except_handler(ctx, var_name.into(), excepts, span)?;
-
-                stmts.push((PyStmt::Try(body_block, vec![excepts], finally_block), *span).into());
-
-                Ok(stmts)
-            }
-            Stmt::Break => Ok(PyBlock(vec![(PyStmt::Break, *span).into()])),
-            Stmt::Continue => Ok(PyBlock(vec![(PyStmt::Continue, *span).into()])),
-            Stmt::Import(import_stmt) => {
-                let mut aliases = vec![];
-
-                let base_module = import_stmt
-                    .trunk
-                    .iter()
-                    .map(|ident| ident.0.0.as_ref())
-                    .collect::<Vec<_>>()
-                    .join(".");
-
-                let full_module = ".".repeat(import_stmt.level) + &base_module;
-
-                if import_stmt.reexport {
-                    if !top_level {
-                        return Err(TfErrBuilder::default()
-                            .message("Re-exporting imports is only allowed at the top level")
-                            .span(*span)
-                            .build_errs());
-                    }
-                }
-
-                match &import_stmt.imports {
-                    ImportList::Star => {
-                        aliases.push(PyImportAlias {
-                            name: "*".into(),
-                            as_name: None,
-                        });
-
-                        if import_stmt.reexport {
-                            ctx.module_star_exports.push(full_module.into());
-                        }
-                    }
-                    ImportList::Leaves(imports) => {
-                        for (ident, alias) in imports {
-                            aliases.push(PyImportAlias {
-                                name: ident.transform(),
-                                as_name: alias.as_ref().map(|a| a.transform()),
-                            });
-                        }
-
-                        if import_stmt.reexport {
-                            // alias else orig_name
-                            let export_aliases: Vec<_> = aliases
-                                .iter()
-                                .map(|x| x.as_name.as_ref().unwrap_or(&x.name).clone())
-                                .collect();
-
-                            ctx.exports.extend(export_aliases);
-                        }
-                    }
-                }
-
-                let imports = if !import_stmt.trunk.is_empty() {
-                    let mut v = vec![];
-
-                    if import_stmt.level == 0 {
-                        v.push(
-                            a.import(vec![a.import_alias(import_stmt.trunk[0].transform(), None)]),
-                        )
-                    }
-                    v.push(a.import_from(Some(base_module.into()), aliases, import_stmt.level));
-
-                    v
-                } else if import_stmt.level != 0 {
-                    vec![a.import_from(None, aliases, import_stmt.level)]
-                } else {
-                    vec![a.import(aliases)]
-                };
-
-                Ok(PyBlock(imports))
-            }
-            Stmt::Err => Err(TfErrBuilder::default()
-                .message("unexpected statement error (should have been caught in lexer)".to_owned())
-                .span(*span)
-                .build_errs()),
-            Stmt::Module => Err(TfErrBuilder::default()
-                .message("Module statements are not allowed in the transform phase".to_owned())
-                .span(*span)
-                .build_errs()),
-        }
-    }
 }
 
 fn transform_if_expr<'src, 'ast>(
@@ -2142,9 +1876,232 @@ impl<'src> LiteralExt<'src> for Literal<'src> {
     }
 }
 
+trait SStmtExt<'src> {
+    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlock<'src>>;
+}
+
+impl<'src> SStmtExt<'src> for SStmt<'src> {
+    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlock<'src>> {
+        let mut pre = PyBlock::new();
+        let (stmt, span) = self;
+        let a = PyAstBuilder::new(*span);
+        let mut bind = |expr| bind_pre(&mut pre, expr);
+
+        let is_top_level = ctx.fn_ctx_stack.is_empty();
+
+        match &stmt {
+            Stmt::Expr(expr) => {
+                let expr = bind(expr.transform_with_placeholder_guard(ctx)?);
+                pre.push(a.expr(expr));
+            }
+            Stmt::Assert(expr, msg) => {
+                let expr = bind(expr.transform_with_placeholder_guard(ctx)?);
+
+                let msg = if let Some(msg) = msg {
+                    Some(bind(msg.transform_with_placeholder_guard(ctx)?))
+                } else {
+                    None
+                };
+
+                pre.push(a.assert(expr, msg));
+            }
+            Stmt::Return(expr) => {
+                let expr = bind(expr.transform_with_placeholder_guard(ctx)?);
+                pre.push(a.return_(expr));
+            }
+            Stmt::Assign(target, value, modifiers) => {
+                let scope_modifier = get_scope_modifier(modifiers, is_top_level, span)?;
+
+                let (binding_stmts, decls): (PyBlock, Vec<PyIdent>) =
+                    transform_assignment(ctx, target, value, scope_modifier, span)?;
+
+                pre.extend(get_scope_modifying_statements(
+                    ctx,
+                    scope_modifier,
+                    decls,
+                    span,
+                )?);
+
+                pre.extend(binding_stmts);
+            }
+            Stmt::Raise(expr) => {
+                if let Some(expr) = expr {
+                    let expr = bind(expr.transform_with_placeholder_guard(ctx)?);
+                    pre.push(a.raise(Some(expr)));
+                } else {
+                    pre.push(a.raise(None));
+                }
+            }
+            Stmt::For(target, iter, body) => {
+                let iter = bind(iter.transform_with_placeholder_guard(ctx)?);
+
+                let mut py_body = PyBlock::new();
+
+                let (matcher, cursor) = create_throwing_matcher(ctx, target)?;
+                py_body.extend(matcher);
+                py_body.extend(body.transform(ctx)?.drop_expr(ctx)?);
+
+                pre.push(a.for_(
+                    a.ident(cursor.clone(), PyAccessCtx::Store),
+                    a.call(
+                        a.tl_builtin("vget"),
+                        vec![
+                            a.call_arg(iter),
+                            a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
+                        ],
+                    ),
+                    py_body,
+                ));
+            }
+            Stmt::While(cond, body) => {
+                let cond_node = cond.transform_with_placeholder_guard(ctx)?;
+
+                ctx.fn_ctx_stack.push(FnCtx::new());
+                let body_block = body.transform(ctx)?.drop_expr(ctx)?;
+                let fn_ctx = ctx.fn_ctx_stack.pop().unwrap();
+
+                let cond: SPyExpr<'src> = if cond_node.pre.is_empty() {
+                    cond_node.value
+                } else {
+                    if fn_ctx.is_async {
+                        // TODO revisit this!
+                        return Err(TfErrBuilder::default()
+                            .message("Await is not allowed in this complex loop condition")
+                            .span(*span)
+                            .build_errs());
+                    }
+
+                    if fn_ctx.is_do {
+                        return Err(TfErrBuilder::default()
+                            .message("Binding is not allowed in this complex loop condition")
+                            .span(*span)
+                            .build_errs());
+                    }
+
+                    let aux_fn = bind(make_fn_exp(
+                        ctx,
+                        FnDefArgs::PyArgList(vec![]),
+                        FnDefBody::PyStmts(cond_node.pre, false, false),
+                        span,
+                    )?);
+
+                    a.call(aux_fn, vec![])
+                };
+
+                pre.push((PyStmt::While(cond, body_block), *span).into());
+            }
+            Stmt::Try(body, excepts, finally) => {
+                let body_block = body.transform(ctx)?.drop_expr(ctx)?;
+                let finally_block = finally
+                    .as_ref()
+                    .map(|f| f.transform(ctx)?.drop_expr(ctx))
+                    .transpose()?;
+
+                let var_name = ctx.create_aux_var("e", span.start);
+
+                let excepts = matching_except_handler(ctx, var_name.into(), excepts, span)?;
+
+                pre.push(a.try_(body_block, vec![excepts], finally_block));
+            }
+            Stmt::Break => pre.push(a.break_()),
+            Stmt::Continue => pre.push(a.continue_()),
+            Stmt::Import(import_stmt) => {
+                let mut aliases = vec![];
+
+                let base_module = import_stmt
+                    .trunk
+                    .iter()
+                    .map(|ident| ident.0.0.as_ref())
+                    .collect::<Vec<_>>()
+                    .join(".");
+
+                let full_module = ".".repeat(import_stmt.level) + &base_module;
+
+                if import_stmt.reexport {
+                    if !is_top_level {
+                        return Err(TfErrBuilder::default()
+                            .message("Re-exporting imports is not allowed inside functions")
+                            .span(*span)
+                            .build_errs());
+                    }
+                }
+
+                match &import_stmt.imports {
+                    ImportList::Star => {
+                        aliases.push(PyImportAlias {
+                            name: "*".into(),
+                            as_name: None,
+                        });
+
+                        if import_stmt.reexport {
+                            ctx.module_star_exports.push(full_module.into());
+                        }
+                    }
+                    ImportList::Leaves(imports) => {
+                        for (ident, alias) in imports {
+                            aliases.push(PyImportAlias {
+                                name: ident.transform(),
+                                as_name: alias.as_ref().map(|a| a.transform()),
+                            });
+                        }
+
+                        if import_stmt.reexport {
+                            // alias else orig_name
+                            let export_aliases: Vec<_> = aliases
+                                .iter()
+                                .map(|x| x.as_name.as_ref().unwrap_or(&x.name).clone())
+                                .collect();
+
+                            ctx.exports.extend(export_aliases);
+                        }
+                    }
+                }
+
+                if !import_stmt.trunk.is_empty() {
+                    if import_stmt.level == 0 {
+                        pre.push(
+                            a.import(vec![a.import_alias(import_stmt.trunk[0].transform(), None)]),
+                        )
+                    }
+                    pre.push(a.import_from(Some(base_module.into()), aliases, import_stmt.level));
+                } else if import_stmt.level != 0 {
+                    pre.push(a.import_from(None, aliases, import_stmt.level));
+                } else {
+                    pre.push(a.import(aliases));
+                };
+            }
+            Stmt::Err => {
+                return Err(TfErrBuilder::default()
+                    .message(
+                        "unexpected statement error (should have been caught in lexer)".to_owned(),
+                    )
+                    .span(*span)
+                    .build_errs());
+            }
+            Stmt::Module => {
+                return Err(TfErrBuilder::default()
+                    .message("Module statements are not allowed in the transform phase".to_owned())
+                    .span(*span)
+                    .build_errs());
+            }
+        };
+
+        Ok(pre)
+    }
+}
+
 trait SExprExt<'src> {
     fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>>;
 
+    /**
+     * Transforms
+     * expr
+     * to
+     * x = expr
+     * x
+     *
+     * to avoid evaluating expr multiple times
+     */
     fn transform_lifted<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>>;
 
     /**
@@ -2180,13 +2137,6 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
         self.transform_with_access(ctx, PyAccessCtx::Load)
     }
 
-    /**
-     * Transforms
-     * expr
-     * to
-     * x = expr
-     * x
-     */
     fn transform_lifted<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>> {
         let mut pre = PyBlock::new();
         let value = bind_pre(&mut pre, self.transform(ctx)?);
@@ -2547,7 +2497,7 @@ pub fn transform_ast<'src, 'ast>(
     let mut ctx = TfCtx::new(source)?;
     ctx.allow_top_level_await = allow_await;
 
-    let mut stmts = block.transform_with_depth(&mut ctx, true)?;
+    let mut stmts = block.transform(&mut ctx)?;
 
     if let PyBlockExpr::Expr(value) = stmts.value {
         let span = value.tl_span;

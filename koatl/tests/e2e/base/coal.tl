@@ -1,9 +1,10 @@
 import util.assert_eq
 
-assert_eq(None?(1)?(2), None)
-assert_eq(None?[1]?.a, None)
-assert_eq(None?.a, None)
-assert_eq(None?.(a), None)
+none = None
+assert_eq(none?(1)?(2), None)
+assert_eq(none?[1]?.a, None)
+assert_eq(none?.a, None)
+assert_eq(none?.(a), None)
 
 obj = (class:
     a = 1
