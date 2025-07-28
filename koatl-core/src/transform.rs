@@ -111,9 +111,11 @@ struct WithPre<'src, T> {
     value: T,
 }
 
-fn bind_pre<'src, 'a, T>(pre: &'a mut PyBlock<'src>, v: WithPre<'src, T>) -> T {
-    pre.extend(v.pre);
-    v.value
+impl<'src> PyBlock<'src> {
+    fn bind<T>(&mut self, v: WithPre<'src, T>) -> T {
+        self.extend(v.pre);
+        v.value
+    }
 }
 
 enum PyBlockExpr<'src> {
@@ -214,7 +216,7 @@ impl<'src> BlockExt<'src> for [SStmt<'src>] {
         match &final_stmt.0 {
             Stmt::Expr(expr) => match expr.transform_with_placeholder_guard(ctx) {
                 Ok(expr_with_aux) => {
-                    value = PyBlockExpr::Expr(bind_pre(&mut pre, expr_with_aux));
+                    value = PyBlockExpr::Expr(pre.bind(expr_with_aux));
                 }
                 Err(e) => {
                     errs.extend(e.0);
@@ -745,7 +747,7 @@ fn transform_if_expr<'src, 'ast>(
     span: &Span,
 ) -> TfResult<SPyExprWithPre<'src>> {
     let mut pre = PyBlock::new();
-    let cond = bind_pre(&mut pre, cond.transform(ctx)?);
+    let cond = pre.bind(cond.transform(ctx)?);
     let a = PyAstBuilder::new(*span);
 
     let ret_varname = ctx.create_aux_var("ifexp", span.start);
@@ -753,12 +755,12 @@ fn transform_if_expr<'src, 'ast>(
     let load_ret_var = a.ident(ret_varname.clone(), PyAccessCtx::Load);
 
     let mut py_then = PyBlock::new();
-    let py_then_expr = bind_pre(&mut py_then, then_block.transform(ctx)?);
+    let py_then_expr = py_then.bind(then_block.transform(ctx)?);
     py_then.push(a.assign(store_ret_var.clone(), py_then_expr));
 
     let py_else = if let Some(else_block) = else_block {
         let mut py_else = PyBlock::new();
-        let py_else_expr = bind_pre(&mut py_else, else_block.transform(ctx)?);
+        let py_else_expr = py_else.bind(else_block.transform(ctx)?);
         py_else.push(a.assign(store_ret_var.clone(), py_else_expr));
         py_else
     } else {
@@ -791,7 +793,6 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
         // also check for no patterns after default pattern
 
         let mut pre = PyBlock::new();
-        let mut attach = |v| bind_pre(&mut pre, v);
 
         let (pattern, span) = self;
         let capture_slot = |v: &Option<SIdent<'src>>| {
@@ -806,7 +807,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
 
         let transformed = match pattern {
             Pattern::As(pattern, ident) => PyPattern::As(
-                Some(Box::new(attach(pattern.transform(ctx)?))),
+                Some(Box::new(pre.bind(pattern.transform(ctx)?))),
                 Some(ident.transform().clone()),
             ),
             Pattern::Literal(literal) => match literal.0 {
@@ -819,7 +820,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
             },
             Pattern::Capture(v) => PyPattern::As(None, capture_slot(v)),
             Pattern::Value(v) => {
-                let v_node = bind_pre(&mut pre, v.transform(ctx)?);
+                let v_node = pre.bind(v.transform(ctx)?);
 
                 match v_node.value {
                     PyExpr::Literal(..) | PyExpr::Attribute(..) => PyPattern::Value(v_node),
@@ -838,7 +839,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
             Pattern::Or(items) => {
                 let items_nodes = items
                     .iter()
-                    .map(|x| Ok(attach(x.transform(ctx)?)))
+                    .map(|x| Ok(pre.bind(x.transform(ctx)?)))
                     .collect::<TfResult<Vec<_>>>()?;
                 PyPattern::Or(items_nodes)
             }
@@ -850,7 +851,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                         .map(|x| {
                             Ok(match x {
                                 PatternSequenceItem::Item(item) => {
-                                    PyPatternSequenceItem::Item(attach(item.transform(ctx)?))
+                                    PyPatternSequenceItem::Item(pre.bind(item.transform(ctx)?))
                                 }
                                 PatternSequenceItem::Spread(item) => {
                                     if seen_spread {
@@ -922,15 +923,15 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                                     .span(*span)
                                     .build_errs());
                             }
-                            values.push(attach(value.transform(ctx)?));
+                            values.push(pre.bind(value.transform(ctx)?));
                         }
                         PatternClassItem::Kw(key, value) => {
-                            kvps.push((key.transform(), attach(value.transform(ctx)?)));
+                            kvps.push((key.transform(), pre.bind(value.transform(ctx)?)));
                         }
                     }
                 }
 
-                let cls_node = bind_pre(&mut pre, cls.transform(ctx)?);
+                let cls_node = pre.bind(cls.transform(ctx)?);
 
                 PyPattern::Class(cls_node, values, kvps)
             }
@@ -1049,13 +1050,13 @@ fn transform_match_expr<'src, 'ast>(
         // TODO verify binding same names
 
         let pattern = if let Some(pattern) = &case.pattern {
-            bind_pre(&mut pre, pattern.transform(ctx)?)
+            pre.bind(pattern.transform(ctx)?)
         } else {
             (PyPattern::As(None, None), *span).into()
         };
 
         let guard = if let Some(guard) = &case.guard {
-            Some(bind_pre(&mut pre, guard.transform(ctx)?))
+            Some(pre.bind(guard.transform(ctx)?))
         } else {
             None
         };
@@ -1283,7 +1284,7 @@ fn make_fn_exp<'src, 'ast>(
         args,
         decorators,
         async_,
-    } = bind_pre(&mut pre, prepare_py_fn(ctx, arglist, body, span)?);
+    } = pre.bind(prepare_py_fn(ctx, arglist, body, span)?);
     let a = PyAstBuilder::new(*span);
 
     if body.0.len() == 1 {
@@ -1342,7 +1343,7 @@ fn make_fn_def<'src, 'ast>(
         args,
         decorators: inner_decorators,
         async_,
-    } = bind_pre(&mut pre, prepare_py_fn(ctx, arglist, body, span)?);
+    } = pre.bind(prepare_py_fn(ctx, arglist, body, span)?);
 
     decorators.0.extend(inner_decorators.0);
 
@@ -1872,20 +1873,19 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
         let mut pre = PyBlock::new();
         let (stmt, span) = self;
         let a = PyAstBuilder::new(*span);
-        let mut bind = |expr| bind_pre(&mut pre, expr);
 
         let is_top_level = ctx.fn_ctx_stack.is_empty();
 
         match &stmt {
             Stmt::Expr(expr) => {
-                let expr = bind(expr.transform_with_placeholder_guard(ctx)?);
+                let expr = pre.bind(expr.transform_with_placeholder_guard(ctx)?);
                 pre.push(a.expr(expr));
             }
             Stmt::Assert(expr, msg) => {
-                let expr = bind(expr.transform_with_placeholder_guard(ctx)?);
+                let expr = pre.bind(expr.transform_with_placeholder_guard(ctx)?);
 
                 let msg = if let Some(msg) = msg {
-                    Some(bind(msg.transform_with_placeholder_guard(ctx)?))
+                    Some(pre.bind(msg.transform_with_placeholder_guard(ctx)?))
                 } else {
                     None
                 };
@@ -1893,7 +1893,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 pre.push(a.assert(expr, msg));
             }
             Stmt::Return(expr) => {
-                let expr = bind(expr.transform_with_placeholder_guard(ctx)?);
+                let expr = pre.bind(expr.transform_with_placeholder_guard(ctx)?);
                 pre.push(a.return_(expr));
             }
             Stmt::Assign(target, value, modifiers) => {
@@ -1908,14 +1908,14 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
             }
             Stmt::Raise(expr) => {
                 if let Some(expr) = expr {
-                    let expr = bind(expr.transform_with_placeholder_guard(ctx)?);
+                    let expr = pre.bind(expr.transform_with_placeholder_guard(ctx)?);
                     pre.push(a.raise(Some(expr)));
                 } else {
                     pre.push(a.raise(None));
                 }
             }
             Stmt::For(target, iter, body) => {
-                let iter = bind(iter.transform_with_placeholder_guard(ctx)?);
+                let iter = pre.bind(iter.transform_with_placeholder_guard(ctx)?);
 
                 let mut py_body = PyBlock::new();
 
@@ -1960,7 +1960,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                             .build_errs());
                     }
 
-                    let aux_fn = bind(make_fn_exp(
+                    let aux_fn = pre.bind(make_fn_exp(
                         ctx,
                         FnDefArgs::PyArgList(vec![]),
                         FnDefBody::PyStmts(cond_node.pre, false, false),
@@ -2121,7 +2121,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
     fn transform_lifted<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>> {
         let mut pre = PyBlock::new();
-        let value = bind_pre(&mut pre, self.transform(ctx)?);
+        let value = pre.bind(self.transform(ctx)?);
         let a = PyAstBuilder::new(self.1);
 
         let expr = match self.0 {
@@ -2164,7 +2164,6 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
         let a = PyAstBuilder::new(*span);
 
         let mut pre = PyBlock::<'src>::new();
-        let mut bind = |expr| bind_pre(&mut pre, expr);
 
         match &expr {
             Expr::RawAttribute(..) | Expr::Subscript(..) | Expr::Ident(..) => {}
@@ -2224,8 +2223,8 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                 a.load_ident(var_name)
             }
-            Expr::Placeholder => bind(transform_placeholder(ctx, span, access_ctx)?),
-            Expr::Fn(arglist, body) => bind(make_fn_exp(
+            Expr::Placeholder => pre.bind(transform_placeholder(ctx, span, access_ctx)?),
+            Expr::Fn(arglist, body) => pre.bind(make_fn_exp(
                 ctx,
                 FnDefArgs::ArgList(arglist),
                 FnDefBody::Expr(body),
@@ -2246,8 +2245,8 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 a.load_ident(name)
             }
             Expr::Decorated(deco, expr) => a.call(
-                bind(deco.transform(ctx)?),
-                vec![PyCallItem::Arg(bind(expr.transform(ctx)?))],
+                pre.bind(deco.transform(ctx)?),
+                vec![PyCallItem::Arg(pre.bind(expr.transform(ctx)?))],
             ),
             Expr::Literal(lit) => a.literal(lit.0.transform(ctx)?),
             Expr::Ident(ident) => a.ident(ident.transform(), access_ctx),
@@ -2260,8 +2259,8 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             | Expr::ScopedAttribute(..)
             | Expr::MappedScopedAttribute(..)
             | Expr::Attribute(..)
-            | Expr::MappedAttribute(..) => bind(transform_postfix_expr(ctx, self, access_ctx)?),
-            Expr::If(cond, then_block, else_block) => bind(transform_if_expr(
+            | Expr::MappedAttribute(..) => pre.bind(transform_postfix_expr(ctx, self, access_ctx)?),
+            Expr::If(cond, then_block, else_block) => pre.bind(transform_if_expr(
                 ctx,
                 cond,
                 then_block,
@@ -2269,19 +2268,18 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 span,
             )?),
             Expr::Block(block) => {
-                let block = bind_pre(&mut pre, block.transform(ctx)?);
+                let block = pre.bind(block.transform(ctx)?);
 
                 match block {
                     PyBlockExpr::Expr(expr) => expr,
                     PyBlockExpr::Nothing | PyBlockExpr::Never => a.none(),
                 }
             }
-            Expr::Match(subject, cases) => bind_pre(
-                &mut pre,
-                transform_match_expr(ctx, subject, cases, true, span)?.0,
-            ),
+            Expr::Match(subject, cases) => {
+                pre.bind(transform_match_expr(ctx, subject, cases, true, span)?.0)
+            }
             Expr::Matches(subject, pattern) => {
-                let subject = bind(subject.transform(ctx)?);
+                let subject = pre.bind(subject.transform(ctx)?);
 
                 let a = PyAstBuilder::new(*span);
                 let var = ctx.create_aux_var("matches", span.start);
@@ -2321,8 +2319,8 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     _ => (lhs.transform(ctx)?, rhs.transform(ctx)?),
                 };
 
-                let lhs = bind(lhs);
-                let rhs = bind(rhs);
+                let lhs = pre.bind(lhs);
+                let rhs = pre.bind(rhs);
 
                 let py_op = match op {
                     BinaryOp::Add => PyBinaryOp::Add,
@@ -2359,18 +2357,18 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             }
             Expr::Await(expr) => {
                 set_async_ctx(&mut ctx.fn_ctx_stack, ctx.allow_top_level_await, span)?;
-                a.await_(bind(expr.transform(ctx)?))
+                a.await_(pre.bind(expr.transform(ctx)?))
             }
-            Expr::Yield(expr) => a.yield_(bind(expr.transform(ctx)?)),
+            Expr::Yield(expr) => a.yield_(pre.bind(expr.transform(ctx)?)),
             Expr::YieldFrom(expr) => a.yield_from(a.call(
                 a.tl_builtin("vget"),
                 vec![
-                    a.call_arg(bind(expr.transform(ctx)?)),
+                    a.call_arg(pre.bind(expr.transform(ctx)?)),
                     a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
                 ],
             )),
             Expr::Unary(op, expr) => 'block: {
-                let expr = bind(expr.transform(ctx)?);
+                let expr = pre.bind(expr.transform(ctx)?);
 
                 let py_op = match op {
                     UnaryOp::Neg => PyUnaryOp::Neg,
@@ -2386,12 +2384,8 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                 a.unary(py_op, expr)
             }
-            Expr::List(exprs) => {
-                a.list(bind_pre(&mut pre, exprs.transform(ctx)?), PyAccessCtx::Load)
-            }
-            Expr::Tuple(exprs) => {
-                a.tuple(bind_pre(&mut pre, exprs.transform(ctx)?), PyAccessCtx::Load)
-            }
+            Expr::List(exprs) => a.list(pre.bind(exprs.transform(ctx)?), PyAccessCtx::Load),
+            Expr::Tuple(exprs) => a.tuple(pre.bind(exprs.transform(ctx)?), PyAccessCtx::Load),
             Expr::Mapping(items) => {
                 let mut dict_items = vec![];
 
@@ -2404,13 +2398,13 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                             ));
                         }
                         MappingItem::Item(key, value) => {
-                            let key = bind(key.transform(ctx)?);
-                            let value = bind(value.transform(ctx)?);
+                            let key = pre.bind(key.transform(ctx)?);
+                            let value = pre.bind(value.transform(ctx)?);
 
                             dict_items.push(PyDictItem::Item(key, value));
                         }
                         MappingItem::Spread(expr) => {
-                            let expr = bind(expr.transform(ctx)?);
+                            let expr = pre.bind(expr.transform(ctx)?);
 
                             dict_items.push(PyDictItem::Spread(expr));
                         }
@@ -2434,7 +2428,11 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     .transpose()?;
 
                 let mut get = |x: Option<SPyExprWithPre<'src>>| {
-                    let expr = if let Some(x) = x { bind(x) } else { a.none() };
+                    let expr = if let Some(x) = x {
+                        pre.bind(x)
+                    } else {
+                        a.none()
+                    };
 
                     PyCallItem::Arg(expr)
                 };
@@ -2451,7 +2449,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                 for (fmt_expr, str_part) in parts {
                     // TODO format specifiers?
-                    let expr = bind(fmt_expr.0.expr.transform(ctx)?);
+                    let expr = pre.bind(fmt_expr.0.expr.transform(ctx)?);
 
                     nodes.push(PyFstrPart::Expr(expr, None));
                     nodes.push(PyFstrPart::Str(str_part.0.clone().into()));
