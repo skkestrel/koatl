@@ -110,7 +110,7 @@ pub type SLiteral<'a> = Spanned<Literal<'a>>;
 
 #[derive(Debug, Clone)]
 pub struct FmtExpr<'a> {
-    pub block: SExpr<'a>,
+    pub expr: SExpr<'a>,
     pub fmt: Option<Ident<'a>>,
 }
 

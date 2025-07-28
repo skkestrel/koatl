@@ -22,6 +22,7 @@ from .helpers import *
 
 
 __tl__ = SimpleNamespace(
+    slice=slice,
     vget=virtual.vget,
     vhas=virtual.vhas,
     unpack_record=helpers.unpack_record,

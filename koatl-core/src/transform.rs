@@ -2098,15 +2098,15 @@ trait ListItemsExt<'src> {
     fn transform<'ast>(
         &'ast self,
         ctx: &mut TfCtx<'src>,
-    ) -> TfResult<(Vec<PyListItem<'src>>, PyBlock<'src>)>;
+    ) -> TfResult<WithPre<'src, Vec<PyListItem<'src>>>>;
 }
 
 impl<'src> ListItemsExt<'src> for Vec<ListItem<'src>> {
     fn transform<'ast>(
         &'ast self,
         ctx: &mut TfCtx<'src>,
-    ) -> TfResult<(Vec<PyListItem<'src>>, PyBlock<'src>)> {
-        let mut aux_stmts = PyBlock::new();
+    ) -> TfResult<WithPre<'src, Vec<PyListItem<'src>>>> {
+        let mut pre = PyBlock::new();
         let mut items = vec![];
 
         for expr in self {
@@ -2114,14 +2114,14 @@ impl<'src> ListItemsExt<'src> for Vec<ListItem<'src>> {
                 ListItem::Spread(expr) => expr.transform(ctx)?,
                 ListItem::Item(expr) => expr.transform(ctx)?,
             };
-            aux_stmts.extend(e.pre);
+            pre.extend(e.pre);
             items.push(match expr {
                 ListItem::Spread(_) => PyListItem::Spread(e.value),
                 ListItem::Item(_) => PyListItem::Item(e.value),
             });
         }
 
-        Ok((items, aux_stmts))
+        Ok(WithPre { pre, value: items })
     }
 }
 
@@ -2249,6 +2249,9 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
         let (expr, span) = self;
         let a = PyAstBuilder::new(*span);
 
+        let mut pre = PyBlock::<'src>::new();
+        let mut bind = |expr| bind_pre(&mut pre, expr);
+
         match &expr {
             Expr::RawAttribute(..) | Expr::Subscript(..) | Expr::Ident(..) => {}
             _ => {
@@ -2261,7 +2264,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             }
         }
 
-        match &expr {
+        let value: SPyExpr<'src> = match &expr {
             Expr::Checked(expr, pattern) => {
                 let a = PyAstBuilder::new(*span);
                 let b = AstBuilder::new(*span);
@@ -2303,54 +2306,37 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 let except_handler =
                     matching_except_handler(ctx, err_name.clone().into(), &handlers, span)?;
 
-                let mut stmts = PyBlock::new();
-                stmts.push(a.try_(try_body, vec![except_handler], None));
+                pre.push(a.try_(try_body, vec![except_handler], None));
 
-                Ok(SPyExprWithPre {
-                    pre: stmts,
-                    value: a.load_ident(var_name),
-                })
+                a.load_ident(var_name)
             }
-            Expr::Placeholder => transform_placeholder(ctx, span, access_ctx),
-            Expr::Fn(arglist, body) => make_fn_exp(
+            Expr::Placeholder => bind(transform_placeholder(ctx, span, access_ctx)?),
+            Expr::Fn(arglist, body) => bind(make_fn_exp(
                 ctx,
                 FnDefArgs::ArgList(arglist),
                 FnDefBody::Expr(body),
                 span,
-            ),
+            )?),
             Expr::Class(bases, body) => {
                 let name: Cow<_> = ctx.create_aux_var("clsexp", span.start).into();
-                let aux_stmts =
-                    make_class_def(ctx, name.clone(), bases, body, PyDecorators::new(), span)?;
 
-                Ok(SPyExprWithPre {
-                    value: (PyExpr::Ident(name, PyAccessCtx::Load), *span).into(),
-                    pre: aux_stmts,
-                })
+                pre.extend(make_class_def(
+                    ctx,
+                    name.clone(),
+                    bases,
+                    body,
+                    PyDecorators::new(),
+                    span,
+                )?);
+
+                a.load_ident(name)
             }
-            Expr::Decorated(deco, expr) => {
-                let mut pre = PyBlock::new();
-                let mut node = bind_pre(&mut pre, expr.transform(ctx)?);
-
-                node = (
-                    PyExpr::Call(
-                        Box::new(bind_pre(&mut pre, deco.transform(ctx)?)),
-                        vec![PyCallItem::Arg(node)],
-                    ),
-                    *span,
-                )
-                    .into();
-
-                Ok(SPyExprWithPre { value: node, pre })
-            }
-            Expr::Literal(lit) => Ok(SPyExprWithPre {
-                value: (PyExpr::Literal(lit.0.transform(ctx)?), *span).into(),
-                pre: PyBlock::new(),
-            }),
-            Expr::Ident(ident) => Ok(SPyExprWithPre {
-                value: (PyExpr::Ident(ident.transform(), access_ctx), *span).into(),
-                pre: PyBlock::new(),
-            }),
+            Expr::Decorated(deco, expr) => a.call(
+                bind(deco.transform(ctx)?),
+                vec![PyCallItem::Arg(bind(expr.transform(ctx)?))],
+            ),
+            Expr::Literal(lit) => a.literal(lit.0.transform(ctx)?),
+            Expr::Ident(ident) => a.ident(ident.transform(), access_ctx),
             Expr::RawAttribute(..)
             | Expr::MappedRawAttribute(..)
             | Expr::Call(..)
@@ -2360,40 +2346,35 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             | Expr::ScopedAttribute(..)
             | Expr::MappedScopedAttribute(..)
             | Expr::Attribute(..)
-            | Expr::MappedAttribute(..) => transform_postfix_expr(ctx, self, access_ctx),
-            Expr::If(cond, then_block, else_block) => transform_if_expr(
+            | Expr::MappedAttribute(..) => bind(transform_postfix_expr(ctx, self, access_ctx)?),
+            Expr::If(cond, then_block, else_block) => bind(transform_if_expr(
                 ctx,
                 cond,
                 then_block,
                 else_block.as_ref().map(|x| x.as_ref()),
                 span,
-            ),
+            )?),
             Expr::Block(block) => {
-                let t = block.transform(ctx)?;
+                let block = bind_pre(&mut pre, block.transform(ctx)?);
 
-                let none_literal = (PyExpr::Literal(PyLiteral::None), *span).into();
-
-                let value = match t.value {
+                match block {
                     PyBlockExpr::Expr(expr) => expr,
-                    PyBlockExpr::Nothing | PyBlockExpr::Never => none_literal,
-                };
-
-                Ok(SPyExprWithPre { value, pre: t.pre })
+                    PyBlockExpr::Nothing | PyBlockExpr::Never => a.none(),
+                }
             }
-            Expr::Match(subject, cases) => {
-                Ok(transform_match_expr(ctx, subject, cases, true, span)?.0)
-            }
+            Expr::Match(subject, cases) => bind_pre(
+                &mut pre,
+                transform_match_expr(ctx, subject, cases, true, span)?.0,
+            ),
             Expr::Matches(subject, pattern) => {
-                let mut block = PyBlock::new();
-                let subject_t = subject.transform(ctx)?;
-                block.extend(subject_t.pre);
+                let subject = bind(subject.transform(ctx)?);
 
                 let a = PyAstBuilder::new(*span);
                 let var = ctx.create_aux_var("matches", span.start);
 
                 let matcher = create_matcher(
                     ctx,
-                    subject_t.value,
+                    subject,
                     pattern,
                     PyBlock(vec![a.assign(
                         a.ident(var.clone(), PyAccessCtx::Store),
@@ -2405,14 +2386,11 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     )]),
                 )?;
 
-                block.extend(matcher);
+                pre.extend(matcher);
 
-                Ok(SPyExprWithPre {
-                    value: a.load_ident(var.clone()),
-                    pre: block,
-                })
+                a.load_ident(var.clone())
             }
-            Expr::Binary(op, lhs, rhs) => {
+            Expr::Binary(op, lhs, rhs) => 'block: {
                 let (lhs, rhs) = match op {
                     BinaryOp::Pipe => {
                         let lhs = lhs.transform_with_placeholder_guard(ctx)?;
@@ -2429,8 +2407,8 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     _ => (lhs.transform(ctx)?, rhs.transform(ctx)?),
                 };
 
-                let mut aux_stmts = lhs.pre;
-                aux_stmts.extend(rhs.pre);
+                let lhs = bind(lhs);
+                let rhs = bind(rhs);
 
                 let py_op = match op {
                     BinaryOp::Add => PyBinaryOp::Add,
@@ -2453,80 +2431,32 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     BinaryOp::Is => PyBinaryOp::Is,
                     BinaryOp::Nis => PyBinaryOp::Nis,
 
-                    BinaryOp::Pipe => {
-                        return Ok(SPyExprWithPre {
-                            value: (
-                                PyExpr::Call(Box::new(rhs.value), vec![PyCallItem::Arg(lhs.value)]),
-                                *span,
-                            )
-                                .into(),
-                            pre: aux_stmts,
-                        });
-                    }
-
+                    BinaryOp::Pipe => break 'block a.call(rhs, vec![PyCallItem::Arg(lhs)]),
                     BinaryOp::Coalesce => {
-                        let a = PyAstBuilder::new(*span);
-
-                        let expr = a.if_expr(
-                            a.call(a.tl_builtin("ok"), vec![a.call_arg(lhs.value.clone())]),
-                            lhs.value,
-                            rhs.value,
+                        break 'block a.if_expr(
+                            a.call(a.tl_builtin("ok"), vec![a.call_arg(lhs.clone())]),
+                            lhs,
+                            rhs,
                         );
-
-                        return Ok(SPyExprWithPre {
-                            value: expr,
-                            pre: aux_stmts,
-                        });
                     }
                 };
 
-                return Ok(SPyExprWithPre {
-                    value: (
-                        PyExpr::Binary(py_op, Box::new(lhs.value), Box::new(rhs.value)),
-                        *span,
-                    )
-                        .into(),
-                    pre: aux_stmts,
-                });
+                a.binary(py_op, lhs, rhs)
             }
             Expr::Await(expr) => {
                 set_async_ctx(&mut ctx.fn_ctx_stack, ctx.allow_top_level_await, span)?;
-
-                let expr = expr.transform(ctx)?;
-
-                return Ok(SPyExprWithPre {
-                    value: (PyExpr::Await(Box::new(expr.value)), *span).into(),
-                    pre: expr.pre,
-                });
+                a.await_(bind(expr.transform(ctx)?))
             }
-            Expr::Yield(expr) => {
-                let expr = expr.transform(ctx)?;
-
-                return Ok(SPyExprWithPre {
-                    value: (PyExpr::Yield(Box::new(expr.value)), *span).into(),
-                    pre: expr.pre,
-                });
-            }
-            Expr::YieldFrom(expr) => {
-                let expr = expr.transform(ctx)?;
-
-                return Ok(SPyExprWithPre {
-                    value: (
-                        PyExpr::YieldFrom(Box::new(a.call(
-                            a.tl_builtin("vget"),
-                            vec![
-                                a.call_arg(expr.value),
-                                a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
-                            ],
-                        ))),
-                        *span,
-                    )
-                        .into(),
-                    pre: expr.pre,
-                });
-            }
-            Expr::Unary(op, expr) => {
-                let expr = expr.transform(ctx)?;
+            Expr::Yield(expr) => a.yield_(bind(expr.transform(ctx)?)),
+            Expr::YieldFrom(expr) => a.yield_from(a.call(
+                a.tl_builtin("vget"),
+                vec![
+                    a.call_arg(bind(expr.transform(ctx)?)),
+                    a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
+                ],
+            )),
+            Expr::Unary(op, expr) => 'block: {
+                let expr = bind(expr.transform(ctx)?);
 
                 let py_op = match op {
                     UnaryOp::Neg => PyUnaryOp::Neg,
@@ -2536,36 +2466,19 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     UnaryOp::Bind => {
                         set_do_ctx(&mut ctx.fn_ctx_stack, span)?;
 
-                        return Ok(SPyExprWithPre {
-                            value: (PyExpr::Yield(Box::new(expr.value)), *span).into(),
-                            pre: expr.pre,
-                        });
+                        break 'block a.yield_(expr);
                     }
                 };
 
-                return Ok(SPyExprWithPre {
-                    value: (PyExpr::Unary(py_op, Box::new(expr.value)), *span).into(),
-                    pre: expr.pre,
-                });
+                a.unary(py_op, expr)
             }
             Expr::List(exprs) => {
-                let (items, aux_stmts) = exprs.transform(ctx)?;
-
-                return Ok(SPyExprWithPre {
-                    value: (PyExpr::List(items, PyAccessCtx::Load), *span).into(),
-                    pre: aux_stmts,
-                });
+                a.list(bind_pre(&mut pre, exprs.transform(ctx)?), PyAccessCtx::Load)
             }
             Expr::Tuple(exprs) => {
-                let (items, aux_stmts) = exprs.transform(ctx)?;
-
-                return Ok(SPyExprWithPre {
-                    value: (PyExpr::Tuple(items, PyAccessCtx::Load), *span).into(),
-                    pre: aux_stmts,
-                });
+                a.tuple(bind_pre(&mut pre, exprs.transform(ctx)?), PyAccessCtx::Load)
             }
             Expr::Mapping(items) => {
-                let mut aux_stmts = PyBlock::new();
                 let mut dict_items = vec![];
 
                 for item in items {
@@ -2577,27 +2490,20 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                             ));
                         }
                         MappingItem::Item(key, value) => {
-                            let key = key.transform(ctx)?;
-                            let value = value.transform(ctx)?;
+                            let key = bind(key.transform(ctx)?);
+                            let value = bind(value.transform(ctx)?);
 
-                            aux_stmts.extend(key.pre);
-                            aux_stmts.extend(value.pre);
-
-                            dict_items.push(PyDictItem::Item(key.value, value.value));
+                            dict_items.push(PyDictItem::Item(key, value));
                         }
                         MappingItem::Spread(expr) => {
-                            let e = expr.transform(ctx)?;
-                            aux_stmts.extend(e.pre);
+                            let expr = bind(expr.transform(ctx)?);
 
-                            dict_items.push(PyDictItem::Spread(e.value));
+                            dict_items.push(PyDictItem::Spread(expr));
                         }
                     }
                 }
 
-                return Ok(SPyExprWithPre {
-                    value: a.call(a.load_ident("Record"), vec![a.call_arg(a.dict(dict_items))]),
-                    pre: aux_stmts,
-                });
+                a.call(a.load_ident("Record"), vec![a.call_arg(a.dict(dict_items))])
             }
             Expr::Slice(start, end, step) => {
                 let start_node = start
@@ -2613,55 +2519,35 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     .map(|e| e.as_ref().transform(ctx))
                     .transpose()?;
 
-                let mut aux_stmts = PyBlock::new();
-
                 let mut get = |x: Option<SPyExprWithPre<'src>>| {
-                    let expr = if let Some(x) = x {
-                        aux_stmts.extend(x.pre);
-                        x.value
-                    } else {
-                        (PyExpr::Literal(PyLiteral::None), *span).into()
-                    };
+                    let expr = if let Some(x) = x { bind(x) } else { a.none() };
 
                     PyCallItem::Arg(expr)
                 };
 
-                return Ok(SPyExprWithPre {
-                    value: (
-                        PyExpr::Call(
-                            Box::new(
-                                (PyExpr::Ident("slice".into(), PyAccessCtx::Load), *span).into(),
-                            ),
-                            vec![get(start_node), get(end_node), get(step_node)],
-                        ),
-                        *span,
-                    )
-                        .into(),
-                    pre: aux_stmts,
-                });
+                a.call(
+                    a.tl_builtin("slice"),
+                    vec![get(start_node), get(end_node), get(step_node)],
+                )
             }
             Expr::Fstr(begin, parts) => {
-                let mut aux_stmts = PyBlock::new();
                 let mut nodes = Vec::new();
 
                 nodes.push(PyFstrPart::Str(begin.0.clone().into()));
 
                 for (fmt_expr, str_part) in parts {
                     // TODO format specifiers?
-                    let block_node = fmt_expr.0.block.transform(ctx)?;
-                    aux_stmts.extend(block_node.pre);
+                    let expr = bind(fmt_expr.0.expr.transform(ctx)?);
 
-                    nodes.push(PyFstrPart::Expr(block_node.value, None));
+                    nodes.push(PyFstrPart::Expr(expr, None));
                     nodes.push(PyFstrPart::Str(str_part.0.clone().into()));
                 }
 
-                let expr = (PyExpr::Fstr(nodes), *span).into();
-                return Ok(SPyExprWithPre {
-                    value: expr,
-                    pre: aux_stmts,
-                });
+                a.fstr(nodes)
             }
-        }
+        };
+
+        Ok(SPyExprWithPre { value, pre })
     }
 }
 

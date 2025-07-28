@@ -271,6 +271,10 @@ impl PyAstBuilder {
             .into()
     }
 
+    pub fn await_<'src>(&self, value: SPyExpr<'src>) -> SPyExpr<'src> {
+        (PyExpr::Await(Box::new(value)), self.span).into()
+    }
+
     pub fn yield_<'src>(&self, value: SPyExpr<'src>) -> SPyExpr<'src> {
         (PyExpr::Yield(Box::new(value)), self.span).into()
     }

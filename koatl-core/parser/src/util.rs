@@ -250,7 +250,7 @@ impl AstBuilder {
     ) -> SFmtExpr<'src> {
         (
             FmtExpr {
-                block,
+                expr: block,
                 fmt: fmt.map(|f| f.into()),
             },
             self.span,

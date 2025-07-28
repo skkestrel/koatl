@@ -610,7 +610,7 @@ where
                     (
                         (
                             FmtExpr {
-                                block: block.0,
+                                expr: block.0,
                                 fmt: None,
                             },
                             block.1,
