@@ -111,6 +111,11 @@ struct WithPre<'src, T> {
     value: T,
 }
 
+fn bind_pre<'src, 'a, T>(pre: &'a mut PyBlock<'src>, v: WithPre<'src, T>) -> T {
+    pre.extend(v.pre);
+    v.value
+}
+
 enum PyBlockExpr<'src> {
     Nothing,
     Never,
@@ -134,11 +139,11 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
     }
 }
 
-trait ExprWithPreExt<'src> {
+trait SPyExprWithPreExt<'src> {
     fn drop_expr(self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlock<'src>>;
 }
 
-impl<'src> ExprWithPreExt<'src> for SPyExprWithPre<'src> {
+impl<'src> SPyExprWithPreExt<'src> for SPyExprWithPre<'src> {
     fn drop_expr(self, _ctx: &mut TfCtx<'src>) -> TfResult<PyBlock<'src>> {
         let mut block = self.pre;
 
@@ -154,7 +159,7 @@ impl<'src> ExprWithPreExt<'src> for SPyExprWithPre<'src> {
     }
 }
 
-impl<'src> ExprWithPreExt<'src> for PyBlockExprWithPre<'src> {
+impl<'src> SPyExprWithPreExt<'src> for PyBlockExprWithPre<'src> {
     fn drop_expr(self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlock<'src>> {
         if let PyBlockExpr::Expr(expr) = self.value {
             Ok(SPyExprWithPre {
@@ -244,7 +249,7 @@ fn destructure_list<'src, 'ast>(
     // a, b, *c = cursor_var
 
     let a = PyAstBuilder::new(target.1);
-    let mut post_stmts = PyBlock::new();
+    let mut post = PyBlock::new();
 
     let mut lhs_items = vec![];
     let mut decls = vec![];
@@ -255,7 +260,7 @@ fn destructure_list<'src, 'ast>(
             ListItem::Item(expr) => {
                 let item_bindings = destructure(ctx, expr, decl_only)?;
                 lhs_items.push(PyListItem::Item(item_bindings.assign_to));
-                post_stmts.extend(item_bindings.post_stmts);
+                post.extend(item_bindings.post);
                 decls.extend(item_bindings.declarations);
             }
             ListItem::Spread(expr) => {
@@ -269,22 +274,22 @@ fn destructure_list<'src, 'ast>(
 
                 let item_bindings = destructure(ctx, expr, decl_only)?;
                 lhs_items.push(PyListItem::Spread(item_bindings.assign_to));
-                post_stmts.extend(item_bindings.post_stmts);
+                post.extend(item_bindings.post);
                 decls.extend(item_bindings.declarations);
             }
         }
     }
 
-    let mut stmts = PyBlock::new();
-    stmts.push(a.assign(
-        a.list(lhs_items, PyAccessCtx::Store),
-        a.load_ident(cursor_var.clone()),
-    ));
-
-    stmts.extend(post_stmts);
+    post.0.insert(
+        0,
+        a.assign(
+            a.list(lhs_items, PyAccessCtx::Store),
+            a.load_ident(cursor_var.clone()),
+        ),
+    );
 
     Ok(DestructureBindings {
-        post_stmts: stmts,
+        post,
         assign_to: a.ident(cursor_var, PyAccessCtx::Store),
         declarations: decls,
     })
@@ -336,7 +341,7 @@ fn destructure_tuple<'src, 'ast>(
         match item {
             ListItem::Item(expr) => {
                 let item_bindings = destructure(ctx, expr, decl_only)?;
-                post_stmts.extend(item_bindings.post_stmts);
+                post_stmts.extend(item_bindings.post);
                 decls.extend(item_bindings.declarations);
 
                 stmts.push(
@@ -346,9 +351,9 @@ fn destructure_tuple<'src, 'ast>(
                             a.load_ident(tuple_var.clone()),
                             a.num(
                                 (if seen_spread {
-                                    -((items.len() - i - 1) as i32)
+                                    -((items.len() - i - 1) as isize)
                                 } else {
-                                    i as i32
+                                    i as isize
                                 })
                                 .to_string(),
                             ),
@@ -368,7 +373,7 @@ fn destructure_tuple<'src, 'ast>(
                 seen_spread = true;
 
                 let item_bindings = destructure(ctx, expr, true)?;
-                post_stmts.extend(item_bindings.post_stmts);
+                post_stmts.extend(item_bindings.post);
                 decls.extend(item_bindings.declarations);
 
                 stmts.push(a.assign(
@@ -394,7 +399,7 @@ fn destructure_tuple<'src, 'ast>(
     stmts.extend(post_stmts);
 
     Ok(DestructureBindings {
-        post_stmts: stmts,
+        post: stmts,
         assign_to: a.ident(cursor_var, PyAccessCtx::Store),
         declarations: decls,
     })
@@ -440,7 +445,7 @@ fn destructure_mapping<'src, 'ast>(
                 let item_bindings = destructure(ctx, expr, decl_only)?;
                 let key_node = key.transform(ctx)?;
                 post_stmts.extend(key_node.pre);
-                post_stmts.extend(item_bindings.post_stmts);
+                post_stmts.extend(item_bindings.post);
                 decls.extend(item_bindings.declarations);
 
                 stmts.push(a.assign(
@@ -467,7 +472,7 @@ fn destructure_mapping<'src, 'ast>(
     if let Some(spread_var) = spread_var {
         let item_bindings = destructure(ctx, spread_var, true)?;
 
-        post_stmts.extend(item_bindings.post_stmts);
+        post_stmts.extend(item_bindings.post);
         decls.extend(item_bindings.declarations);
 
         stmts.push(a.assign(item_bindings.assign_to, a.load_ident(dict_var.clone())));
@@ -476,7 +481,7 @@ fn destructure_mapping<'src, 'ast>(
     stmts.extend(post_stmts);
 
     Ok(DestructureBindings {
-        post_stmts: stmts,
+        post: stmts,
         assign_to: a.ident(cursor_var, PyAccessCtx::Store),
         declarations: decls,
     })
@@ -484,7 +489,7 @@ fn destructure_mapping<'src, 'ast>(
 
 struct DestructureBindings<'a> {
     assign_to: SPyExpr<'a>,
-    post_stmts: PyBlock<'a>,
+    post: PyBlock<'a>,
     declarations: Vec<PyIdent<'a>>,
 }
 
@@ -493,7 +498,7 @@ fn destructure<'src, 'ast>(
     target: &'ast SExpr<'src>,
     decl_only: bool,
 ) -> TfResult<DestructureBindings<'src>> {
-    let mut post_stmts = PyBlock::new();
+    let mut post = PyBlock::new();
     let mut decls = Vec::<PyIdent<'src>>::new();
 
     let assign_to: SPyExpr<'src>;
@@ -534,28 +539,28 @@ fn destructure<'src, 'ast>(
                 }
             };
 
-            post_stmts.extend(target_node.pre);
+            post.extend(target_node.pre);
 
             assign_to = target_node.value;
         }
         Expr::List(items) => {
             let bindings = destructure_list(ctx, target, items, decl_only)?;
 
-            post_stmts.extend(bindings.post_stmts);
+            post.extend(bindings.post);
             decls.extend(bindings.declarations);
             assign_to = bindings.assign_to;
         }
         Expr::Tuple(items) => {
             let bindings = destructure_tuple(ctx, target, items, decl_only)?;
 
-            post_stmts.extend(bindings.post_stmts);
+            post.extend(bindings.post);
             decls.extend(bindings.declarations);
             assign_to = bindings.assign_to;
         }
         Expr::Mapping(items) => {
             let bindings = destructure_mapping(ctx, target, items, decl_only)?;
 
-            post_stmts.extend(bindings.post_stmts);
+            post.extend(bindings.post);
             decls.extend(bindings.declarations);
             assign_to = bindings.assign_to;
         }
@@ -568,17 +573,17 @@ fn destructure<'src, 'ast>(
     };
 
     Ok(DestructureBindings {
-        post_stmts,
+        post,
         assign_to,
         declarations: decls,
     })
 }
 
-fn get_scope_modifier<'a>(
-    mods: &'a Vec<AssignModifier>,
+fn get_scope_modifier<'src>(
+    mods: &'src Vec<AssignModifier>,
     is_top_level: bool,
     span: &Span,
-) -> TfResult<Option<&'a AssignModifier>> {
+) -> TfResult<Option<&'src AssignModifier>> {
     let scope_modifier = mods
         .iter()
         .filter(|m| {
@@ -608,7 +613,7 @@ fn get_scope_modifier<'a>(
     Ok(scope_modifier)
 }
 
-fn get_scope_modifying_statements<'a>(
+fn transform_scope_modifier<'a>(
     ctx: &mut TfCtx<'a>,
     scope_modifier: Option<&AssignModifier>,
     decls: Vec<PyIdent<'a>>,
@@ -727,7 +732,7 @@ fn transform_assignment<'src, 'ast>(
         )
             .into(),
     );
-    stmts.extend(destructure.post_stmts);
+    stmts.extend(destructure.post);
 
     Ok((stmts, destructure.declarations))
 }
@@ -739,53 +744,35 @@ fn transform_if_expr<'src, 'ast>(
     else_block: Option<&'ast SExpr<'src>>,
     span: &Span,
 ) -> TfResult<SPyExprWithPre<'src>> {
-    let cond = cond.transform(ctx)?;
-    let mut aux_stmts = cond.pre;
+    let mut pre = PyBlock::new();
+    let cond = bind_pre(&mut pre, cond.transform(ctx)?);
     let a = PyAstBuilder::new(*span);
 
     let ret_varname = ctx.create_aux_var("ifexp", span.start);
-    let store_ret_var: SPyExpr = (
-        PyExpr::Ident(ret_varname.clone().into(), PyAccessCtx::Store),
-        *span,
-    )
-        .into();
-    let load_ret_var: SPyExpr = (
-        PyExpr::Ident(ret_varname.clone().into(), PyAccessCtx::Load),
-        *span,
-    )
-        .into();
+    let store_ret_var = a.ident(ret_varname.clone(), PyAccessCtx::Store);
+    let load_ret_var = a.ident(ret_varname.clone(), PyAccessCtx::Load);
 
-    let t = then_block.transform(ctx)?;
-    let mut then_block_ast = t.pre;
-    then_block_ast.push(a.assign(store_ret_var.clone(), t.value));
+    let mut py_then = PyBlock::new();
+    let py_then_expr = bind_pre(&mut py_then, then_block.transform(ctx)?);
+    py_then.push(a.assign(store_ret_var.clone(), py_then_expr));
 
-    let mut else_block = else_block
-        .as_ref()
-        .map(|else_block| {
-            let t = else_block.transform(ctx)?;
-            let mut else_block_ast = t.pre;
-            else_block_ast.push(a.assign(store_ret_var.clone(), t.value));
-            Ok(else_block_ast)
-        })
-        .transpose()?;
-
-    if else_block.is_none() {
-        else_block = Some(PyBlock(vec![
+    let py_else = if let Some(else_block) = else_block {
+        let mut py_else = PyBlock::new();
+        let py_else_expr = bind_pre(&mut py_else, else_block.transform(ctx)?);
+        py_else.push(a.assign(store_ret_var.clone(), py_else_expr));
+        py_else
+    } else {
+        PyBlock(vec![
             a.assign(store_ret_var.clone(), a.literal(PyLiteral::None)),
-        ]));
-    }
+        ])
+    };
 
-    aux_stmts.push((PyStmt::If(cond.value, then_block_ast, else_block), *span).into());
+    pre.push(a.if_(cond, py_then, Some(py_else)));
 
     Ok(SPyExprWithPre {
         value: load_ret_var,
-        pre: aux_stmts,
+        pre,
     })
-}
-
-fn bind_pre<'src, 'a, T>(pre: &'a mut PyBlock<'src>, v: WithPre<'src, T>) -> T {
-    pre.extend(v.pre);
-    v.value
 }
 
 trait SPatternExt<'src> {
@@ -1915,12 +1902,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 let (binding_stmts, decls): (PyBlock, Vec<PyIdent>) =
                     transform_assignment(ctx, target, value, scope_modifier, span)?;
 
-                pre.extend(get_scope_modifying_statements(
-                    ctx,
-                    scope_modifier,
-                    decls,
-                    span,
-                )?);
+                pre.extend(transform_scope_modifier(ctx, scope_modifier, decls, span)?);
 
                 pre.extend(binding_stmts);
             }
