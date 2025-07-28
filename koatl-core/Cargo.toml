@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 ariadne = "0.5.1"
 parser = { path = "parser" }
+once_cell = "1.19.0"

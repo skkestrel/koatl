@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, rc::Rc};
 
 use crate::ast::*;
 
@@ -13,7 +13,7 @@ impl AstBuilder {
 
     // Statement builders
 
-    pub fn ident<'src>(&self, name: impl Into<Cow<'src, str>>) -> SExpr<'src> {
+    pub fn ident<'src>(&self, name: impl Into<Ident<'src>>) -> SExpr<'src> {
         (Expr::Ident((name.into(), self.span)), self.span)
     }
 
@@ -62,7 +62,7 @@ impl AstBuilder {
     pub fn try_<'src>(
         &self,
         body: SExpr<'src>,
-        handlers: Vec<MatchCase<'src>>,
+        handlers: Vec<Indirect<MatchCase<'src>>>,
         orelse: Option<SExpr<'src>>,
     ) -> SStmt<'src> {
         (Stmt::Try(body, handlers, orelse), self.span)
@@ -86,11 +86,11 @@ impl AstBuilder {
     }
 
     pub fn unary<'src>(&self, op: UnaryOp, operand: SExpr<'src>) -> SExpr<'src> {
-        (Expr::Unary(op, Box::new(operand)), self.span)
+        (Expr::Unary(op, operand.into()), self.span)
     }
 
     pub fn binary<'src>(&self, op: BinaryOp, left: SExpr<'src>, right: SExpr<'src>) -> SExpr<'src> {
-        (Expr::Binary(op, Box::new(left), Box::new(right)), self.span)
+        (Expr::Binary(op, left.into(), right.into()), self.span)
     }
 
     pub fn list<'src>(&self, items: Vec<ListItem<'src>>) -> SExpr<'src> {
@@ -108,7 +108,7 @@ impl AstBuilder {
         step: Option<SExpr<'src>>,
     ) -> SExpr<'src> {
         (
-            Expr::Slice(start.map(Box::new), stop.map(Box::new), step.map(Box::new)),
+            Expr::Slice(start.map(Rc::new), stop.map(Rc::new), step.map(Rc::new)),
             self.span,
         )
     }
@@ -120,47 +120,44 @@ impl AstBuilder {
         orelse: Option<SExpr<'src>>,
     ) -> SExpr<'src> {
         (
-            Expr::If(Box::new(test), Box::new(body), orelse.map(Box::new)),
+            Expr::If(test.into(), body.into(), orelse.map(Rc::new)),
             self.span,
         )
     }
 
-    pub fn match_<'src>(&self, subject: SExpr<'src>, cases: Vec<MatchCase<'src>>) -> SExpr<'src> {
-        (Expr::Match(Box::new(subject), cases), self.span)
+    pub fn match_<'src>(
+        &self,
+        subject: SExpr<'src>,
+        cases: Vec<Indirect<MatchCase<'src>>>,
+    ) -> SExpr<'src> {
+        (Expr::Match(subject.into(), cases), self.span)
     }
 
     pub fn class<'src>(&self, bases: Vec<SCallItem<'src>>, body: SExpr<'src>) -> SExpr<'src> {
-        (Expr::Class(bases, Box::new(body)), self.span)
+        (Expr::Class(bases, body.into()), self.span)
     }
 
     pub fn call<'src>(&self, func: SExpr<'src>, args: Vec<SCallItem<'src>>) -> SExpr<'src> {
-        (Expr::Call(Box::new(func), args), self.span)
+        (Expr::Call(func.into(), args), self.span)
     }
 
     pub fn subscript<'src>(&self, value: SExpr<'src>, slice: Vec<ListItem<'src>>) -> SExpr<'src> {
-        (Expr::Subscript(Box::new(value), slice), self.span)
+        (Expr::Subscript(value.into(), slice), self.span)
     }
 
-    pub fn attribute<'src>(
-        &self,
-        value: SExpr<'src>,
-        attr: impl Into<Cow<'src, str>>,
-    ) -> SExpr<'src> {
+    pub fn attribute<'src>(&self, value: SExpr<'src>, attr: impl Into<Ident<'src>>) -> SExpr<'src> {
         (
-            Expr::RawAttribute(Box::new(value), (attr.into(), self.span)),
+            Expr::RawAttribute(value.into(), (attr.into(), self.span)),
             self.span,
         )
     }
 
     pub fn then<'src>(&self, left: SExpr<'src>, right: SExpr<'src>) -> SExpr<'src> {
-        (
-            Expr::ScopedAttribute(Box::new(left), Box::new(right)),
-            self.span,
-        )
+        (Expr::ScopedAttribute(left.into(), right.into()), self.span)
     }
 
     pub fn function<'src>(&self, args: Vec<ArgDefItem<'src>>, body: SExpr<'src>) -> SExpr<'src> {
-        (Expr::Fn(args, Box::new(body)), self.span)
+        (Expr::Fn(args, body.into()), self.span)
     }
 
     pub fn fstring<'src>(
@@ -214,7 +211,7 @@ impl AstBuilder {
 
     pub fn call_kwarg<'src>(
         &self,
-        name: impl Into<Cow<'src, str>>,
+        name: impl Into<Ident<'src>>,
         value: SExpr<'src>,
     ) -> SCallItem<'src> {
         (CallItem::Kwarg((name.into(), self.span), value), self.span)
@@ -230,18 +227,18 @@ impl AstBuilder {
 
     // Argument item builders
     pub fn arg<'src>(&self, arg: SPattern<'src>) -> SArgItem<'src> {
-        (ArgDefItem::Arg(arg, None), self.span)
+        (ArgDefItem::Arg(arg.into(), None), self.span)
     }
 
     pub fn default_arg<'src>(&self, arg: SPattern<'src>, default: SExpr<'src>) -> SArgItem<'src> {
-        (ArgDefItem::Arg(arg, Some(default)), self.span)
+        (ArgDefItem::Arg(arg.into(), Some(default)), self.span)
     }
 
-    pub fn arg_spread<'src>(&self, name: impl Into<Cow<'src, str>>) -> SArgItem<'src> {
+    pub fn arg_spread<'src>(&self, name: impl Into<Ident<'src>>) -> SArgItem<'src> {
         (ArgDefItem::ArgSpread((name.into(), self.span)), self.span)
     }
 
-    pub fn kwarg_spread<'src>(&self, name: impl Into<Cow<'src, str>>) -> SArgItem<'src> {
+    pub fn kwarg_spread<'src>(&self, name: impl Into<Ident<'src>>) -> SArgItem<'src> {
         (ArgDefItem::KwargSpread((name.into(), self.span)), self.span)
     }
 
@@ -249,7 +246,7 @@ impl AstBuilder {
     pub fn fmt_expr<'src>(
         &self,
         block: SExpr<'src>,
-        fmt: Option<impl Into<Cow<'src, str>>>,
+        fmt: Option<impl Into<Ident<'src>>>,
     ) -> SFmtExpr<'src> {
         (
             FmtExpr {
@@ -262,7 +259,7 @@ impl AstBuilder {
 
     pub fn import_star<'src>(
         &self,
-        trunk: Vec<impl Into<Cow<'src, str>>>,
+        trunk: Vec<impl Into<Ident<'src>>>,
         level: usize,
     ) -> ImportStmt<'src> {
         ImportStmt {
@@ -275,8 +272,8 @@ impl AstBuilder {
 
     pub fn import_<'src>(
         &self,
-        trunk: Vec<impl Into<Cow<'src, str>>>,
-        leaves: Vec<(impl Into<Cow<'src, str>>, Option<impl Into<Cow<'src, str>>>)>,
+        trunk: Vec<impl Into<Ident<'src>>>,
+        leaves: Vec<(impl Into<Ident<'src>>, Option<impl Into<Ident<'src>>>)>,
         level: usize,
     ) -> ImportStmt<'src> {
         ImportStmt {

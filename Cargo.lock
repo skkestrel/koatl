@@ -112,6 +112,7 @@ name = "koatl-core"
 version = "0.1.0"
 dependencies = [
  "ariadne",
+ "once_cell",
  "parser",
 ]
 
