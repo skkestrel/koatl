@@ -239,7 +239,10 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
         }
 
         Err(TfErrBuilder::default()
-            .message("Undeclared identifier; either declare with 'let' or mark as 'global'.")
+            .message(format!(
+                "Undeclared identifier {}; either declare with 'let' or mark as 'global'.",
+                self.0.0
+            ))
             .span(self.1)
             .build_errs())
     }
@@ -633,7 +636,6 @@ fn destructure_list<'src, 'ast>(
     let mut post = PyBlock::new();
 
     let mut lhs_items = vec![];
-    let mut decls = vec![];
     let mut seen_spread = false;
 
     for item in items.iter() {
@@ -642,7 +644,6 @@ fn destructure_list<'src, 'ast>(
                 let item_bindings = destructure(ctx, expr, modifier)?;
                 lhs_items.push(PyListItem::Item(item_bindings.assign_to));
                 post.extend(item_bindings.post);
-                decls.extend(item_bindings.declarations);
             }
             ListItem::Spread(expr) => {
                 if seen_spread {
@@ -656,7 +657,6 @@ fn destructure_list<'src, 'ast>(
                 let item_bindings = destructure(ctx, expr, modifier)?;
                 lhs_items.push(PyListItem::Spread(item_bindings.assign_to));
                 post.extend(item_bindings.post);
-                decls.extend(item_bindings.declarations);
             }
         }
     }
@@ -672,7 +672,6 @@ fn destructure_list<'src, 'ast>(
     Ok(DestructureBindings {
         post,
         assign_to: a.ident(cursor_var, PyAccessCtx::Store),
-        declarations: decls,
     })
 }
 
@@ -709,7 +708,6 @@ fn destructure_tuple<'src, 'ast>(
     ]);
 
     let mut post_stmts = vec![];
-    let mut decls = vec![];
 
     // a = list_var[0]
     // b = list_var[1]
@@ -723,7 +721,6 @@ fn destructure_tuple<'src, 'ast>(
             ListItem::Item(expr) => {
                 let item_bindings = destructure(ctx, expr, modifier)?;
                 post_stmts.extend(item_bindings.post);
-                decls.extend(item_bindings.declarations);
 
                 stmts.push(
                     a.assign(
@@ -756,7 +753,6 @@ fn destructure_tuple<'src, 'ast>(
                 // TODO restrict to only idents
                 let item_bindings = destructure(ctx, expr, modifier)?;
                 post_stmts.extend(item_bindings.post);
-                decls.extend(item_bindings.declarations);
 
                 stmts.push(a.assign(
                     item_bindings.assign_to,
@@ -783,7 +779,6 @@ fn destructure_tuple<'src, 'ast>(
     Ok(DestructureBindings {
         post: stmts,
         assign_to: a.ident(cursor_var, PyAccessCtx::Store),
-        declarations: decls,
     })
 }
 
@@ -807,7 +802,6 @@ fn destructure_mapping<'src, 'ast>(
     )]);
 
     let mut post_stmts = vec![];
-    let mut decls = vec![];
 
     // a = dict_var.pop(a_key)
     // b = dict_var.pop(b_key)
@@ -828,7 +822,6 @@ fn destructure_mapping<'src, 'ast>(
                 let key_node = key.transform(ctx)?;
                 post_stmts.extend(key_node.pre);
                 post_stmts.extend(item_bindings.post);
-                decls.extend(item_bindings.declarations);
 
                 stmts.push(a.assign(
                     item_bindings.assign_to,
@@ -856,7 +849,6 @@ fn destructure_mapping<'src, 'ast>(
         let item_bindings = destructure(ctx, spread_var, modifier)?;
 
         post_stmts.extend(item_bindings.post);
-        decls.extend(item_bindings.declarations);
 
         stmts.push(a.assign(item_bindings.assign_to, a.load_ident(dict_var.clone())));
     }
@@ -866,14 +858,12 @@ fn destructure_mapping<'src, 'ast>(
     Ok(DestructureBindings {
         post: stmts,
         assign_to: a.ident(cursor_var, PyAccessCtx::Store),
-        declarations: decls,
     })
 }
 
 struct DestructureBindings<'a> {
     assign_to: SPyExpr<'a>,
     post: PyBlock<'a>,
-    declarations: Vec<PyIdent<'a>>,
 }
 
 fn destructure<'src, 'ast>(
@@ -882,7 +872,6 @@ fn destructure<'src, 'ast>(
     modifier: Option<DeclType>,
 ) -> TfResult<DestructureBindings<'src>> {
     let mut post = PyBlock::new();
-    let mut decls = Vec::<PyIdent<'src>>::new();
 
     let assign_to: SPyExpr<'src>;
 
@@ -890,11 +879,13 @@ fn destructure<'src, 'ast>(
         Expr::Ident(..) | Expr::RawAttribute(..) | Expr::Attribute(..) | Expr::Subscript(..) => {
             let target_node = match &target.0 {
                 Expr::Ident(id) => {
+                    println!("Destructuring ident: {:?} {:?}", id, modifier);
+
                     if let Some(modifier) = modifier {
                         declare_var(ctx, id, modifier)?;
+                        println!("{:?}", ctx.scope_ctx_stack);
                     }
 
-                    decls.push(id.transform_binding(ctx)?);
                     target.transform_with_access(ctx, PyAccessCtx::Store)?
                 }
                 Expr::RawAttribute(..) | Expr::Subscript(..) => {
@@ -934,21 +925,18 @@ fn destructure<'src, 'ast>(
             let bindings = destructure_list(ctx, target, items, modifier)?;
 
             post.extend(bindings.post);
-            decls.extend(bindings.declarations);
             assign_to = bindings.assign_to;
         }
         Expr::Tuple(items) => {
             let bindings = destructure_tuple(ctx, target, items, modifier)?;
 
             post.extend(bindings.post);
-            decls.extend(bindings.declarations);
             assign_to = bindings.assign_to;
         }
         Expr::Mapping(items) => {
             let bindings = destructure_mapping(ctx, target, items, modifier)?;
 
             post.extend(bindings.post);
-            decls.extend(bindings.declarations);
             assign_to = bindings.assign_to;
         }
         _ => {
@@ -959,11 +947,7 @@ fn destructure<'src, 'ast>(
         }
     };
 
-    Ok(DestructureBindings {
-        post,
-        assign_to,
-        declarations: decls,
-    })
+    Ok(DestructureBindings { post, assign_to })
 }
 
 fn transform_assignment<'src, 'ast>(
@@ -1088,7 +1072,7 @@ fn transform_if_expr<'src, 'ast>(
 
     let py_then = {
         ctx.scope_ctx_stack.push(ScopeCtx::new());
-        let _ = StackDropper::new(&mut ctx.scope_ctx_stack);
+        let _dropper = StackDropper::new(&mut ctx.scope_ctx_stack);
 
         let mut py_then = PyBlock::new();
         let py_then_expr = py_then.bind(then_block.transform(ctx)?);
@@ -2755,6 +2739,9 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                         ]),
                     }));
                 }
+
+                // TODO can we avoid declaring a variable here - construct in pyast directly?
+                declare_var(ctx, &(Ident(var_name.clone()), expr.1), DeclType::Let)?;
 
                 let except_handler =
                     matching_except_handler(ctx, err_name.clone().into(), &handlers, span)?;
