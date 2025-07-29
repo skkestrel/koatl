@@ -82,7 +82,7 @@ pub fn transpile_to_py_ast<'src>(
                 kind: TlErrKind::Transform,
                 message: e.message,
                 span: e.span,
-                contexts: vec![],
+                contexts: e.contexts,
             })
             .collect::<Vec<_>>()
     })?;

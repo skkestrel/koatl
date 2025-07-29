@@ -1189,6 +1189,7 @@ where
         just(Token::Kw("export")).to(DeclType::Export),
         just(Token::Kw("global")).to(DeclType::Global),
         just(Token::Kw("let")).to(DeclType::Let),
+        just(Token::Kw("const")).to(DeclType::Const),
     ));
 
     let decl_stmt = decl_mod

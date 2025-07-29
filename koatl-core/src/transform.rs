@@ -14,6 +14,7 @@ use parser::{ast::*, util::AstBuilder};
 pub struct TfErr {
     pub message: String,
     pub span: Option<Span>,
+    pub contexts: Vec<(String, Span)>,
 }
 
 #[derive(Debug)]
@@ -33,6 +34,7 @@ impl TfErrs {
 pub struct TfErrBuilder {
     message: String,
     span: Option<Span>,
+    contexts: Vec<(String, Span)>,
 }
 
 impl TfErrBuilder {
@@ -50,7 +52,13 @@ impl TfErrBuilder {
         TfErr {
             message: self.message,
             span: self.span,
+            contexts: self.contexts,
         }
+    }
+
+    pub fn context(mut self, message: impl Into<String>, span: Span) -> Self {
+        self.contexts.push((message.into(), span));
+        self
     }
 
     pub fn build_errs(self) -> TfErrs {
@@ -194,6 +202,7 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
                         ident: self.0.clone(),
                         py_ident: self.escape(),
                         loc: self.1,
+                        const_: false,
                         typ: if scope.is_global_scope {
                             PyDeclType::Global
                         } else {
@@ -207,6 +216,14 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
         }
 
         if let Some(found) = ctx.scope_ctx_stack.find_decl(self) {
+            if found.decl.const_ {
+                return Err(TfErrBuilder::default()
+                    .message("Cannot assign to a constant")
+                    .span(self.1)
+                    .context("Declared here", found.decl.loc)
+                    .build_errs());
+            }
+
             if found.py_local {
                 return Ok(found.decl.py_ident.clone());
             }
@@ -257,6 +274,7 @@ struct Declaration<'src> {
     py_ident: PyIdent<'src>,
     loc: Span,
     typ: PyDeclType,
+    const_: bool,
 }
 
 #[derive(Debug)]
@@ -344,6 +362,7 @@ fn declare_var<'src>(
                 Declaration {
                     ident: ident.0.clone(),
                     py_ident: ident.escape(),
+                    const_: false,
                     loc: ident.1,
                     typ: PyDeclType::GlobalCapture,
                 },
@@ -359,13 +378,15 @@ fn declare_var<'src>(
 
             ctx.exports.push(ident.escape());
         }
-        DeclType::Let => 'block: {
+        DeclType::Let | DeclType::Const => 'block: {
             let Some(last_ctx) = ctx.scope_ctx_stack.last_mut() else {
                 return Err(TfErrBuilder::default()
                     .message("Internal error: expected a scope")
                     .span(ident.1)
                     .build_errs());
             };
+
+            let is_const = modifier == DeclType::Const;
 
             if last_ctx.is_class_scope || last_ctx.is_global_scope {
                 // global scope.
@@ -375,6 +396,7 @@ fn declare_var<'src>(
                     ident: ident.clone().0,
                     py_ident: ident.escape(),
                     loc: ident.1,
+                    const_: is_const,
                     typ: if last_ctx.is_global_scope {
                         PyDeclType::Global
                     } else {
@@ -407,6 +429,7 @@ fn declare_var<'src>(
                 ident: ident.0.clone(),
                 py_ident,
                 loc: ident.1,
+                const_: is_const,
                 typ: PyDeclType::Local,
             };
 
@@ -1384,7 +1407,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                             values.push(pre.bind(value.transform(ctx)?));
                         }
                         PatternClassItem::Kw(key, value) => {
-                            kvps.push((key.transform(ctx), pre.bind(value.transform(ctx)?)));
+                            kvps.push((key.escape(), pre.bind(value.transform(ctx)?)));
                         }
                     }
                 }
@@ -1674,6 +1697,7 @@ fn make_arglist_CAUTION<'src, 'ast>(
         Declaration {
             ident: capture.clone(),
             py_ident: capture.escape(),
+            const_: false,
             loc,
             typ: PyDeclType::Local,
         }
@@ -1831,6 +1855,13 @@ fn prepare_py_fn<'src, 'ast>(
 
             if fn_ctx.is_do {
                 decorators.push(a.tl_builtin("do"));
+            }
+
+            if !fn_ctx.nonlocals.is_empty() {
+                py_body.push(a.nonlocal(fn_ctx.nonlocals.iter().map(|x| x.clone()).collect()));
+            }
+            if !fn_ctx.globals.is_empty() {
+                py_body.push(a.global(fn_ctx.globals.iter().map(|x| x.clone()).collect()));
             }
 
             py_body.extend(body.pre);

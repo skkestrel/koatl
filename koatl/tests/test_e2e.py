@@ -21,25 +21,25 @@ def get_test_data(dirs):
 
 @pytest.mark.parametrize("test_file", get_test_data("base"))
 def test_e2e_native_emit_base(test_file):
-    test_e2e_native_emit(test_file, "no_prelude")
+    e2e_native_emit(test_file, "no_prelude")
 
 
 @pytest.mark.parametrize("test_file", get_test_data("prelude"))
 def test_e2e_native_emit_prelude(test_file):
-    test_e2e_native_emit(test_file, "script")
+    e2e_native_emit(test_file, "script")
 
 
 @pytest.mark.parametrize("test_file", get_test_data("base"))
 def test_e2e_base(test_file):
-    test_e2e(test_file, "no_prelude")
+    e2e(test_file, "no_prelude")
 
 
 @pytest.mark.parametrize("test_file", get_test_data("prelude"))
 def test_e2e_prelude(test_file):
-    test_e2e(test_file, "script")
+    e2e(test_file, "script")
 
 
-def test_e2e_native_emit(test_file, mode):
+def e2e_native_emit(test_file, mode):
     import linecache
 
     with open(test_file, "r") as f:
@@ -64,5 +64,5 @@ def test_e2e_native_emit(test_file, mode):
     print("end", test_file)
 
 
-def test_e2e(test_file, mode):
+def e2e(test_file, mode):
     koatl.cli.run_from_path(test_file, mode=mode)

@@ -75,6 +75,7 @@ pub enum DeclType {
     Export,
     Global,
     Let,
+    Const,
 }
 
 // TODO should these be cows
