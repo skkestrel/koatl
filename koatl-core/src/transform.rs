@@ -245,40 +245,6 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
     }
 }
 
-struct StackDropper<'a, T> {
-    stack: &'a mut Vec<T>,
-    popped: bool,
-}
-
-impl<'a, T> StackDropper<'a, T> {
-    fn new(stack: &'a mut Vec<T>) -> Self {
-        Self {
-            stack,
-            popped: false,
-        }
-    }
-
-    #[allow(dead_code)]
-    fn pop(&mut self) -> Option<T> {
-        if self.popped {
-            panic!("Stack already popped");
-        } else {
-            self.stack.pop()
-        }
-    }
-}
-
-impl<'a, T> Drop for StackDropper<'a, T> {
-    fn drop(&mut self) {
-        if !self.popped {
-            if let Some(_) = self.stack.pop() {
-            } else {
-                panic!("Stack underflow");
-            }
-        }
-    }
-}
-
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 enum PyDeclType {
@@ -1086,24 +1052,22 @@ fn transform_if_expr<'src, 'ast>(
     let store_ret_var = a.ident(ret_varname.clone(), PyAccessCtx::Store);
     let load_ret_var = a.ident(ret_varname.clone(), PyAccessCtx::Load);
 
-    let py_then = {
-        ctx.scope_ctx_stack.push(ScopeCtx::new());
-        let _ = StackDropper::new(&mut ctx.scope_ctx_stack);
-
+    let py_then = scoped(ctx, ScopeCtx::new(), |ctx| {
         let mut py_then = PyBlock::new();
         let py_then_expr = py_then.bind(then_block.transform(ctx)?);
         py_then.push(a.assign(store_ret_var.clone(), py_then_expr));
-        py_then
-    };
+        Ok(py_then)
+    })?
+    .0;
 
     let py_else = if let Some(else_block) = else_block {
-        ctx.scope_ctx_stack.push(ScopeCtx::new());
-        let _ = StackDropper::new(&mut ctx.scope_ctx_stack);
-
-        let mut py_else = PyBlock::new();
-        let py_else_expr = py_else.bind(else_block.transform(ctx)?);
-        py_else.push(a.assign(store_ret_var.clone(), py_else_expr));
-        py_else
+        scoped(ctx, ScopeCtx::new(), |ctx| {
+            let mut py_else = PyBlock::new();
+            let py_else_expr = py_else.bind(else_block.transform(ctx)?);
+            py_else.push(a.assign(store_ret_var.clone(), py_else_expr));
+            Ok(py_else)
+        })?
+        .0
     } else {
         PyBlock(vec![
             a.assign(store_ret_var.clone(), a.literal(PyLiteral::None)),
@@ -1564,35 +1528,36 @@ fn transform_match_expr<'src, 'ast>(
             }
         }
 
-        ctx.scope_ctx_stack.push(ScopeCtx::new());
-        let _ = StackDropper::new(&mut ctx.scope_ctx_stack);
+        scoped(ctx, ScopeCtx::new(), |ctx| {
+            for capture in &meta.captures {
+                declare_var(ctx, &(capture.clone(), case.body.1), DeclType::Let)?;
+            }
 
-        for capture in &meta.captures {
-            declare_var(ctx, &(capture.clone(), case.body.1), DeclType::Let)?;
-        }
+            let pattern = if let Some(pattern) = &case.pattern {
+                pre.bind(pattern.transform(ctx)?)
+            } else {
+                (PyPattern::As(None, None), *span).into()
+            };
 
-        let pattern = if let Some(pattern) = &case.pattern {
-            pre.bind(pattern.transform(ctx)?)
-        } else {
-            (PyPattern::As(None, None), *span).into()
-        };
+            let guard = if let Some(guard) = &case.guard {
+                Some(pre.bind(guard.transform(ctx)?))
+            } else {
+                None
+            };
 
-        let guard = if let Some(guard) = &case.guard {
-            Some(pre.bind(guard.transform(ctx)?))
-        } else {
-            None
-        };
+            let py_block = case.body.transform(ctx)?;
+            let mut block_stmts = py_block.pre;
 
-        let py_block = case.body.transform(ctx)?;
-        let mut block_stmts = py_block.pre;
+            block_stmts.push(a.assign(store_ret_var.clone(), py_block.value));
 
-        block_stmts.push(a.assign(store_ret_var.clone(), py_block.value));
+            py_cases.push(PyMatchCase {
+                pattern,
+                guard,
+                body: block_stmts,
+            });
 
-        py_cases.push(PyMatchCase {
-            pattern,
-            guard,
-            body: block_stmts,
-        });
+            Ok(())
+        })?;
     }
 
     if !has_default_case && fill_default_case {
@@ -1655,14 +1620,16 @@ fn make_class_def<'src, 'ast>(
     let mut scope = ScopeCtx::new();
     scope.is_class_scope = true;
 
-    ctx.scope_ctx_stack.push(scope);
-    let _ = StackDropper::new(&mut ctx.scope_ctx_stack);
+    let py_body = scoped(ctx, scope, |ctx| {
+        let mut py_body = body.transform(ctx)?.drop_expr(ctx);
 
-    let mut py_body = body.transform(ctx)?.drop_expr(ctx);
+        if py_body.is_empty() {
+            py_body.push((PyStmt::Pass, *span).into());
+        }
 
-    if py_body.is_empty() {
-        py_body.push((PyStmt::Pass, *span).into());
-    }
+        Ok(py_body)
+    })?
+    .0;
 
     stmts.push(
         (
@@ -1838,35 +1805,37 @@ fn prepare_py_fn<'src, 'ast>(
                 post,
                 items: args_,
             } = make_arglist_CAUTION(ctx, arglist)?;
-            let _ = StackDropper::new(&mut ctx.scope_ctx_stack);
 
             args = args_;
 
             pre.extend(arg_pre);
             py_body.extend(post);
 
-            ctx.fn_ctx_stack.push(FnCtx::new());
+            let result = fn_scoped(ctx, FnCtx::new(), |ctx| {
+                let body = body.transform(ctx)?;
 
-            let body = match body.transform(ctx) {
-                Ok(body) => body,
+                Ok(body)
+            });
+
+            match result {
+                Ok((body, fn_ctx)) => {
+                    if fn_ctx.is_async {
+                        async_ = true;
+                    }
+
+                    if fn_ctx.is_do {
+                        decorators.push(a.tl_builtin("do"));
+                    }
+
+                    py_body.extend(body.pre);
+                    py_body.push(a.return_(body.value));
+                }
                 Err(e) => {
-                    ctx.fn_ctx_stack.pop();
+                    // pushed by make_arglist
+                    ctx.scope_ctx_stack.pop();
                     return Err(e);
                 }
-            };
-
-            let fn_ctx = ctx.fn_ctx_stack.last().unwrap();
-
-            if fn_ctx.is_async {
-                async_ = true;
             }
-
-            if fn_ctx.is_do {
-                decorators.push(a.tl_builtin("do"));
-            }
-
-            py_body.extend(body.pre);
-            py_body.push(a.return_(body.value));
         }
     }
 
@@ -1969,6 +1938,34 @@ fn make_fn_def<'src, 'ast>(
     );
 
     Ok(pre)
+}
+
+fn fn_scoped<'src, F, O>(
+    ctx: &mut TfCtx<'src>,
+    scope: FnCtx<'src>,
+    f: F,
+) -> TfResult<(O, FnCtx<'src>)>
+where
+    F: FnOnce(&mut TfCtx<'src>) -> TfResult<O>,
+{
+    ctx.fn_ctx_stack.push(scope);
+    let result = f(ctx);
+    let scope_ctx = ctx.fn_ctx_stack.pop().unwrap();
+    result.map(|value| (value, scope_ctx))
+}
+
+fn scoped<'src, F, O>(
+    ctx: &mut TfCtx<'src>,
+    scope: ScopeCtx<'src>,
+    f: F,
+) -> TfResult<(O, ScopeCtx<'src>)>
+where
+    F: FnOnce(&mut TfCtx<'src>) -> TfResult<O>,
+{
+    ctx.scope_ctx_stack.push(scope);
+    let result = f(ctx);
+    let scope_ctx = ctx.scope_ctx_stack.pop().unwrap();
+    result.map(|value| (value, scope_ctx))
 }
 
 fn placeholder_guard<'src, F>(
@@ -2414,48 +2411,37 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                 let mut py_body = PyBlock::new();
 
-                ctx.scope_ctx_stack.push(ScopeCtx::new());
-                let _ = StackDropper::new(&mut ctx.scope_ctx_stack);
+                scoped(ctx, ScopeCtx::new(), |ctx| {
+                    let meta = target.preprocess()?;
 
-                let meta = target.preprocess()?;
+                    let (matcher, cursor) = create_throwing_matcher(ctx, target, &meta)?;
+                    py_body.extend(matcher);
+                    py_body.extend(body.transform(ctx)?.drop_expr(ctx));
 
-                let (matcher, cursor) = create_throwing_matcher(ctx, target, &meta)?;
-                py_body.extend(matcher);
-                py_body.extend(body.transform(ctx)?.drop_expr(ctx));
+                    pre.push(a.for_(
+                        a.ident(cursor.clone(), PyAccessCtx::Store),
+                        a.call(
+                            a.tl_builtin("vget"),
+                            vec![
+                                a.call_arg(iter),
+                                a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
+                            ],
+                        ),
+                        py_body,
+                    ));
 
-                pre.push(a.for_(
-                    a.ident(cursor.clone(), PyAccessCtx::Store),
-                    a.call(
-                        a.tl_builtin("vget"),
-                        vec![
-                            a.call_arg(iter),
-                            a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
-                        ],
-                    ),
-                    py_body,
-                ));
+                    Ok(())
+                })?;
             }
             Stmt::While(cond, body) => {
-                ctx.fn_ctx_stack.push(FnCtx::new());
-                let cond_node = match cond.transform_with_placeholder_guard(ctx) {
-                    Ok(cond) => cond,
-                    Err(e) => {
-                        ctx.fn_ctx_stack.pop();
-                        return Err(e);
-                    }
-                };
-                let fn_ctx = ctx.fn_ctx_stack.pop().unwrap();
+                let (cond_node, fn_ctx) = fn_scoped(ctx, FnCtx::new(), |ctx| {
+                    cond.transform_with_placeholder_guard(ctx)
+                })?;
 
-                ctx.scope_ctx_stack.push(ScopeCtx::new());
-                let body_block = match body.transform(ctx) {
-                    Ok(body) => body,
-                    Err(e) => {
-                        ctx.scope_ctx_stack.pop();
-                        return Err(e);
-                    }
-                }
-                .drop_expr(ctx);
-                ctx.scope_ctx_stack.pop();
+                let body_block = scoped(ctx, ScopeCtx::new(), |ctx| {
+                    Ok(body.transform(ctx)?.drop_expr(ctx))
+                })?
+                .0;
 
                 let cond: SPyExpr<'src> = if cond_node.pre.is_empty() {
                     cond_node.value
@@ -2487,33 +2473,18 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 pre.push((PyStmt::While(cond, body_block), *span).into());
             }
             Stmt::Try(body, excepts, finally) => {
-                ctx.scope_ctx_stack.push(ScopeCtx::new());
-
-                let body_block = match body.transform(ctx) {
-                    Ok(body) => body,
-                    Err(e) => {
-                        ctx.scope_ctx_stack.pop();
-                        return Err(e);
-                    }
-                }
-                .drop_expr(ctx);
-
-                ctx.scope_ctx_stack.pop();
+                let body_block = scoped(ctx, ScopeCtx::new(), |ctx| {
+                    Ok(body.transform(ctx)?.drop_expr(ctx))
+                })?
+                .0;
 
                 let finally_block = if let Some(finally) = finally {
-                    ctx.scope_ctx_stack.push(ScopeCtx::new());
-
-                    let finally_block = match finally.transform(ctx) {
-                        Ok(body) => body,
-                        Err(e) => {
-                            ctx.scope_ctx_stack.pop();
-                            return Err(e);
-                        }
-                    }
-                    .drop_expr(ctx);
-
-                    ctx.scope_ctx_stack.pop();
-                    Some(finally_block)
+                    Some(
+                        scoped(ctx, ScopeCtx::new(), |ctx| {
+                            Ok(finally.transform(ctx)?.drop_expr(ctx))
+                        })?
+                        .0,
+                    )
                 } else {
                     None
                 };
@@ -2770,21 +2741,21 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             Expr::Class(bases, body) => {
                 let name: Cow<_> = ctx.create_aux_var("clsexp", span.start).into();
 
-                ctx.scope_ctx_stack.push(ScopeCtx::new());
-                ctx.scope_ctx_stack.last_mut().unwrap().is_class_scope = true;
+                let mut scope = ScopeCtx::new();
+                scope.is_class_scope = true;
 
-                pre.extend(
-                    match make_class_def(ctx, name.clone(), bases, body, PyDecorators::new(), span)
-                    {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            ctx.scope_ctx_stack.pop();
-                            return Err(e);
-                        }
-                    },
-                );
+                scoped(ctx, scope, |ctx| {
+                    pre.extend(make_class_def(
+                        ctx,
+                        name.clone(),
+                        bases,
+                        body,
+                        PyDecorators::new(),
+                        span,
+                    )?);
 
-                ctx.scope_ctx_stack.pop();
+                    Ok(())
+                })?;
 
                 a.load_ident(name)
             }
@@ -3029,18 +3000,10 @@ pub fn transform_ast<'src, 'ast>(
     ctx.allow_top_level_await = allow_await;
 
     let mut py_block = PyBlock::new();
-    ctx.scope_ctx_stack.push(ScopeCtx::new());
-    ctx.scope_ctx_stack.last_mut().unwrap().is_global_scope = true;
+    let mut scope = ScopeCtx::new();
+    scope.is_global_scope = true;
 
-    let block = py_block.bind(match block.transform(&mut ctx) {
-        Ok(block) => block,
-        Err(e) => {
-            ctx.scope_ctx_stack.pop();
-            return Err(e);
-        }
-    });
-
-    ctx.scope_ctx_stack.pop();
+    let block = py_block.bind(scoped(&mut ctx, scope, |ctx| block.transform(ctx))?.0);
 
     if !ctx.scope_ctx_stack.is_empty() {
         return Err(TfErrBuilder::default()
