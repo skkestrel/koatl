@@ -41,7 +41,7 @@ pub enum UnaryOp {
     Bind,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Ident<'a>(pub Cow<'a, str>);
 
 impl<'a> From<Cow<'a, str>> for Ident<'a> {
@@ -71,17 +71,18 @@ pub struct ImportStmt<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum AssignModifier {
+pub enum DeclType {
     Export,
     Global,
-    Nonlocal,
+    Let,
 }
 
 // TODO should these be cows
 #[derive(Debug, Clone)]
 pub enum Stmt<'a> {
     Module,
-    Assign(SExpr<'a>, SExpr<'a>, Vec<AssignModifier>),
+    Decl(Vec<SIdent<'a>>, DeclType),
+    Assign(SExpr<'a>, SExpr<'a>, Option<DeclType>),
     Expr(SExpr<'a>),
 
     Return(SExpr<'a>),

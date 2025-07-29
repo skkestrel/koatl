@@ -563,7 +563,8 @@ where
         },
     )
     .labelled("nary-tuple")
-    .boxed();
+    .boxed()
+    .memoized();
 
     let mapping = enumeration(
         choice((
@@ -1178,41 +1179,45 @@ where
         false,
     );
 
-    expr.define(binary6.labelled("expression").as_context().boxed());
+    expr.define(
+        binary6
+            .labelled("expression")
+            .as_context()
+            .boxed()
+            .memoized(),
+    );
 
     // Statements
 
+    let decl_mod = choice((
+        just(Token::Kw("export")).to(DeclType::Export),
+        just(Token::Kw("global")).to(DeclType::Global),
+        just(Token::Kw("let")).to(DeclType::Let),
+    ));
+
+    let decl_stmt = decl_mod
+        .clone()
+        .then(ident.clone().separated_by(symbol(",")).collect())
+        .map(|(decl, idents)| Stmt::Decl(idents, decl))
+        .boxed();
+
     let assign_stmt = group((
-        choice((
-            just(Token::Kw("export")).to(AssignModifier::Export),
-            just(Token::Kw("global")).to(AssignModifier::Global),
-            just(Token::Kw("nonlocal")).to(AssignModifier::Nonlocal),
-        ))
-        .repeated()
-        .collect()
-        .boxed(),
+        decl_mod.clone().or_not(),
         nary_tuple.clone(),
         symbol("=").ignore_then(nary_tuple.clone()),
     ))
-    .map(|(modifiers, lhs, rhs)| Stmt::Assign(lhs, rhs, modifiers))
+    .map(|(decl, lhs, rhs)| Stmt::Assign(lhs, rhs, decl))
     .boxed();
 
-    let expr_stmt = nary_tuple.clone().map(Stmt::Expr).boxed();
-
     let inline_assign_stmt = group((
-        choice((
-            just(Token::Kw("export")).to(AssignModifier::Export),
-            just(Token::Kw("global")).to(AssignModifier::Global),
-            just(Token::Kw("nonlocal")).to(AssignModifier::Nonlocal),
-        ))
-        .repeated()
-        .collect()
-        .boxed(),
+        decl_mod.clone().or_not(),
         expr.clone(),
         symbol("=").ignore_then(expr.clone()),
     ))
-    .map(|(modifiers, lhs, rhs)| Stmt::Assign(lhs, rhs, modifiers))
+    .map(|(decl, lhs, rhs)| Stmt::Assign(lhs, rhs, decl))
     .boxed();
+
+    let expr_stmt = nary_tuple.clone().map(Stmt::Expr).boxed();
 
     let inline_expr_stmt = expr.clone().map(Stmt::Expr).boxed();
 
@@ -1352,6 +1357,7 @@ where
 
     stmt.define(
         choice((
+            decl_stmt.then_ignore(just(Token::Eol)),
             assign_stmt.then_ignore(just(Token::Eol)),
             expr_stmt.then_ignore(just(Token::Eol)),
             module_stmt.then_ignore(just(Token::Eol)),

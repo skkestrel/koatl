@@ -1,4 +1,8 @@
-use std::{borrow::Cow, collections::HashSet};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    f32::consts::E,
+};
 
 use crate::{
     linecol::LineColCache,
@@ -70,6 +74,328 @@ static PY_KWS_SET: Lazy<HashSet<String>> = Lazy::new(|| {
         .collect::<HashSet<_>>()
 });
 
+struct PlaceholderCtx {
+    activated: bool,
+    span: Span,
+}
+
+impl PlaceholderCtx {
+    fn new(span: Span) -> Self {
+        Self {
+            activated: false,
+            span,
+        }
+    }
+
+    fn var_name<'src>(&self, ctx: &TfCtx<'src>) -> Cow<'src, str> {
+        ctx.create_aux_var("ph", self.span.start).into()
+    }
+}
+
+struct FnCtx<'src> {
+    is_async: bool,
+    is_do: bool,
+
+    globals: HashSet<PyIdent<'src>>,
+    nonlocals: HashSet<PyIdent<'src>>,
+}
+
+impl FnCtx<'_> {
+    fn new() -> Self {
+        Self {
+            is_async: false,
+            is_do: false,
+            globals: HashSet::new(),
+            nonlocals: HashSet::new(),
+        }
+    }
+}
+
+struct CaptureSearchResult<'slf, 'src> {
+    scope: &'slf FnCtx<'src>,
+    py_local: bool,
+}
+
+trait FnCtxStackExt {
+    fn set_async(&mut self, allow_top_level_await: bool, span: &Span) -> TfResult<()>;
+    fn set_do(&mut self, span: &Span) -> TfResult<()>;
+}
+
+impl<'src> FnCtxStackExt for Vec<FnCtx<'src>> {
+    fn set_async(&mut self, allow_top_level_await: bool, span: &Span) -> TfResult<()> {
+        if let Some(fn_ctx) = self.last_mut() {
+            fn_ctx.is_async = true;
+        } else if !allow_top_level_await {
+            return Err(TfErrBuilder::default()
+                .message("Await is only allowed in a function context")
+                .span(*span)
+                .build_errs());
+        }
+
+        Ok(())
+    }
+
+    fn set_do(&mut self, span: &Span) -> TfResult<()> {
+        if let Some(fn_ctx) = self.last_mut() {
+            fn_ctx.is_do = true;
+        } else {
+            return Err(TfErrBuilder::default()
+                .message("Bind operator is only allowed in a function context")
+                .span(*span)
+                .build_errs());
+        }
+
+        Ok(())
+    }
+}
+
+trait IdentExt<'src> {
+    fn escape(&self) -> PyIdent<'src>;
+}
+
+impl<'src> IdentExt<'src> for Ident<'src> {
+    fn escape(&self) -> PyIdent<'src> {
+        if PY_KWS_SET.contains(self.0.as_ref()) {
+            format!("{}_", self.0).into()
+        } else {
+            self.0.clone()
+        }
+    }
+}
+
+trait SIdentExt<'src> {
+    fn escape(&self) -> PyIdent<'src>;
+
+    fn transform(&self, ctx: &TfCtx<'src>) -> PyIdent<'src>;
+
+    // For when it appears on the lhs. Need to explicitly capture sometimes.
+    fn transform_binding(&self, ctx: &mut TfCtx<'src>) -> TfResult<PyIdent<'src>>;
+}
+
+impl<'src> SIdentExt<'src> for SIdent<'src> {
+    fn escape(&self) -> PyIdent<'src> {
+        self.0.escape()
+    }
+
+    fn transform(&self, ctx: &TfCtx<'src>) -> PyIdent<'src> {
+        if let Some(found) = ctx.scope_ctx_stack.find_decl(self) {
+            return found.decl.py_ident.clone();
+        }
+        return self.escape();
+    }
+
+    fn transform_binding(&self, ctx: &mut TfCtx<'src>) -> TfResult<PyIdent<'src>> {
+        if let Some(found) = ctx.scope_ctx_stack.find_decl(self) {
+            if found.py_local {
+                return Ok(found.decl.py_ident.clone());
+            } else {
+                // it was in a different python scope.
+                // need to either declare it as global or nonlocal
+
+                match found.decl.typ {
+                    PyDeclType::GlobalCapture | PyDeclType::Global => {
+                        ctx.fn_ctx_stack
+                            .last_mut()
+                            .unwrap()
+                            .globals
+                            .insert(self.escape());
+                    }
+                    PyDeclType::NonlocalCapture | PyDeclType::Local => {
+                        ctx.fn_ctx_stack
+                            .last_mut()
+                            .unwrap()
+                            .nonlocals
+                            .insert(self.escape());
+                    }
+                }
+
+                return Ok(found.decl.py_ident.clone());
+            }
+        }
+
+        Err(TfErrBuilder::default()
+            .message("Undeclared identifier; either declare with 'let' or mark as 'global'.")
+            .span(self.1)
+            .build_errs())
+    }
+}
+
+enum PyDeclType {
+    Local,
+    Global,
+    GlobalCapture,
+    NonlocalCapture,
+}
+
+struct Declaration<'src> {
+    ident: Ident<'src>,
+    py_ident: PyIdent<'src>,
+    loc: Span,
+    typ: PyDeclType,
+}
+
+struct ScopeCtx<'src> {
+    locals: HashMap<Ident<'src>, Declaration<'src>>,
+    is_class_scope: bool,
+    is_global_scope: bool,
+    is_py_fn_scope: bool,
+}
+
+impl<'src> ScopeCtx<'src> {
+    fn new() -> Self {
+        Self {
+            locals: HashMap::new(),
+            is_py_fn_scope: false,
+            is_class_scope: false,
+            is_global_scope: false,
+        }
+    }
+}
+
+struct ScopeSearchResult<'slf, 'src> {
+    scope: &'slf ScopeCtx<'src>,
+    decl: &'slf Declaration<'src>,
+
+    local: bool,
+    py_local: bool,
+}
+
+trait ScopeCtxStackExt<'src> {
+    fn find_decl<'slf>(&'slf self, ident: &SIdent<'src>) -> Option<ScopeSearchResult<'slf, 'src>>;
+}
+
+impl<'src> ScopeCtxStackExt<'src> for Vec<ScopeCtx<'src>> {
+    fn find_decl<'slf>(&'slf self, ident: &SIdent<'src>) -> Option<ScopeSearchResult<'slf, 'src>> {
+        let mut crossed_tl_scope = false;
+        let mut crossed_py_scope = false;
+
+        for scope in self.iter().rev() {
+            if let Some(decl) = scope.locals.get(&ident.0) {
+                return Some(ScopeSearchResult {
+                    scope,
+                    decl,
+                    local: !crossed_tl_scope,
+                    py_local: !crossed_py_scope,
+                });
+            }
+
+            if scope.is_py_fn_scope {
+                crossed_py_scope = true;
+            }
+
+            crossed_tl_scope = true;
+        }
+
+        None
+    }
+}
+
+fn declare_var<'src>(
+    ctx: &mut TfCtx<'src>,
+    ident: &SIdent<'src>,
+    modifier: DeclType,
+) -> TfResult<PyBlock<'src>> {
+    let mut pre = PyBlock::new();
+    let a = PyAstBuilder::new(ident.1);
+
+    match modifier {
+        DeclType::Global => {
+            if ctx.scope_ctx_stack.len() == 1 {
+                return Err(TfErrBuilder::default()
+                    .message("Global declaration is not allowed at the module level")
+                    .span(ident.1)
+                    .build_errs());
+            }
+
+            if !ctx.fn_ctx_stack.is_empty() {
+                let fn_scope = ctx.fn_ctx_stack.last_mut().unwrap();
+                fn_scope.globals.insert(ident.escape());
+                pre.push(a.global(vec![ident.escape()]).into());
+            }
+
+            let scope = ctx.scope_ctx_stack.last_mut().unwrap();
+            scope.locals.insert(
+                ident.0.clone(),
+                Declaration {
+                    ident: ident.0.clone(),
+                    py_ident: ident.escape(),
+                    loc: ident.1,
+                    typ: PyDeclType::GlobalCapture,
+                },
+            );
+        }
+        DeclType::Export => {
+            if ctx.scope_ctx_stack.len() > 1 {
+                return Err(TfErrBuilder::default()
+                    .message("Export declaration is only allowed at the module level")
+                    .span(ident.1)
+                    .build_errs());
+            }
+
+            ctx.exports.push(ident.escape());
+        }
+        DeclType::Let => 'block: {
+            let Some(last_ctx) = ctx.scope_ctx_stack.last_mut() else {
+                return Err(TfErrBuilder::default()
+                    .message("Internal error: expected a scope")
+                    .span(ident.1)
+                    .build_errs());
+            };
+
+            if last_ctx.is_class_scope || last_ctx.is_global_scope {
+                // global scope.
+                // add a declaration so that inner scopes know how to capture it
+
+                let decl = Declaration {
+                    ident: ident.clone().0,
+                    py_ident: ident.escape(),
+                    loc: ident.1,
+                    typ: if last_ctx.is_global_scope {
+                        PyDeclType::Global
+                    } else {
+                        PyDeclType::Local
+                    },
+                };
+
+                last_ctx.locals.insert(ident.0.clone(), decl);
+
+                break 'block;
+            }
+
+            let scope_id = ctx.scope_ctx_stack.len();
+
+            let scope_stack = &mut ctx.scope_ctx_stack;
+
+            if let Some(found) = scope_stack.find_decl(ident) {
+                if found.local {
+                    // variable is already declared in the current scope
+                    // no chance it can ever be captured;
+                    // don't need to do anything
+                    break 'block;
+                }
+            }
+
+            // otherwise, need to make sure variable is completely shadowed
+            let py_ident = format!("let_{}_{}", ident.0.0, scope_id).into();
+
+            let new_decl = Declaration {
+                ident: ident.0.clone(),
+                py_ident,
+                loc: ident.1,
+                typ: PyDeclType::Local,
+            };
+
+            let cur_scope = scope_stack.last_mut().unwrap();
+
+            cur_scope.locals.insert(ident.0.clone(), new_decl);
+
+            break 'block;
+        }
+    }
+
+    Ok(pre)
+}
+
 #[allow(dead_code)]
 struct TfCtx<'src> {
     source: &'src str,
@@ -77,8 +403,10 @@ struct TfCtx<'src> {
     module_star_exports: Vec<PyIdent<'src>>,
 
     allow_top_level_await: bool,
+
     placeholder_ctx_stack: Vec<PlaceholderCtx>,
-    fn_ctx_stack: Vec<FnCtx>,
+    fn_ctx_stack: Vec<FnCtx<'src>>,
+    scope_ctx_stack: Vec<ScopeCtx<'src>>,
 
     line_cache: LineColCache,
 }
@@ -91,8 +419,10 @@ impl<'src> TfCtx<'src> {
             line_cache: LineColCache::new(source),
             exports: Vec::new(),
             module_star_exports: Vec::new(),
+
             placeholder_ctx_stack: Vec::new(),
             fn_ctx_stack: Vec::new(),
+            scope_ctx_stack: Vec::new(),
         })
     }
 
@@ -126,20 +456,6 @@ enum PyBlockExpr<'src> {
 
 type SPyExprWithPre<'src> = WithPre<'src, SPyExpr<'src>>;
 type PyBlockExprWithPre<'src> = WithPre<'src, PyBlockExpr<'src>>;
-
-trait SIdentExt<'src> {
-    fn transform(&self) -> PyIdent<'src>;
-}
-
-impl<'src> SIdentExt<'src> for SIdent<'src> {
-    fn transform(&self) -> PyIdent<'src> {
-        if PY_KWS_SET.contains(self.0.0.as_ref()) {
-            format!("{}_", self.0.0).into()
-        } else {
-            self.0.0.clone()
-        }
-    }
-}
 
 trait SPyExprWithPreExt<'src> {
     fn drop_expr(self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlock<'src>>;
@@ -437,10 +753,10 @@ fn destructure_mapping<'src, 'ast>(
     for item in items.iter() {
         match item {
             MappingItem::Ident(ident) => stmts.push(a.assign(
-                a.ident(ident.transform(), PyAccessCtx::Store),
+                a.ident(ident.transform_binding(ctx)?, PyAccessCtx::Store),
                 a.call(
                     a.attribute(a.load_ident(dict_var.clone()), "pop", PyAccessCtx::Load),
-                    vec![a.call_arg(a.literal(PyLiteral::Str(ident.transform())))],
+                    vec![a.call_arg(a.literal(PyLiteral::Str(ident.transform_binding(ctx)?)))],
                 ),
             )),
             MappingItem::Item(key, expr) => {
@@ -509,7 +825,7 @@ fn destructure<'src, 'ast>(
         Expr::Ident(..) | Expr::RawAttribute(..) | Expr::Attribute(..) | Expr::Subscript(..) => {
             let target_node = match &target.0 {
                 Expr::Ident(id) => {
-                    decls.push(id.transform());
+                    decls.push(id.transform_binding(ctx)?);
                     target.transform_with_access(ctx, PyAccessCtx::Store)?
                 }
                 Expr::RawAttribute(..) | Expr::Subscript(..) => {
@@ -581,77 +897,16 @@ fn destructure<'src, 'ast>(
     })
 }
 
-fn get_scope_modifier<'src>(
-    mods: &'src Vec<AssignModifier>,
-    is_top_level: bool,
-    span: &Span,
-) -> TfResult<Option<&'src AssignModifier>> {
-    let scope_modifier = mods
-        .iter()
-        .filter(|m| {
-            matches!(
-                m,
-                AssignModifier::Export | AssignModifier::Global | AssignModifier::Nonlocal
-            )
-        })
-        .collect::<Vec<_>>();
-
-    if scope_modifier.len() > 1 {
-        return Err(TfErrBuilder::default()
-            .message("Only one scope modifier is allowed in an assignment")
-            .span(*span)
-            .build_errs());
-    }
-
-    let scope_modifier = scope_modifier.first().map(|x| *x);
-
-    if !is_top_level && scope_modifier.is_some_and(|x| *x == AssignModifier::Export) {
-        return Err(TfErrBuilder::default()
-            .message("Export modifier is only allowed at the top level")
-            .span(*span)
-            .build_errs());
-    }
-
-    Ok(scope_modifier)
-}
-
-fn transform_scope_modifier<'a>(
-    ctx: &mut TfCtx<'a>,
-    scope_modifier: Option<&AssignModifier>,
-    decls: Vec<PyIdent<'a>>,
-    span: &Span,
-) -> TfResult<PyBlock<'a>> {
-    let mut stmts = PyBlock::new();
-
-    if let Some(scope_modifier) = scope_modifier {
-        match scope_modifier {
-            AssignModifier::Export => ctx.exports.extend(decls),
-            AssignModifier::Global => {
-                // exports are implemented by lifting into global scope
-
-                stmts.push((PyStmt::Global(decls), *span).into());
-            }
-
-            AssignModifier::Nonlocal => {
-                stmts.push((PyStmt::Nonlocal(decls), *span).into());
-            }
-        }
-    }
-
-    Ok(stmts)
-}
-
 fn transform_assignment<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     lhs: &'ast SExpr<'src>,
     rhs: &'ast SExpr<'src>,
-    scope_modifier: Option<&AssignModifier>,
+    scope_modifier: Option<DeclType>,
     span: &Span,
 ) -> TfResult<(PyBlock<'src>, Vec<PyIdent<'src>>)> {
     let mut stmts = PyBlock::new();
-    if let Expr::Ident(ident) = &lhs.0 {
-        let py_ident = ident.transform();
 
+    if let Expr::Ident(ident) = &lhs.0 {
         let mut decorators: Vec<&SExpr> = vec![];
         let mut cur_node = &rhs.0;
 
@@ -701,6 +956,10 @@ fn transform_assignment<'src, 'ast>(
 
         if let Expr::Fn(arglist, body) = &cur_node {
             let decorators = py_decorators()?;
+
+            // transform LHS after RHS
+            let py_ident = ident.transform_binding(ctx)?;
+
             return Ok((
                 make_fn_def(
                     ctx,
@@ -714,6 +973,10 @@ fn transform_assignment<'src, 'ast>(
             ));
         } else if let Expr::Class(bases, body) = &cur_node {
             let decorators = py_decorators()?;
+
+            // transform LHS after RHS
+            let py_ident = ident.transform_binding(ctx)?;
+
             return Ok((
                 make_class_def(ctx, py_ident.clone(), &bases, &body, decorators, span)?,
                 vec![py_ident.clone()],
@@ -725,6 +988,8 @@ fn transform_assignment<'src, 'ast>(
     stmts.extend(value_node.pre);
 
     let decl_only = scope_modifier.is_some();
+
+    // remember to transform LHS after RHS
     let destructure = destructure(ctx, lhs, decl_only)?;
 
     stmts.push(
@@ -777,7 +1042,14 @@ fn transform_if_expr<'src, 'ast>(
     })
 }
 
+struct PatternInfo<'src> {
+    default: bool,
+    captures: Vec<Ident<'src>>,
+}
+
 trait SPatternExt<'src> {
+    fn preprocess(&self) -> TfResult<PatternInfo<'src>>;
+
     fn transform<'ast>(
         &'ast self,
         ctx: &mut TfCtx<'src>,
@@ -785,6 +1057,142 @@ trait SPatternExt<'src> {
 }
 
 impl<'src> SPatternExt<'src> for SPattern<'src> {
+    fn preprocess(&self) -> TfResult<PatternInfo<'src>> {
+        let default = match &self.0 {
+            Pattern::Capture(cap) => {
+                // Make sure that capture patterns do not start with an uppercase letter to
+                // prevent unexpectedly shadowing a type
+
+                if cap
+                    .as_ref()
+                    .is_some_and(|x| char::is_uppercase(x.0.0.chars().nth(0).unwrap_or('_')))
+                {
+                    return Err(TfErrBuilder::default()
+                                .message(
+                                    "Capture patterns must start with a lowercase letter; to match a type, add '()'",
+                                )
+                                .span(self.1)
+                                .build_errs());
+                }
+
+                let mut captures = vec![];
+                if let Some(cap) = cap {
+                    captures.push(cap.0.clone());
+                }
+
+                PatternInfo {
+                    default: true,
+                    captures,
+                }
+            }
+            Pattern::As(pattern, name) => {
+                let mut meta = pattern.preprocess()?;
+                meta.captures.push(name.0.clone());
+                meta
+            }
+            Pattern::Or(items) => {
+                let mut iter = items.iter();
+                let initial = iter.next().ok_or_else(|| {
+                    TfErrBuilder::default()
+                        .message("Or pattern must have at least one item")
+                        .span(self.1)
+                        .build_errs()
+                })?;
+
+                let mut initial = initial.preprocess()?;
+
+                for item in iter {
+                    if initial.default {
+                        return Err(TfErrBuilder::default()
+                            .message("Default pattern makes remaining patterns unreachable")
+                            .span(item.1)
+                            .build_errs())?;
+                    }
+
+                    let meta = item.preprocess()?;
+                    initial.default |= meta.default;
+
+                    if meta.captures != initial.captures {
+                        return Err(TfErrBuilder::default()
+                            .message("Or patterns must bind the same names")
+                            .span(item.1)
+                            .build_errs());
+                    }
+                }
+
+                initial
+            }
+            Pattern::Value(..) | Pattern::Literal(..) => PatternInfo {
+                default: false,
+                captures: vec![],
+            },
+            Pattern::Sequence(items) => {
+                let mut captures = vec![];
+                for item in items {
+                    match item {
+                        PatternSequenceItem::Item(inner) => {
+                            let meta = inner.preprocess()?;
+                            captures.extend(meta.captures);
+                        }
+                        PatternSequenceItem::Spread(Some(inner)) => {
+                            captures.push(inner.0.clone());
+                        }
+                        PatternSequenceItem::Spread(None) => {}
+                    }
+                }
+
+                PatternInfo {
+                    default: false,
+                    captures,
+                }
+            }
+            Pattern::Mapping(items) => {
+                let mut captures = vec![];
+                for item in items {
+                    match item {
+                        PatternMappingItem::Ident(id) => captures.push(id.0.clone()),
+                        PatternMappingItem::Item(_key, value) => {
+                            let meta = value.preprocess()?;
+                            captures.extend(meta.captures);
+                        }
+                        PatternMappingItem::Spread(Some(id)) => {
+                            captures.push(id.0.clone());
+                        }
+                        PatternMappingItem::Spread(None) => {}
+                    }
+                }
+
+                PatternInfo {
+                    default: false,
+                    captures,
+                }
+            }
+            Pattern::Class(_, items) => {
+                let mut captures = vec![];
+
+                for item in items {
+                    match item {
+                        PatternClassItem::Item(inner) => {
+                            let meta = inner.preprocess()?;
+                            captures.extend(meta.captures);
+                        }
+                        PatternClassItem::Kw(_, inner) => {
+                            let meta = inner.preprocess()?;
+                            captures.extend(meta.captures);
+                        }
+                    }
+                }
+
+                PatternInfo {
+                    default: false,
+                    captures,
+                }
+            }
+        };
+
+        Ok(default)
+    }
+
     fn transform<'ast>(
         &'ast self,
         ctx: &mut TfCtx<'src>,
@@ -795,20 +1203,24 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
         let mut pre = PyBlock::new();
 
         let (pattern, span) = self;
-        let capture_slot = |v: &Option<SIdent<'src>>| {
+
+        fn capture_slot<'src>(
+            ctx: &TfCtx<'src>,
+            v: &Option<SIdent<'src>>,
+        ) -> Option<PyIdent<'src>> {
             v.clone().and_then(|x| {
                 if x.0.0 == "_" {
                     None
                 } else {
-                    Some(x.transform())
+                    Some(x.transform(ctx))
                 }
             })
-        };
+        }
 
         let transformed = match pattern {
             Pattern::As(pattern, ident) => PyPattern::As(
                 Some(Box::new(pre.bind(pattern.transform(ctx)?))),
-                Some(ident.transform().clone()),
+                Some(ident.transform(ctx).clone()),
             ),
             Pattern::Literal(literal) => match literal.0 {
                 Literal::Num(..) | Literal::Str(..) => {
@@ -818,7 +1230,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                     PyPattern::Singleton(literal.0.transform(ctx)?)
                 }
             },
-            Pattern::Capture(v) => PyPattern::As(None, capture_slot(v)),
+            Pattern::Capture(v) => PyPattern::As(None, capture_slot(ctx, v)),
             Pattern::Value(v) => {
                 let v_node = pre.bind(v.transform(ctx)?);
 
@@ -845,27 +1257,28 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
             }
             Pattern::Sequence(items) => {
                 let mut seen_spread = false;
+                let mut items_nodes = vec![];
 
-                let items_nodes = items
-                        .iter()
-                        .map(|x| {
-                            Ok(match x {
-                                PatternSequenceItem::Item(item) => {
-                                    PyPatternSequenceItem::Item(pre.bind(item.transform(ctx)?))
-                                }
-                                PatternSequenceItem::Spread(item) => {
-                                    if seen_spread {
-                                        return Err(TfErrBuilder::default()
+                for item in items {
+                    let node = match item {
+                        PatternSequenceItem::Item(item) => {
+                            PyPatternSequenceItem::Item(pre.bind(item.transform(ctx)?))
+                        }
+                        PatternSequenceItem::Spread(item) => {
+                            if seen_spread {
+                                return Err(TfErrBuilder::default()
                                             .message("Destructuring assignment with multiple spreads is not allowed")
                                             .span(*span)
                                             .build_errs());
-                                    }
-                                    seen_spread = true;
-                                    PyPatternSequenceItem::Spread(capture_slot(item))
-                                }
-                            })
-                        })
-                        .collect::<TfResult<Vec<_>>>()?;
+                            }
+                            seen_spread = true;
+                            PyPatternSequenceItem::Spread(capture_slot(ctx, item))
+                        }
+                    };
+
+                    items_nodes.push(node);
+                }
+
                 PyPattern::Sequence(items_nodes)
             }
             Pattern::Mapping(items) => {
@@ -882,8 +1295,9 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                             }
 
                             kvps.push((
-                                (PyExpr::Literal(PyLiteral::Str(ident.transform())), *span).into(),
-                                (PyPattern::As(None, Some(ident.transform())), *span).into(),
+                                (PyExpr::Literal(PyLiteral::Str(ident.transform(ctx))), *span)
+                                    .into(),
+                                (PyPattern::As(None, Some(ident.transform(ctx))), *span).into(),
                             ));
                         }
                         PatternMappingItem::Item(key, value) => {
@@ -903,7 +1317,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                                         .build_errs());
                             }
 
-                            spread = capture_slot(value);
+                            spread = capture_slot(ctx, value);
                         }
                     }
                 }
@@ -926,7 +1340,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                             values.push(pre.bind(value.transform(ctx)?));
                         }
                         PatternClassItem::Kw(key, value) => {
-                            kvps.push((key.transform(), pre.bind(value.transform(ctx)?)));
+                            kvps.push((key.transform(ctx), pre.bind(value.transform(ctx)?)));
                         }
                     }
                 }
@@ -944,12 +1358,16 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
     }
 }
 
+/**
+ * Creates a matcher that throws an error if the pattern does not match.
+ */
 fn create_throwing_matcher<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     pattern: &'ast SPattern<'src>,
+    pattern_meta: &'ast PatternInfo<'src>,
 ) -> TfResult<(PyBlock<'src>, PyIdent<'src>)> {
     if let Pattern::Capture(Some(id)) = &pattern.0 {
-        return Ok((PyBlock::new(), id.transform()));
+        return Ok((PyBlock::new(), id.transform(ctx)));
     }
 
     let cursor = ctx.create_aux_var("matcher", pattern.1.start);
@@ -969,19 +1387,30 @@ fn create_throwing_matcher<'src, 'ast>(
     )))]);
 
     Ok((
-        create_matcher(ctx, a.load_ident(cursor.clone()), pattern, success, fail)?,
+        create_binary_matcher(
+            ctx,
+            a.load_ident(cursor.clone()),
+            pattern,
+            pattern_meta,
+            success,
+            fail,
+        )?,
         cursor.clone().into(),
     ))
 }
 
-fn create_matcher<'src, 'ast>(
+/**
+ * Creates a basic match expression that either matches or doesn't.
+ */
+fn create_binary_matcher<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     subject: SPyExpr<'src>,
     pattern: &'ast SPattern<'src>,
+    pattern_meta: &'ast PatternInfo<'src>,
     on_success: PyBlock<'src>,
     on_fail: PyBlock<'src>,
 ) -> TfResult<PyBlock<'src>> {
-    if is_default_pattern(pattern)? {
+    if pattern_meta.default {
         return Ok(on_success);
     }
 
@@ -1037,17 +1466,32 @@ fn transform_match_expr<'src, 'ast>(
     let mut has_default_case = false;
 
     for case in cases {
+        if has_default_case {
+            return Err(TfErrBuilder::default()
+                .message("Previous default case makes remaining cases unreachable")
+                .span(case.body.1)
+                .build_errs());
+        }
+
+        let meta = if let Some(pattern) = &case.pattern {
+            pattern.preprocess()?
+        } else {
+            PatternInfo {
+                default: true,
+                captures: vec![],
+            }
+        };
+
         if case.guard.is_none() {
-            if let Some(pattern) = &case.pattern {
-                if is_default_pattern(pattern)? {
-                    has_default_case = true;
-                }
-            } else {
+            if meta.default {
                 has_default_case = true;
             }
         }
 
-        // TODO verify binding same names
+        ctx.scope_ctx_stack.push(ScopeCtx::new());
+        for capture in &meta.captures {
+            declare_var(ctx, &(capture.clone(), case.body.1), DeclType::Let);
+        }
 
         let pattern = if let Some(pattern) = &case.pattern {
             pre.bind(pattern.transform(ctx)?)
@@ -1063,6 +1507,8 @@ fn transform_match_expr<'src, 'ast>(
 
         let py_block = case.body.transform(ctx)?;
         let mut block_stmts = py_block.pre;
+
+        ctx.scope_ctx_stack.pop();
 
         block_stmts.push(a.assign(store_ret_var.clone(), py_block.value));
 
@@ -1107,8 +1553,6 @@ fn make_class_def<'src, 'ast>(
     let mut stmts = PyBlock::new();
     let mut py_bases: Vec<PyCallItem<'src>> = vec![];
 
-    let mut py_body = body.transform(ctx)?.drop_expr(ctx)?;
-
     for base in bases {
         let call_item: PyCallItem<'src> = match &base.0 {
             CallItem::Arg(expr) => {
@@ -1119,7 +1563,7 @@ fn make_class_def<'src, 'ast>(
             CallItem::Kwarg(name, expr) => {
                 let expr_node = expr.transform_with_placeholder_guard(ctx)?;
                 stmts.extend(expr_node.pre);
-                PyCallItem::Kwarg(name.transform(), expr_node.value)
+                PyCallItem::Kwarg(name.transform(ctx), expr_node.value)
             }
             _ => {
                 return Err(TfErrBuilder::default()
@@ -1131,6 +1575,14 @@ fn make_class_def<'src, 'ast>(
 
         py_bases.push(call_item);
     }
+
+    let mut scope = ScopeCtx::new();
+    scope.is_class_scope = true;
+    ctx.scope_ctx_stack.push(scope);
+
+    let mut py_body = body.transform(ctx)?.drop_expr(ctx)?;
+
+    ctx.scope_ctx_stack.pop();
 
     if py_body.is_empty() {
         py_body.push((PyStmt::Pass, *span).into());
@@ -1163,33 +1615,88 @@ enum FnDefArgs<'src, 'ast> {
     PyArgList(Vec<PyArgDefItem<'src>>),
 }
 
+struct PyArgList<'src> {
+    pre: PyBlock<'src>,
+    post: PyBlock<'src>,
+    decls: Vec<Declaration<'src>>,
+    items: Vec<PyArgDefItem<'src>>,
+}
+
+/**
+ * Prepares the argument list for a function.
+ *
+ * Caution: this function pushes a new scope onto the stack.
+ */
 fn make_arglist<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     arglist: FnDefArgs<'src, 'ast>,
-) -> TfResult<(PyBlock<'src>, PyBlock<'src>, Vec<PyArgDefItem<'src>>)> {
+) -> TfResult<PyArgList<'src>> {
     let mut pre = PyBlock::new();
     let mut post = PyBlock::new();
+
+    let make_decl = |capture: Ident<'src>, loc| -> Declaration<'src> {
+        Declaration {
+            ident: capture.clone(),
+            py_ident: capture.escape(),
+            loc,
+            typ: PyDeclType::Local,
+        }
+    };
 
     let args = match arglist {
         FnDefArgs::ArgList(args) => {
             let mut args_vec = vec![];
-            for arg in args {
-                let arg = match arg {
-                    ArgDefItem::Arg(arg, default) => {
-                        let default = if let Some(default) = default {
-                            let t = default.transform_with_placeholder_guard(ctx)?;
-                            pre.extend(t.pre);
-                            Some(t.value)
-                        } else {
-                            None
-                        };
 
-                        let (matcher, cursor) = create_throwing_matcher(ctx, arg)?;
+            let mut defaults = vec![];
+
+            // need to process defaults first so that they resolve to the outer scope
+            for arg in args {
+                defaults.push(match arg {
+                    ArgDefItem::Arg(_, Some(default)) => {
+                        Some(pre.bind(default.transform_with_placeholder_guard(ctx)?))
+                    }
+                    _ => None,
+                })
+            }
+
+            let scope_ctx = ScopeCtx::new();
+            ctx.scope_ctx_stack.push(scope_ctx);
+
+            for (i, arg) in args.iter().enumerate() {
+                let arg = match arg {
+                    ArgDefItem::Arg(arg_pattern, _) => {
+                        // TODO avoid this clone
+                        let default = defaults[i].clone();
+
+                        let meta = arg_pattern.preprocess()?;
+                        for capture in &meta.captures {
+                            if decls.iter().any(|d| d.ident.0 == capture.0) {
+                                return Err(TfErrBuilder::default()
+                                    .message("Duplicate argument name in function definition")
+                                    .span(arg_pattern.1)
+                                    .build_errs());
+                            }
+
+                            decls.push(make_decl(capture.clone(), arg_pattern.1));
+                        }
+
+                        // TODO need to declare variables prior to matching
+                        let (matcher, cursor) = create_throwing_matcher(ctx, arg_pattern, &meta)?;
                         post.extend(matcher);
                         PyArgDefItem::Arg(cursor, default)
                     }
-                    ArgDefItem::ArgSpread(name) => PyArgDefItem::ArgSpread(name.transform()),
-                    ArgDefItem::KwargSpread(name) => PyArgDefItem::KwargSpread(name.transform()),
+                    ArgDefItem::ArgSpread(name) => {
+                        let decl = make_decl(name.0.clone(), name.1);
+                        let py_ident = decl.py_ident.clone();
+                        decls.push(decl);
+                        PyArgDefItem::ArgSpread(py_ident)
+                    }
+                    ArgDefItem::KwargSpread(name) => {
+                        let decl = make_decl(name.0.clone(), name.1);
+                        let py_ident = decl.py_ident.clone();
+                        decls.push(decl);
+                        PyArgDefItem::KwargSpread(py_ident)
+                    }
                 };
                 args_vec.push(arg);
             }
@@ -1198,7 +1705,12 @@ fn make_arglist<'src, 'ast>(
         FnDefArgs::PyArgList(args) => args,
     };
 
-    Ok((pre, post, args))
+    Ok(PyArgList {
+        pre,
+        post,
+        decls,
+        items: args,
+    })
 }
 
 struct PartialPyFnDef<'a> {
@@ -1364,74 +1876,6 @@ fn make_fn_def<'src, 'ast>(
     Ok(pre)
 }
 
-struct FnCtx {
-    is_async: bool,
-    is_do: bool,
-    is_also_placeholder_ctx: bool,
-}
-
-impl FnCtx {
-    fn new() -> Self {
-        Self {
-            is_async: false,
-            is_do: false,
-            is_also_placeholder_ctx: false,
-        }
-    }
-}
-
-struct PlaceholderCtx {
-    activated: bool,
-    span: Span,
-}
-
-impl PlaceholderCtx {
-    fn new(span: Span) -> Self {
-        Self {
-            activated: false,
-            span,
-        }
-    }
-
-    fn var_name<'src>(&self, ctx: &TfCtx<'src>) -> Cow<'src, str> {
-        ctx.create_aux_var("ph", self.span.start).into()
-    }
-}
-
-fn await_error<'src>(span: &Span) -> TfErrs {
-    TfErrBuilder::default()
-        .message("Await is not allowed except at the top level in interactive contexts; use the Async monad instead")
-        .span(*span)
-        .build_errs()
-}
-
-fn set_async_ctx<'src>(
-    stack: &mut Vec<FnCtx>,
-    allow_top_level_await: bool,
-    span: &Span,
-) -> TfResult<()> {
-    if let Some(fn_ctx) = stack.last_mut() {
-        fn_ctx.is_async = true;
-    } else if !allow_top_level_await {
-        return Err(await_error(span));
-    }
-
-    Ok(())
-}
-
-fn set_do_ctx<'src>(stack: &mut Vec<FnCtx>, span: &Span) -> TfResult<()> {
-    if let Some(fn_ctx) = stack.last_mut() {
-        fn_ctx.is_do = true;
-    } else {
-        return Err(TfErrBuilder::default()
-            .message("Bind operator is only allowed in a function context")
-            .span(*span)
-            .build_errs());
-    }
-
-    Ok(())
-}
-
 fn placeholder_guard<'src, F>(
     ctx: &mut TfCtx<'src>,
     span: &Span,
@@ -1440,8 +1884,7 @@ fn placeholder_guard<'src, F>(
 where
     F: FnOnce(&mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>>,
 {
-    let mut fn_ctx = FnCtx::new();
-    fn_ctx.is_also_placeholder_ctx = true;
+    let fn_ctx = FnCtx::new();
 
     ctx.placeholder_ctx_stack.push(PlaceholderCtx::new(*span));
     ctx.fn_ctx_stack.push(fn_ctx);
@@ -1479,12 +1922,13 @@ where
             // this potential placeholder ctx generated an async ctx,
             // but wasn't actually a placeholder,
             // so we forward it down to the next fn_ctx
-            set_async_ctx(&mut ctx.fn_ctx_stack, ctx.allow_top_level_await, span)?;
+            ctx.fn_ctx_stack
+                .set_async(ctx.allow_top_level_await, span)?;
         }
 
         if fn_ctx.is_do {
             // same as above
-            set_do_ctx(&mut ctx.fn_ctx_stack, span)?;
+            ctx.fn_ctx_stack.set_do(span)?;
         }
 
         Ok(inner_expr)
@@ -1724,43 +2168,6 @@ fn transform_postfix_expr<'src, 'ast>(
     Ok(SPyExprWithPre { value: node, pre })
 }
 
-fn is_default_pattern<'src>(pattern: &SPattern<'src>) -> TfResult<bool> {
-    Ok(match &pattern.0 {
-        Pattern::Capture(cap) => {
-            // Make sure that capture patterns do not start with an uppercase letter to
-            // prevent unexpectedly shadowing a type
-
-            if cap
-                .as_ref()
-                .is_some_and(|x| char::is_uppercase(x.0.0.chars().nth(0).unwrap_or('_')))
-            {
-                return Err(TfErrBuilder::default()
-                    .message(
-                        "Capture patterns must start with a lowercase letter; to match a type, add '()'",
-                    )
-                    .span(pattern.1)
-                    .build_errs()
-                );
-            }
-
-            true
-        }
-        Pattern::As(pattern, _) => is_default_pattern(pattern)?,
-        Pattern::Or(items) => {
-            let mut is_default = false;
-            for item in items {
-                if is_default_pattern(item)? {
-                    is_default = true;
-                    break;
-                }
-            }
-
-            is_default
-        }
-        _ => false,
-    })
-}
-
 fn matching_except_handler<'src>(
     ctx: &mut TfCtx<'src>,
     var_name: PyIdent<'src>,
@@ -1830,11 +2237,11 @@ impl<'src> ListItemsExt<'src> for Vec<ListItem<'src>> {
 }
 
 trait LiteralExt<'src> {
-    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyLiteral<'src>>;
+    fn transform<'ast>(&'ast self, ctx: &TfCtx<'src>) -> TfResult<PyLiteral<'src>>;
 }
 
 impl<'src> LiteralExt<'src> for Literal<'src> {
-    fn transform<'ast>(&'ast self, _ctx: &mut TfCtx<'src>) -> TfResult<PyLiteral<'src>> {
+    fn transform<'ast>(&'ast self, _ctx: &TfCtx<'src>) -> TfResult<PyLiteral<'src>> {
         let value = match self {
             Literal::Num(num) => PyLiteral::Num(num.to_owned()),
             Literal::Str(s) => PyLiteral::Str(s.to_owned()),
@@ -1878,13 +2285,19 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 let expr = pre.bind(expr.transform_with_placeholder_guard(ctx)?);
                 pre.push(a.return_(expr));
             }
-            Stmt::Assign(target, value, modifiers) => {
-                let scope_modifier = get_scope_modifier(modifiers, is_top_level, span)?;
-
+            Stmt::Decl(idents, modifier) => {
+                pre.extend(transform_scope_modifier(
+                    ctx,
+                    Some(*modifier),
+                    idents,
+                    span,
+                )?);
+            }
+            Stmt::Assign(target, value, modifier) => {
                 let (binding_stmts, decls): (PyBlock, Vec<PyIdent>) =
-                    transform_assignment(ctx, target, value, scope_modifier, span)?;
+                    transform_assignment(ctx, target, value, *modifier, span)?;
 
-                pre.extend(transform_scope_modifier(ctx, scope_modifier, decls, span)?);
+                pre.extend(transform_scope_modifier(ctx, *modifier, decls, span)?);
 
                 pre.extend(binding_stmts);
             }
@@ -2267,7 +2680,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 let a = PyAstBuilder::new(*span);
                 let var = ctx.create_aux_var("matches", span.start);
 
-                let matcher = create_matcher(
+                let matcher = create_binary_matcher(
                     ctx,
                     subject,
                     pattern,
@@ -2339,7 +2752,8 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 a.binary(py_op, lhs, rhs)
             }
             Expr::Await(expr) => {
-                set_async_ctx(&mut ctx.fn_ctx_stack, ctx.allow_top_level_await, span)?;
+                ctx.fn_ctx_stack
+                    .set_async(ctx.allow_top_level_await, span)?;
                 a.await_(pre.bind(expr.transform(ctx)?))
             }
             Expr::Yield(expr) => a.yield_(pre.bind(expr.transform(ctx)?)),
@@ -2359,8 +2773,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     UnaryOp::Inv => PyUnaryOp::Inv,
                     UnaryOp::Not => PyUnaryOp::Not,
                     UnaryOp::Bind => {
-                        set_do_ctx(&mut ctx.fn_ctx_stack, span)?;
-
+                        ctx.fn_ctx_stack.set_do(span)?;
                         break 'block a.yield_(expr);
                     }
                 };

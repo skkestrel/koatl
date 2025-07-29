@@ -22,16 +22,16 @@ impl AstBuilder {
     }
 
     pub fn assign<'src>(&self, target: SExpr<'src>, value: SExpr<'src>) -> SStmt<'src> {
-        (Stmt::Assign(target, value, vec![]), self.span)
+        (Stmt::Assign(target, value, None), self.span)
     }
 
     pub fn assign_modified<'src>(
         &self,
         target: SExpr<'src>,
         value: SExpr<'src>,
-        modifiers: Vec<AssignModifier>,
+        modifier: DeclType,
     ) -> SStmt<'src> {
-        (Stmt::Assign(target, value, modifiers), self.span)
+        (Stmt::Assign(target, value, Some(modifier)), self.span)
     }
 
     pub fn return_<'src>(&self, expr: SExpr<'src>) -> SStmt<'src> {
