@@ -230,7 +230,7 @@
 				},
 				{
 					"name": "storage.modifier.declaration.tl",
-					"match": "(?x)\n  \\b(?<!\\.)(\n    let | global | nonlocal\n  )\\b\n"
+					"match": "(?x)\n  \\b(?<!\\.)(\n    let | global | const \n  )\\b\n"
 				},
 				{
 					"name": "storage.type.class.tl",
