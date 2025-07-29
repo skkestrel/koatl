@@ -9,14 +9,13 @@ export Reader = class(Monad):
     run = (self, ctx) => self.fn(ctx)
 
     bind_once = (self, f) => Reader& ctx =>
-        v = f(self.fn(ctx))
+        let v = f(self.fn(ctx))
         if v matches Reader():
             v.fn(ctx)
         else:
             v
 
     bind_gen = (self, gen) => Reader& ctx =>
-        nonlocal self = self
         try:
             while True:
                 self = gen.send(self.fn(ctx))

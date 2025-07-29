@@ -12,14 +12,14 @@ export Async = class(Monad):
     __repr__ = self => "Async(...)"
 
     from_generator_fn = staticmethod& (generator_fn, *args, **kwargs) =>
-        m = object.__new__(Async)
+        let m = object.__new__(Async)
         m.generator = generator_fn(*args, **kwargs)
         return m
 
     run = self => asyncio.run(async_util.to_coro(self))
 
     bind_once = (self, f) => Async.from_generator_fn& () =>
-        result = f(yield from self.__await__())
+        let result = f(yield from self.__await__())
 
         if hasattr(result, "__await__"):
             return yield from result.__await__()
@@ -27,7 +27,6 @@ export Async = class(Monad):
         return result
 
     bind_gen = (self, gen) => Async.from_generator_fn& () =>
-        nonlocal self = self
         try:
             while True:
                 self = gen.send(yield from self.__await__())

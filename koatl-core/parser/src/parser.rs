@@ -563,8 +563,8 @@ where
         },
     )
     .labelled("nary-tuple")
-    .boxed()
-    .memoized();
+    .boxed();
+    // .memoized();
 
     let mapping = enumeration(
         choice((
@@ -1180,11 +1180,7 @@ where
     );
 
     expr.define(
-        binary6
-            .labelled("expression")
-            .as_context()
-            .boxed()
-            .memoized(),
+        binary6.labelled("expression").as_context().boxed(), // .memoized(),
     );
 
     // Statements
