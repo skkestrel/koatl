@@ -13,7 +13,7 @@ methods = {
             yield from f(i)
 
     fold: (x, init, f) =>
-        acc = init
+        let acc = init
         for i in x:
             acc = f(acc, i)
         acc
@@ -25,7 +25,7 @@ methods = {
         return None
 
     last: (x, f) =>
-        result = None
+        let result = None
         for i in x:
             if f(i):
                 result = i
@@ -38,7 +38,7 @@ methods = {
         raise IndexError("Index out of range")
 
     sum: x =>
-        acc = 0
+        let acc = 0
         for i in x:
             acc = acc + i
         acc
