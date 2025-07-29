@@ -63,7 +63,7 @@ impl TranspileOptions {
         }
     }
 
-    pub fn prelude() -> Self {
+    pub fn no_prelude() -> Self {
         let mut opt = TranspileOptions::module();
         opt.inject_prelude = false; // don't inject the prelude when loading prelude
         opt

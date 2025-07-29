@@ -14,7 +14,7 @@ use pyo3::{
 fn get_option(mode: &str) -> PyResult<TranspileOptions> {
     Ok(match mode {
         "module" => TranspileOptions::module(),
-        "prelude" => TranspileOptions::prelude(),
+        "no_prelude" => TranspileOptions::no_prelude(),
         "interactive" => TranspileOptions::interactive(),
         "script" => TranspileOptions::script(),
         _ => {

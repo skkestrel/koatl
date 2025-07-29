@@ -6,10 +6,9 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent / "e2e"))
 
 
-def get_test_data():
+def get_test_data(dirs):
     data_dirs = [
-        Path(__file__).parent / "e2e" / "base",
-        Path(__file__).parent / "e2e" / "prelude",
+        Path(__file__).parent / "e2e" / dirs,
     ]
 
     test_cases = []
@@ -20,13 +19,32 @@ def get_test_data():
     return test_cases
 
 
-@pytest.mark.parametrize("test_file", get_test_data())
-def test_e2e_native_emit(test_file):
+@pytest.mark.parametrize("test_file", get_test_data("base"))
+def test_e2e_native_emit_base(test_file):
+    test_e2e_native_emit(test_file, "no_prelude")
+
+
+@pytest.mark.parametrize("test_file", get_test_data("prelude"))
+def test_e2e_native_emit_prelude(test_file):
+    test_e2e_native_emit(test_file, "script")
+
+
+@pytest.mark.parametrize("test_file", get_test_data("base"))
+def test_e2e_base(test_file):
+    test_e2e(test_file, "no_prelude")
+
+
+@pytest.mark.parametrize("test_file", get_test_data("prelude"))
+def test_e2e_prelude(test_file):
+    test_e2e(test_file, "script")
+
+
+def test_e2e_native_emit(test_file, mode):
     import linecache
 
     with open(test_file, "r") as f:
         source = f.read()
-    source, source_map = koatl.transpile_raw(source, mode="script")
+    source, source_map = koatl.transpile_raw(source, mode=mode)
 
     global_dict = {}
 
@@ -46,6 +64,5 @@ def test_e2e_native_emit(test_file):
     print("end", test_file)
 
 
-@pytest.mark.parametrize("test_file", get_test_data())
-def test_e2e(test_file):
-    koatl.cli.run_from_path(test_file, mode="script")
+def test_e2e(test_file, mode):
+    koatl.cli.run_from_path(test_file, mode=mode)

@@ -258,6 +258,7 @@ impl<'a, T> StackDropper<'a, T> {
         }
     }
 
+    #[allow(dead_code)]
     fn pop(&mut self) -> Option<T> {
         if self.popped {
             panic!("Stack already popped");
@@ -269,7 +270,7 @@ impl<'a, T> StackDropper<'a, T> {
 
 impl<'a, T> Drop for StackDropper<'a, T> {
     fn drop(&mut self) {
-        if self.popped {
+        if !self.popped {
             if let Some(_) = self.stack.pop() {
             } else {
                 panic!("Stack underflow");
