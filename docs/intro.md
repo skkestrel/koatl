@@ -3,11 +3,13 @@
 [Koatl](https://github.com/skkestrel/koatl) is a functional-first language transpiling to Python.
 
 ```koatl
->>> #       Arrow syntax for functions (multiline lambdas also supported)
->>> #       |
->>> #       |        Easy pattern matching expressions
->>> #       v        v
->>> fib = x => x matches (0 | 1) then 1 else fib(x-1) + fib(x-2)
+>>> # Proper scoping and variable capture rules
+>>> # |
+>>> # |        Arrow syntax for functions (multiline lambdas also supported)
+>>> # |        |
+>>> # |        |        Easy pattern matching expressions
+>>> # v        v        v
+>>> let fib = x => x matches (0 | 1) then 1 else fib(x-1) + fib(x-2)
 
 >>> # Painlessly define slices and ranges
 >>> # |

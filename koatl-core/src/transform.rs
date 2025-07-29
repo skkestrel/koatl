@@ -1484,31 +1484,27 @@ fn create_binary_matcher<'src, 'ast>(
     on_success: PyBlock<'src>,
     on_fail: PyBlock<'src>,
 ) -> TfResult<PyBlock<'src>> {
-    if pattern_meta.default {
-        return Ok(on_success);
-    }
-
     let mut post = PyBlock::new();
     let a = PyAstBuilder::new(pattern.1);
     let pattern_node = pattern.transform(ctx)?;
 
     post.extend(pattern_node.pre);
 
-    post.push(a.match_(
-        subject,
-        vec![
-            PyMatchCase {
-                pattern: pattern_node.value,
-                guard: None,
-                body: on_success,
-            },
-            PyMatchCase {
-                pattern: (PyPattern::As(None, None), pattern.1).into(),
-                guard: None,
-                body: on_fail,
-            },
-        ],
-    ));
+    let mut cases = vec![PyMatchCase {
+        pattern: pattern_node.value,
+        guard: None,
+        body: on_success,
+    }];
+
+    if !pattern_meta.default {
+        cases.push(PyMatchCase {
+            pattern: (PyPattern::As(None, None), pattern.1).into(),
+            guard: None,
+            body: on_fail,
+        });
+    }
+
+    post.push(a.match_(subject, cases));
 
     Ok(post)
 }
@@ -2823,7 +2819,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 span,
             )?),
             Expr::Block(block) => {
-                // TODO this doesn't introduce a new scope properly
+                // TODO this doesn't introduce a new scope properly - fix in combination with functions, ifs, etc
 
                 let block = pre.bind(block.transform(ctx)?);
 
@@ -2843,7 +2839,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
                 let meta = pattern.preprocess()?;
 
-                // TODO create a new scope here somehow?
+                // TODO create a new scope here somehow for ifs, prevent leaking.
 
                 let matcher = create_binary_matcher(
                     ctx,
