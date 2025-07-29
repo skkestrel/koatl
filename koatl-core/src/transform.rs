@@ -195,21 +195,20 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
         })?;
 
         if scope.is_class_scope || scope.is_global_scope {
-            if !scope.locals.contains_key(&self.0) {
-                scope.locals.insert(
-                    self.0.clone(),
-                    Declaration {
-                        ident: self.0.clone(),
-                        py_ident: self.escape(),
-                        loc: self.1,
-                        const_: false,
-                        typ: if scope.is_global_scope {
-                            PyDeclType::Global
-                        } else {
-                            PyDeclType::Local
-                        },
+            // at class or global scope, binding can happen without 'let'
+
+            if !scope.locals.iter().any(|d| d.ident == self.0) {
+                scope.locals.push(Declaration {
+                    ident: self.0.clone(),
+                    py_ident: self.escape(),
+                    loc: self.1,
+                    const_: false,
+                    typ: if scope.is_global_scope {
+                        PyDeclType::Global
+                    } else {
+                        PyDeclType::Local
                     },
-                );
+                });
             }
 
             return Ok(self.escape());
@@ -279,7 +278,7 @@ struct Declaration<'src> {
 
 #[derive(Debug)]
 struct ScopeCtx<'src> {
-    locals: HashMap<Ident<'src>, Declaration<'src>>,
+    locals: Vec<Declaration<'src>>,
     is_class_scope: bool,
     is_global_scope: bool,
     is_py_fn_scope: bool,
@@ -288,7 +287,7 @@ struct ScopeCtx<'src> {
 impl<'src> ScopeCtx<'src> {
     fn new() -> Self {
         Self {
-            locals: HashMap::new(),
+            locals: Vec::new(),
             is_py_fn_scope: false,
             is_class_scope: false,
             is_global_scope: false,
@@ -314,7 +313,7 @@ impl<'src> ScopeCtxStackExt<'src> for Vec<ScopeCtx<'src>> {
         let mut crossed_py_scope = false;
 
         for scope in self.iter().rev() {
-            if let Some(decl) = scope.locals.get(&ident.0) {
+            if let Some(decl) = scope.locals.iter().find(|d| d.ident == ident.0) {
                 return Some(ScopeSearchResult {
                     decl,
                     local: !crossed_tl_scope,
@@ -357,16 +356,13 @@ fn declare_var<'src>(
             }
 
             let scope = ctx.scope_ctx_stack.last_mut().unwrap();
-            scope.locals.insert(
-                ident.0.clone(),
-                Declaration {
-                    ident: ident.0.clone(),
-                    py_ident: ident.escape(),
-                    const_: false,
-                    loc: ident.1,
-                    typ: PyDeclType::GlobalCapture,
-                },
-            );
+            scope.locals.push(Declaration {
+                ident: ident.0.clone(),
+                py_ident: ident.escape(),
+                const_: false,
+                loc: ident.1,
+                typ: PyDeclType::GlobalCapture,
+            });
         }
         DeclType::Export => {
             if ctx.scope_ctx_stack.len() > 1 {
@@ -411,26 +407,20 @@ fn declare_var<'src>(
                     },
                 };
 
-                last_ctx.locals.insert(ident.0.clone(), decl);
+                last_ctx.locals.push(decl);
 
                 break 'block;
             }
 
-            let scope_id = ctx.scope_ctx_stack.len();
-
             let scope_stack = &mut ctx.scope_ctx_stack;
+            let cur_scope_nlocals = scope_stack.last().unwrap().locals.len();
 
-            if let Some(found) = scope_stack.find_decl(ident) {
-                if found.local {
-                    // variable is already declared in the current scope
-                    // no chance it can ever be captured;
-                    // don't need to do anything
-                    break 'block;
-                }
-            }
-
-            // otherwise, need to make sure variable is completely shadowed
-            let py_ident = format!("let_{}_{}", ident.0.0, scope_id).into();
+            // need to make sure variable is completely shadowed, so construct a unique identifier
+            let py_ident = format!(
+                "let_{}_{}_{}",
+                ident.0.0, cur_scope_nlocals, ctx.scope_id_counter
+            )
+            .into();
 
             let new_decl = Declaration {
                 ident: ident.0.clone(),
@@ -442,7 +432,7 @@ fn declare_var<'src>(
 
             let cur_scope = scope_stack.last_mut().unwrap();
 
-            cur_scope.locals.insert(ident.0.clone(), new_decl);
+            cur_scope.locals.push(new_decl);
 
             break 'block;
         }
@@ -462,6 +452,7 @@ struct TfCtx<'src> {
     placeholder_ctx_stack: Vec<PlaceholderCtx>,
     fn_ctx_stack: Vec<FnCtx<'src>>,
     scope_ctx_stack: Vec<ScopeCtx<'src>>,
+    scope_id_counter: usize,
 
     line_cache: LineColCache,
 }
@@ -475,6 +466,7 @@ impl<'src> TfCtx<'src> {
             exports: Vec::new(),
             module_star_exports: Vec::new(),
 
+            scope_id_counter: 0,
             placeholder_ctx_stack: Vec::new(),
             fn_ctx_stack: Vec::new(),
             scope_ctx_stack: Vec::new(),
@@ -1719,6 +1711,7 @@ fn make_arglist_CAUTION<'src, 'ast>(
         })
     }
 
+    ctx.scope_id_counter += 1;
     ctx.scope_ctx_stack.push(ScopeCtx::new());
     ctx.scope_ctx_stack.last_mut().unwrap().is_py_fn_scope = true;
 
@@ -1733,17 +1726,16 @@ fn make_arglist_CAUTION<'src, 'ast>(
 
                     let scope_ctx = ctx.scope_ctx_stack.last_mut().unwrap();
                     for capture in &meta.captures {
-                        if scope_ctx.locals.iter().any(|d| d.0.0 == capture.0) {
+                        if scope_ctx.locals.iter().any(|d| d.ident.0 == capture.0) {
                             return Err(TfErrBuilder::default()
                                 .message("Duplicate argument name in function definition")
                                 .span(arg_pattern.1)
                                 .build_errs());
                         }
 
-                        scope_ctx.locals.insert(
-                            Ident(capture.0.clone()),
-                            make_decl(capture.clone(), arg_pattern.1),
-                        );
+                        scope_ctx
+                            .locals
+                            .push(make_decl(capture.clone(), arg_pattern.1));
                     }
 
                     // TODO need to declare variables prior to matching
@@ -1755,14 +1747,14 @@ fn make_arglist_CAUTION<'src, 'ast>(
                     let scope_ctx = ctx.scope_ctx_stack.last_mut().unwrap();
                     let decl = make_decl(name.0.clone(), name.1);
                     let py_ident = decl.py_ident.clone();
-                    scope_ctx.locals.insert(name.0.clone(), decl);
+                    scope_ctx.locals.push(decl);
                     PyArgDefItem::ArgSpread(py_ident)
                 }
                 ArgDefItem::KwargSpread(name) => {
                     let scope_ctx = ctx.scope_ctx_stack.last_mut().unwrap();
                     let decl = make_decl(name.0.clone(), name.1);
                     let py_ident = decl.py_ident.clone();
-                    scope_ctx.locals.insert(name.0.clone(), decl);
+                    scope_ctx.locals.push(decl);
                     PyArgDefItem::KwargSpread(py_ident)
                 }
             };
@@ -1995,6 +1987,7 @@ fn scoped<'src, F, O>(
 where
     F: FnOnce(&mut TfCtx<'src>) -> TfResult<O>,
 {
+    ctx.scope_id_counter += 1;
     ctx.scope_ctx_stack.push(scope);
     let result = f(ctx);
     let scope_ctx = ctx.scope_ctx_stack.pop().unwrap();
