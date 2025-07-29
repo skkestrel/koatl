@@ -194,7 +194,7 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
         if scope.is_class_scope || scope.is_global_scope {
             // at class or global scope, binding can happen without 'let'
 
-            if !scope.locals.iter().any(|d| d.ident == self.0) {
+            if !scope.locals.iter().rev().any(|d| d.ident == self.0) {
                 scope.locals.push(Declaration {
                     ident: self.0.clone(),
                     py_ident: self.escape(),
@@ -323,7 +323,7 @@ trait ScopeCtxStackExt<'src> {
 impl<'src> ScopeCtxStackExt<'src> for Vec<ScopeCtx<'src>> {
     fn find_decl<'slf>(&'slf self, ident: &SIdent<'src>) -> Option<ScopeSearchResult<'slf, 'src>> {
         for scope in self.iter().rev() {
-            if let Some(decl) = scope.locals.iter().find(|d| d.ident == ident.0) {
+            if let Some(decl) = scope.locals.iter().rev().find(|d| d.ident == ident.0) {
                 return Some(ScopeSearchResult { decl });
             }
         }
@@ -339,7 +339,7 @@ impl<'src> ScopeCtxStackExt<'src> for Vec<ScopeCtx<'src>> {
         let mut crossed_py_scope = false;
 
         for scope in self.iter_mut().rev() {
-            if let Some(decl) = scope.locals.iter_mut().find(|d| d.ident == ident.0) {
+            if let Some(decl) = scope.locals.iter_mut().rev().find(|d| d.ident == ident.0) {
                 return Some(ScopeSearchResultMut {
                     decl,
                     local: !crossed_tl_scope,
@@ -441,14 +441,18 @@ fn declare_var<'src>(
             }
 
             let scope_stack = &mut ctx.scope_ctx_stack;
-            let cur_scope_nlocals = scope_stack.last().unwrap().locals.len();
+            let cur_scope = scope_stack.last().unwrap();
 
             // need to make sure variable is completely shadowed, so construct a unique identifier
             let py_ident = format!(
                 "let_{}_{}_{}",
-                ident.0.0, cur_scope_nlocals, ctx.scope_id_counter
+                ident.0.0,
+                cur_scope.locals.len(),
+                ctx.scope_id_counter
             )
             .into();
+
+            let cur_scope = scope_stack.last_mut().unwrap();
 
             let new_decl = Declaration {
                 ident: ident.0.clone(),
@@ -458,8 +462,6 @@ fn declare_var<'src>(
                 const_assigned: None,
                 typ: PyDeclType::Local,
             };
-
-            let cur_scope = scope_stack.last_mut().unwrap();
 
             cur_scope.locals.push(new_decl);
 
