@@ -1,7 +1,4 @@
-use std::{
-    borrow::Cow,
-    collections::{HashMap, HashSet},
-};
+use std::{borrow::Cow, collections::HashSet};
 
 use crate::{
     linecol::LineColCache,
@@ -203,6 +200,7 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
                     py_ident: self.escape(),
                     loc: self.1,
                     const_: false,
+                    const_assigned: None,
                     typ: if scope.is_global_scope {
                         PyDeclType::Global
                     } else {
@@ -214,13 +212,18 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
             return Ok(self.escape());
         }
 
-        if let Some(found) = ctx.scope_ctx_stack.find_decl(self) {
+        if let Some(found) = ctx.scope_ctx_stack.find_decl_mut(self) {
             if found.decl.const_ {
-                return Err(TfErrBuilder::default()
-                    .message("Cannot assign to a constant")
-                    .span(self.1)
-                    .context("Declared here", found.decl.loc)
-                    .build_errs());
+                if let Some(assigned) = found.decl.const_assigned {
+                    return Err(TfErrBuilder::default()
+                        .message("Can only assign to a constant once")
+                        .span(self.1)
+                        .context("Declared here", found.decl.loc)
+                        .context("Assigned here", assigned)
+                        .build_errs());
+                }
+
+                found.decl.const_assigned = Some(self.1);
             }
 
             if found.py_local {
@@ -274,6 +277,7 @@ struct Declaration<'src> {
     loc: Span,
     typ: PyDeclType,
     const_: bool,
+    const_assigned: Option<Span>,
 }
 
 #[derive(Debug)]
@@ -296,25 +300,47 @@ impl<'src> ScopeCtx<'src> {
 }
 
 #[derive(Debug)]
-struct ScopeSearchResult<'slf, 'src> {
-    decl: &'slf Declaration<'src>,
+struct ScopeSearchResultMut<'slf, 'src> {
+    decl: &'slf mut Declaration<'src>,
 
     local: bool,
     py_local: bool,
 }
 
+#[derive(Debug)]
+struct ScopeSearchResult<'slf, 'src> {
+    decl: &'slf Declaration<'src>,
+}
+
 trait ScopeCtxStackExt<'src> {
     fn find_decl<'slf>(&'slf self, ident: &SIdent<'src>) -> Option<ScopeSearchResult<'slf, 'src>>;
+    fn find_decl_mut<'slf>(
+        &'slf mut self,
+        ident: &SIdent<'src>,
+    ) -> Option<ScopeSearchResultMut<'slf, 'src>>;
 }
 
 impl<'src> ScopeCtxStackExt<'src> for Vec<ScopeCtx<'src>> {
     fn find_decl<'slf>(&'slf self, ident: &SIdent<'src>) -> Option<ScopeSearchResult<'slf, 'src>> {
+        for scope in self.iter().rev() {
+            if let Some(decl) = scope.locals.iter().find(|d| d.ident == ident.0) {
+                return Some(ScopeSearchResult { decl });
+            }
+        }
+
+        None
+    }
+
+    fn find_decl_mut<'slf>(
+        &'slf mut self,
+        ident: &SIdent<'src>,
+    ) -> Option<ScopeSearchResultMut<'slf, 'src>> {
         let mut crossed_tl_scope = false;
         let mut crossed_py_scope = false;
 
-        for scope in self.iter().rev() {
-            if let Some(decl) = scope.locals.iter().find(|d| d.ident == ident.0) {
-                return Some(ScopeSearchResult {
+        for scope in self.iter_mut().rev() {
+            if let Some(decl) = scope.locals.iter_mut().find(|d| d.ident == ident.0) {
+                return Some(ScopeSearchResultMut {
                     decl,
                     local: !crossed_tl_scope,
                     py_local: !crossed_py_scope,
@@ -360,6 +386,7 @@ fn declare_var<'src>(
                 ident: ident.0.clone(),
                 py_ident: ident.escape(),
                 const_: false,
+                const_assigned: None,
                 loc: ident.1,
                 typ: PyDeclType::GlobalCapture,
             });
@@ -400,6 +427,7 @@ fn declare_var<'src>(
                     py_ident: ident.escape(),
                     loc: ident.1,
                     const_: is_const,
+                    const_assigned: None,
                     typ: if last_ctx.is_global_scope {
                         PyDeclType::Global
                     } else {
@@ -427,6 +455,7 @@ fn declare_var<'src>(
                 py_ident,
                 loc: ident.1,
                 const_: is_const,
+                const_assigned: None,
                 typ: PyDeclType::Local,
             };
 
@@ -1693,6 +1722,7 @@ fn make_arglist_CAUTION<'src, 'ast>(
             ident: capture.clone(),
             py_ident: capture.escape(),
             const_: false,
+            const_assigned: None,
             loc,
             typ: PyDeclType::Local,
         }
