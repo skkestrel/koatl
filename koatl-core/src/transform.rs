@@ -1817,25 +1817,20 @@ fn prepare_py_fn<'src, 'ast>(
                 Ok(body)
             });
 
-            match result {
-                Ok((body, fn_ctx)) => {
-                    if fn_ctx.is_async {
-                        async_ = true;
-                    }
+            ctx.scope_ctx_stack.pop();
 
-                    if fn_ctx.is_do {
-                        decorators.push(a.tl_builtin("do"));
-                    }
+            let (body, fn_ctx) = result?;
 
-                    py_body.extend(body.pre);
-                    py_body.push(a.return_(body.value));
-                }
-                Err(e) => {
-                    // pushed by make_arglist
-                    ctx.scope_ctx_stack.pop();
-                    return Err(e);
-                }
+            if fn_ctx.is_async {
+                async_ = true;
             }
+
+            if fn_ctx.is_do {
+                decorators.push(a.tl_builtin("do"));
+            }
+
+            py_body.extend(body.pre);
+            py_body.push(a.return_(body.value));
         }
     }
 
