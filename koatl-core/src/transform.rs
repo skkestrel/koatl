@@ -239,14 +239,14 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
                         .last_mut()
                         .unwrap()
                         .globals
-                        .insert(self.escape());
+                        .insert(found.decl.py_ident.clone());
                 }
                 PyDeclType::NonlocalCapture | PyDeclType::Local => {
                     ctx.fn_ctx_stack
                         .last_mut()
                         .unwrap()
                         .nonlocals
-                        .insert(self.escape());
+                        .insert(found.decl.py_ident.clone());
                 }
             }
 
