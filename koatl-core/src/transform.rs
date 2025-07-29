@@ -179,6 +179,17 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
     }
 
     fn transform_binding(&self, ctx: &mut TfCtx<'src>) -> TfResult<PyIdent<'src>> {
+        let scope = ctx.scope_ctx_stack.last_mut().ok_or_else(|| {
+            TfErrBuilder::default()
+                .message("Internal error: expected a scope")
+                .span(self.1)
+                .build_errs()
+        })?;
+
+        if scope.is_class_scope || scope.is_global_scope {
+            return Ok(self.escape());
+        }
+
         if let Some(found) = ctx.scope_ctx_stack.find_decl(self) {
             if found.py_local {
                 return Ok(found.decl.py_ident.clone());
@@ -554,7 +565,7 @@ fn destructure_list<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     target: &'ast SExpr<'src>,
     items: &'ast [ListItem<'src>],
-    decl_only: bool,
+    modifier: Option<DeclType>,
 ) -> TfResult<DestructureBindings<'src>> {
     let cursor_var = ctx.create_aux_var("des_curs", target.1.start);
 
@@ -570,7 +581,7 @@ fn destructure_list<'src, 'ast>(
     for item in items.iter() {
         match item {
             ListItem::Item(expr) => {
-                let item_bindings = destructure(ctx, expr, decl_only)?;
+                let item_bindings = destructure(ctx, expr, modifier)?;
                 lhs_items.push(PyListItem::Item(item_bindings.assign_to));
                 post.extend(item_bindings.post);
                 decls.extend(item_bindings.declarations);
@@ -584,7 +595,7 @@ fn destructure_list<'src, 'ast>(
                 }
                 seen_spread = true;
 
-                let item_bindings = destructure(ctx, expr, decl_only)?;
+                let item_bindings = destructure(ctx, expr, modifier)?;
                 lhs_items.push(PyListItem::Spread(item_bindings.assign_to));
                 post.extend(item_bindings.post);
                 decls.extend(item_bindings.declarations);
@@ -611,7 +622,7 @@ fn destructure_tuple<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     target: &'ast SExpr<'src>,
     items: &'ast [ListItem<'src>],
-    decl_only: bool,
+    modifier: Option<DeclType>,
 ) -> TfResult<DestructureBindings<'src>> {
     let cursor_var = ctx.create_aux_var("des_curs", target.1.start);
     let tuple_var = ctx.create_aux_var("des_tuple", target.1.start);
@@ -652,7 +663,7 @@ fn destructure_tuple<'src, 'ast>(
     for item in items.iter() {
         match item {
             ListItem::Item(expr) => {
-                let item_bindings = destructure(ctx, expr, decl_only)?;
+                let item_bindings = destructure(ctx, expr, modifier)?;
                 post_stmts.extend(item_bindings.post);
                 decls.extend(item_bindings.declarations);
 
@@ -684,7 +695,8 @@ fn destructure_tuple<'src, 'ast>(
                 }
                 seen_spread = true;
 
-                let item_bindings = destructure(ctx, expr, true)?;
+                // TODO restrict to only idents
+                let item_bindings = destructure(ctx, expr, modifier)?;
                 post_stmts.extend(item_bindings.post);
                 decls.extend(item_bindings.declarations);
 
@@ -721,7 +733,7 @@ fn destructure_mapping<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     target: &'ast SExpr<'src>,
     items: &'ast [MappingItem<'src>],
-    decl_only: bool,
+    modifier: Option<DeclType>,
 ) -> TfResult<DestructureBindings<'src>> {
     let cursor_var = ctx.create_aux_var("des_curs", target.1.start);
     let dict_var = ctx.create_aux_var("des_dict", target.1.start);
@@ -754,7 +766,7 @@ fn destructure_mapping<'src, 'ast>(
                 ),
             )),
             MappingItem::Item(key, expr) => {
-                let item_bindings = destructure(ctx, expr, decl_only)?;
+                let item_bindings = destructure(ctx, expr, modifier)?;
                 let key_node = key.transform(ctx)?;
                 post_stmts.extend(key_node.pre);
                 post_stmts.extend(item_bindings.post);
@@ -782,7 +794,8 @@ fn destructure_mapping<'src, 'ast>(
     }
 
     if let Some(spread_var) = spread_var {
-        let item_bindings = destructure(ctx, spread_var, true)?;
+        // TODO restrict to only idents
+        let item_bindings = destructure(ctx, spread_var, modifier)?;
 
         post_stmts.extend(item_bindings.post);
         decls.extend(item_bindings.declarations);
@@ -808,7 +821,7 @@ struct DestructureBindings<'a> {
 fn destructure<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     target: &'ast SExpr<'src>,
-    decl_only: bool,
+    modifier: Option<DeclType>,
 ) -> TfResult<DestructureBindings<'src>> {
     let mut post = PyBlock::new();
     let mut decls = Vec::<PyIdent<'src>>::new();
@@ -819,11 +832,15 @@ fn destructure<'src, 'ast>(
         Expr::Ident(..) | Expr::RawAttribute(..) | Expr::Attribute(..) | Expr::Subscript(..) => {
             let target_node = match &target.0 {
                 Expr::Ident(id) => {
+                    if let Some(modifier) = modifier {
+                        declare_var(ctx, id, modifier)?;
+                    }
+
                     decls.push(id.transform_binding(ctx)?);
                     target.transform_with_access(ctx, PyAccessCtx::Store)?
                 }
                 Expr::RawAttribute(..) | Expr::Subscript(..) => {
-                    if decl_only {
+                    if modifier.is_some() {
                         return Err(TfErrBuilder::default()
                             .message("Only identifiers allowed in this destructuring")
                             .span(target.1)
@@ -832,7 +849,7 @@ fn destructure<'src, 'ast>(
                     target.transform_with_access(ctx, PyAccessCtx::Store)?
                 }
                 Expr::Attribute(lhs, ext) => {
-                    if decl_only {
+                    if modifier.is_some() {
                         return Err(TfErrBuilder::default()
                             .message("Only identifiers allowed in this destructuring")
                             .span(target.1)
@@ -856,21 +873,21 @@ fn destructure<'src, 'ast>(
             assign_to = target_node.value;
         }
         Expr::List(items) => {
-            let bindings = destructure_list(ctx, target, items, decl_only)?;
+            let bindings = destructure_list(ctx, target, items, modifier)?;
 
             post.extend(bindings.post);
             decls.extend(bindings.declarations);
             assign_to = bindings.assign_to;
         }
         Expr::Tuple(items) => {
-            let bindings = destructure_tuple(ctx, target, items, decl_only)?;
+            let bindings = destructure_tuple(ctx, target, items, modifier)?;
 
             post.extend(bindings.post);
             decls.extend(bindings.declarations);
             assign_to = bindings.assign_to;
         }
         Expr::Mapping(items) => {
-            let bindings = destructure_mapping(ctx, target, items, decl_only)?;
+            let bindings = destructure_mapping(ctx, target, items, modifier)?;
 
             post.extend(bindings.post);
             decls.extend(bindings.declarations);
@@ -895,7 +912,7 @@ fn transform_assignment<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     lhs: &'ast SExpr<'src>,
     rhs: &'ast SExpr<'src>,
-    scope_modifier: Option<DeclType>,
+    modifier: Option<DeclType>,
     span: &Span,
 ) -> TfResult<PyBlock<'src>> {
     let mut stmts = PyBlock::new();
@@ -981,10 +998,8 @@ fn transform_assignment<'src, 'ast>(
     let value_node = rhs.transform_with_placeholder_guard(ctx)?;
     stmts.extend(value_node.pre);
 
-    let decl_only = scope_modifier.is_some();
-
     // remember to transform LHS after RHS
-    let destructure = destructure(ctx, lhs, decl_only)?;
+    let destructure = destructure(ctx, lhs, modifier)?;
 
     stmts.push(
         (
@@ -1013,14 +1028,18 @@ fn transform_if_expr<'src, 'ast>(
     let store_ret_var = a.ident(ret_varname.clone(), PyAccessCtx::Store);
     let load_ret_var = a.ident(ret_varname.clone(), PyAccessCtx::Load);
 
+    ctx.scope_ctx_stack.push(ScopeCtx::new());
     let mut py_then = PyBlock::new();
     let py_then_expr = py_then.bind(then_block.transform(ctx)?);
     py_then.push(a.assign(store_ret_var.clone(), py_then_expr));
+    ctx.scope_ctx_stack.pop();
 
     let py_else = if let Some(else_block) = else_block {
+        ctx.scope_ctx_stack.push(ScopeCtx::new());
         let mut py_else = PyBlock::new();
         let py_else_expr = py_else.bind(else_block.transform(ctx)?);
         py_else.push(a.assign(store_ret_var.clone(), py_else_expr));
+        ctx.scope_ctx_stack.pop();
         py_else
     } else {
         PyBlock(vec![
@@ -1640,6 +1659,7 @@ fn make_arglist<'src, 'ast>(
     }
 
     ctx.scope_ctx_stack.push(ScopeCtx::new());
+    ctx.scope_ctx_stack.last_mut().unwrap().is_py_fn_scope = true;
 
     for (i, arg) in args.iter().enumerate() {
         let arg = match arg {
@@ -2331,11 +2351,13 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 ));
             }
             Stmt::While(cond, body) => {
-                let cond_node = cond.transform_with_placeholder_guard(ctx)?;
-
                 ctx.fn_ctx_stack.push(FnCtx::new());
-                let body_block = body.transform(ctx)?.drop_expr(ctx)?;
+                let cond_node = cond.transform_with_placeholder_guard(ctx)?;
                 let fn_ctx = ctx.fn_ctx_stack.pop().unwrap();
+
+                ctx.scope_ctx_stack.push(ScopeCtx::new());
+                let body_block = body.transform(ctx)?.drop_expr(ctx)?;
+                ctx.scope_ctx_stack.pop();
 
                 let cond: SPyExpr<'src> = if cond_node.pre.is_empty() {
                     cond_node.value
@@ -2625,6 +2647,9 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             Expr::Class(bases, body) => {
                 let name: Cow<_> = ctx.create_aux_var("clsexp", span.start).into();
 
+                ctx.scope_ctx_stack.push(ScopeCtx::new());
+                ctx.scope_ctx_stack.last_mut().unwrap().is_class_scope = true;
+
                 pre.extend(make_class_def(
                     ctx,
                     name.clone(),
@@ -2633,6 +2658,8 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     PyDecorators::new(),
                     span,
                 )?);
+
+                ctx.scope_ctx_stack.pop();
 
                 a.load_ident(name)
             }
@@ -2660,6 +2687,8 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 span,
             )?),
             Expr::Block(block) => {
+                // TODO this doesn't introduce a new scope properly
+
                 let block = pre.bind(block.transform(ctx)?);
 
                 match block {
@@ -2875,7 +2904,18 @@ pub fn transform_ast<'src, 'ast>(
     ctx.allow_top_level_await = allow_await;
 
     let mut py_block = PyBlock::new();
+    ctx.scope_ctx_stack.push(ScopeCtx::new());
+    ctx.scope_ctx_stack.last_mut().unwrap().is_global_scope = true;
+
     let block = py_block.bind(block.transform(&mut ctx)?);
+
+    ctx.scope_ctx_stack.pop();
+
+    if !ctx.scope_ctx_stack.is_empty() {
+        return Err(TfErrBuilder::default()
+            .message("Internal error: Scope stack is not empty after transformation")
+            .build_errs());
+    }
 
     if let PyBlockExpr::Expr(value) = block {
         let span = value.tl_span;
