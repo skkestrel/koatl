@@ -64,7 +64,7 @@ assert_eq([
 apply = (x, y) => x(y)
 assert_eq(apply(
     x =>
-        y = x * 2
+        let y = x * 2
         y * 2
     8
 ), 8 * 2 * 2)
@@ -72,7 +72,7 @@ assert_eq(apply(
 assert_eq(
     apply(
         x =>
-            y = x * 2
+            let y = x * 2
             y * 2
         8
     )

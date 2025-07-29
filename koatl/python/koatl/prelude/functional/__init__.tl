@@ -9,8 +9,8 @@ export Fn = class:
             [] => raise ValueError("At least one function is required for composition")
             [f] => f
             [*fs] =>
-                composed = (*args, **kwargs) =>
-                    value = fs[-1](*args, **kwargs)
+                let composed = (*args, **kwargs) =>
+                    let value = fs[-1](*args, **kwargs)
                     for f in fs[..-1..-1]:
                         value = f(value)
                     value

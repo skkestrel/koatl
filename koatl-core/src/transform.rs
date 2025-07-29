@@ -206,11 +206,7 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
             return Ok(self.escape());
         }
 
-        println!("{:?} {:?}", self, ctx.scope_ctx_stack);
-
         if let Some(found) = ctx.scope_ctx_stack.find_decl(self) {
-            println!("found: {:?}", found);
-
             if found.py_local {
                 return Ok(found.decl.py_ident.clone());
             }
@@ -992,6 +988,10 @@ fn transform_assignment<'src, 'ast>(
         if let Expr::Fn(arglist, body) = &cur_node {
             let decorators = py_decorators()?;
 
+            if let Some(modifier) = modifier {
+                declare_var(ctx, ident, modifier)?;
+            }
+
             // transform LHS after RHS
             let py_ident = ident.transform_binding(ctx)?;
 
@@ -1004,6 +1004,10 @@ fn transform_assignment<'src, 'ast>(
             )?);
         } else if let Expr::Class(bases, body) = &cur_node {
             let decorators = py_decorators()?;
+
+            if let Some(modifier) = modifier {
+                declare_var(ctx, ident, modifier)?;
+            }
 
             // transform LHS after RHS
             let py_ident = ident.transform_binding(ctx)?;
@@ -2721,6 +2725,9 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                         ]),
                     }));
                 }
+
+                // TODO can we avoid declaring a variable here - construct in pyast directly?
+                declare_var(ctx, &(Ident(var_name.clone()), expr.1), DeclType::Let)?;
 
                 let except_handler =
                     matching_except_handler(ctx, err_name.clone().into(), &handlers, span)?;

@@ -10,7 +10,7 @@ assert_eq(a, 1)
 a = if False:
     2 * 4
 else:
-    x = 4 * 8
+    let x = 4 * 8
     x * 2
 
 assert_eq(a, 4 * 8 * 2)
