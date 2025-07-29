@@ -389,6 +389,13 @@ fn declare_var<'src>(
             let is_const = modifier == DeclType::Const;
 
             if last_ctx.is_class_scope || last_ctx.is_global_scope {
+                if is_const {
+                    return Err(TfErrBuilder::default()
+                        .message("Cannot declare a constant in a class or global scope")
+                        .span(ident.1)
+                        .build_errs());
+                }
+
                 // global scope.
                 // add a declaration so that inner scopes know how to capture it
 
