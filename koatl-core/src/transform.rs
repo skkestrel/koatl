@@ -273,7 +273,7 @@ enum PyDeclType {
 }
 
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Declaration<'src> {
     ident: Ident<'src>,
     py_ident: PyIdent<'src>,
@@ -296,6 +296,14 @@ struct ScopeCtx<'src> {
      * containing scope when processing the function body.
      */
     lifted_decls: Vec<Declaration<'src>>,
+
+    /**
+     * this is a really messed up hack to handle Python's
+     * weird class scoping rules -
+     * method bodies TWO scopes lower
+     * are able to see the class definition
+     */
+    lifted_class_decls: Vec<Declaration<'src>>,
 }
 
 impl<'src> ScopeCtx<'src> {
@@ -303,6 +311,7 @@ impl<'src> ScopeCtx<'src> {
         Self {
             locals: Vec::new(),
             lifted_decls: Vec::new(),
+            lifted_class_decls: Vec::new(),
             is_py_fn_scope: false,
             is_class_scope: false,
             is_global_scope: false,
@@ -1050,6 +1059,19 @@ fn transform_assignment<'src, 'ast>(
             .build_errs());
     }
 
+    if !ctx
+        .scope_ctx_stack
+        .last()
+        .unwrap()
+        .lifted_class_decls
+        .is_empty()
+    {
+        return Err(TfErrBuilder::default()
+            .message("Internal error: lifted class decls should be empty at this point")
+            .span(lhs.1)
+            .build_errs());
+    }
+
     let decls = if let Some(modifier) = modifier {
         destructure_decls(ctx, lhs, modifier)?
     } else {
@@ -1128,17 +1150,39 @@ fn transform_assignment<'src, 'ast>(
                 span,
             )?;
 
+            // TODO give fn and class defs a better __name__ than the mangled ident
+
             return Ok(fn_def);
         } else if let Expr::Class(bases, body) = &cur_node {
             let decorators = py_decorators()?;
 
-            // same as above
+            // unlike functions, the class body should not know about the lifted decl yet
+            // (except for inside member function body)
+            // so we need to do some juggling here...
+
+            // first let the binding know about the decl: move lifted to locals
             let scope = ctx.scope_ctx_stack.last_mut().unwrap();
+            let n_lifted = scope.lifted_decls.len();
             scope.locals.extend(scope.lifted_decls.drain(..));
 
             let py_ident = ident.prepare_binding(ctx)?;
 
+            // now hide it from the class def: move back to lifted
+            let scope = ctx.scope_ctx_stack.last_mut().unwrap();
+            scope
+                .lifted_decls
+                .extend(scope.locals.drain(scope.locals.len() - n_lifted..));
+
+            // but make it available to the class methods: move to lifted classdefs
+            scope
+                .lifted_class_decls
+                .extend(scope.lifted_decls.drain(..));
+
             let cls_def = make_class_def(ctx, py_ident.clone(), &bases, &body, decorators, span)?;
+
+            // and finally commit to the current scope
+            let scope = ctx.scope_ctx_stack.last_mut().unwrap();
+            scope.locals.extend(scope.lifted_class_decls.drain(..));
 
             return Ok(cls_def);
         };
@@ -1954,9 +1998,25 @@ fn prepare_py_fn<'src, 'ast>(
             py_body.extend(post);
 
             let result = fn_scoped(ctx, FnCtx::new(), |ctx| {
-                // we need to temporarily lift declarations in the PREVIOUS scope
-                // can be seen by the function body
                 let n_scopes = ctx.scope_ctx_stack.len();
+
+                // first we need to make sure that the class definition
+                // is visible to functions,
+                // but they should also be shadowed by class properties
+
+                let n_classdef_lifted = if n_scopes >= 3 {
+                    let classdef_scope = &mut ctx.scope_ctx_stack[n_scopes - 3];
+                    let n = classdef_scope.lifted_class_decls.len();
+                    classdef_scope
+                        .locals
+                        .extend(classdef_scope.lifted_class_decls.drain(..));
+                    n
+                } else {
+                    0
+                };
+
+                // we need to temporarily lift declarations in the PREVIOUS scope
+                // so that they can be seen by the function body
                 let scope = &mut ctx.scope_ctx_stack[n_scopes - 2];
 
                 let n_lifted = scope.lifted_decls.len();
@@ -1969,6 +2029,14 @@ fn prepare_py_fn<'src, 'ast>(
                 scope
                     .lifted_decls
                     .extend(scope.locals.drain(scope.locals.len() - n_lifted..));
+
+                // and same for the lifted classdef decls
+                if n_classdef_lifted > 0 {
+                    let scope = &mut ctx.scope_ctx_stack[n_scopes - 3];
+                    scope
+                        .lifted_class_decls
+                        .extend(scope.locals.drain(scope.locals.len() - n_classdef_lifted..));
+                }
 
                 Ok(body)
             });
