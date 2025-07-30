@@ -19,17 +19,17 @@ API_RESPONSE = {
 }
 
 get_user_details = (data, user_id) =>
-    user = @(try data[user_id] except KeyError())
+    let user = @(try data[user_id] except KeyError())
         .map_err(e => KeyError(f"User {user_id} not found: {e}"))
 
-    profile = try user.profile
+    let profile = try user.profile
 
     profile matches not Ok() then:
         print(f"Profile not found.")
     else:
         print(f"Name: {try profile.name ?? "N/A"}")
 
-        contact = try profile.contact
+        let contact = try profile.contact
 
         contact matches not Ok() then:
             print(f"Contact not found.")
@@ -37,8 +37,8 @@ get_user_details = (data, user_id) =>
             print(f"Email: {try contact.email ?? "N/A"}")
             print(f"Phone: {try contact.phone ?? "N/A"}")
 
-    orders = try user.orders ?? []
-    n_orders = @(try len(orders))
+    let orders = try user.orders ?? []
+    let n_orders = @(try len(orders))
         .map_err(e => ValueError("Orders is malformed."))
 
     print(

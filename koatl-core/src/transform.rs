@@ -3139,7 +3139,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 let meta = pattern.preprocess()?;
                 if meta.captures.len() > 0 {
                     return Err(TfErrBuilder::default()
-                        .message("Capturing names in a 'matches' condition is only allowed in 'if ... matches ...'.")
+                        .message("Capturing non-'_' names in a 'matches' condition is only allowed in 'if ... matches ...'.")
                         .span(*span)
                         .build_errs());
                 }
