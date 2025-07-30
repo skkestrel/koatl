@@ -21,17 +21,24 @@ impl AstBuilder {
         (Stmt::Expr(expr), self.span)
     }
 
-    pub fn assign<'src>(&self, target: SExpr<'src>, value: SExpr<'src>) -> SStmt<'src> {
-        (Stmt::Assign(target, value, None), self.span)
+    pub fn assign<'src>(
+        &self,
+        target: impl Into<Indirect<SExpr<'src>>>,
+        value: impl Into<Indirect<SExpr<'src>>>,
+    ) -> SStmt<'src> {
+        (Stmt::Assign(target.into(), value.into(), None), self.span)
     }
 
     pub fn assign_modified<'src>(
         &self,
-        target: SExpr<'src>,
-        value: SExpr<'src>,
+        target: impl Into<Indirect<SExpr<'src>>>,
+        value: impl Into<Indirect<SExpr<'src>>>,
         modifier: DeclType,
     ) -> SStmt<'src> {
-        (Stmt::Assign(target, value, Some(modifier)), self.span)
+        (
+            Stmt::Assign(target.into(), value.into(), Some(modifier)),
+            self.span,
+        )
     }
 
     pub fn return_<'src>(&self, expr: SExpr<'src>) -> SStmt<'src> {

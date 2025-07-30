@@ -3026,7 +3026,6 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
         let value: SPyExpr<'src> = match &expr {
             Expr::Checked(expr, pattern) => {
-                let a = PyAstBuilder::new(*span);
                 let b = AstBuilder::new(*span);
 
                 let var_name = ctx.create_aux_var("chk", span.start);
@@ -3034,16 +3033,13 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 // exception variable doesn't leave the except slope, so rebind it to chk
                 let err_name = ctx.create_aux_var("e", span.start);
 
-                let mut try_body = PyBlock::new();
+                // TODO avoid declaring variable here by constructing the output directly
+                // in the python ast
+                declare_var(ctx, &(Ident(var_name.clone()), expr.1), DeclType::Let)?;
+                declare_var(ctx, &(Ident(err_name.clone()), expr.1), DeclType::Let)?;
 
-                let t = try_body.bind(expr.transform(ctx)?);
-                try_body.push(a.assign(a.ident(var_name.clone(), PyAccessCtx::Store), t));
-
-                let mut catch_body = PyBlock::new();
-                catch_body.push(a.assign(
-                    a.ident(var_name.clone(), PyAccessCtx::Store),
-                    a.load_ident(var_name.clone()),
-                ));
+                let try_body =
+                    b.block_expr(vec![b.assign(b.ident(var_name.clone()), expr.clone())]);
 
                 let mut handlers = vec![];
                 if let Some(pattern) = pattern {
@@ -3064,15 +3060,17 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     }));
                 }
 
-                // TODO can we avoid declaring a variable here - construct in pyast directly?
-                declare_var(ctx, &(Ident(var_name.clone()), expr.1), DeclType::Let)?;
+                let py_err_name = (Ident(err_name.clone()), *span).transform(ctx);
 
-                let except_handler =
-                    matching_except_handler(ctx, err_name.clone().into(), &handlers, span)?;
+                let except_handler = matching_except_handler(ctx, py_err_name, &handlers, span)?;
 
-                pre.push(a.try_(try_body, vec![except_handler], None));
+                pre.push(a.try_(
+                    try_body.transform(ctx)?.drop_expr(ctx),
+                    vec![except_handler],
+                    None,
+                ));
 
-                a.load_ident(var_name)
+                pre.bind(b.ident(var_name).transform(ctx)?)
             }
             Expr::Placeholder => pre.bind(transform_placeholder(ctx, span, access_ctx)?),
             Expr::Fn(arglist, body) => {

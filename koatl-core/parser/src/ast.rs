@@ -83,7 +83,7 @@ pub enum DeclType {
 pub enum Stmt<'a> {
     Module,
     Decl(Vec<SIdent<'a>>, DeclType),
-    Assign(SExpr<'a>, SExpr<'a>, Option<DeclType>),
+    Assign(Indirect<SExpr<'a>>, Indirect<SExpr<'a>>, Option<DeclType>),
     Expr(SExpr<'a>),
 
     Return(SExpr<'a>),

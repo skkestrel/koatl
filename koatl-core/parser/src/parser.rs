@@ -1203,7 +1203,7 @@ where
         nary_tuple.clone(),
         symbol("=").ignore_then(nary_tuple.clone()),
     ))
-    .map(|(decl, lhs, rhs)| Stmt::Assign(lhs, rhs, decl))
+    .map(|(decl, lhs, rhs)| Stmt::Assign(lhs.into(), rhs.into(), decl))
     .boxed();
 
     let inline_assign_stmt = group((
@@ -1211,7 +1211,7 @@ where
         expr.clone(),
         symbol("=").ignore_then(expr.clone()),
     ))
-    .map(|(decl, lhs, rhs)| Stmt::Assign(lhs, rhs, decl))
+    .map(|(decl, lhs, rhs)| Stmt::Assign(lhs.into(), rhs.into(), decl))
     .boxed();
 
     let expr_stmt = nary_tuple.clone().map(Stmt::Expr).boxed();
