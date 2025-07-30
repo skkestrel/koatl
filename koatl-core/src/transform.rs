@@ -1043,6 +1043,13 @@ fn transform_assignment<'src, 'ast>(
     let mut stmts = PyBlock::new();
     let a = PyAstBuilder::new(*span);
 
+    if !ctx.scope_ctx_stack.last().unwrap().lifted_decls.is_empty() {
+        return Err(TfErrBuilder::default()
+            .message("Internal error: lifted decls should be empty at this point")
+            .span(lhs.1)
+            .build_errs());
+    }
+
     let decls = if let Some(modifier) = modifier {
         destructure_decls(ctx, lhs, modifier)?
     } else {
@@ -1880,6 +1887,30 @@ enum FnDef<'src, 'ast> {
     TlFnDef(&'ast [ArgDefItem<'src>], &'ast SExpr<'src>),
 }
 
+#[allow(dead_code)]
+fn debug_scopes(ctx: &TfCtx) -> String {
+    let mut s = String::new();
+
+    for scope in &ctx.scope_ctx_stack {
+        let mut locals = String::new();
+        for decl in &scope.locals {
+            locals.push_str(&format!("{}: {}, ", decl.ident.0, decl.py_ident));
+        }
+
+        let mut lifted = String::new();
+        for decl in &scope.lifted_decls {
+            lifted.push_str(&format!("{}: {}, ", decl.ident.0, decl.py_ident));
+        }
+
+        s.push_str(&format!(
+            "SCOPE[ locals=[{}] lifted=[{}] ] ",
+            locals, lifted
+        ));
+    }
+
+    s
+}
+
 /**
  * This function uses lifted_decls to store future declarations to make recursion work.
  */
@@ -1923,16 +1954,21 @@ fn prepare_py_fn<'src, 'ast>(
             py_body.extend(post);
 
             let result = fn_scoped(ctx, FnCtx::new(), |ctx| {
-                // we need to temporarily lift declarations so they
+                // we need to temporarily lift declarations in the PREVIOUS scope
                 // can be seen by the function body
-                let scope = ctx.scope_ctx_stack.last_mut().unwrap();
-                let n_decls = scope.lifted_decls.len();
+                let n_scopes = ctx.scope_ctx_stack.len();
+                let scope = &mut ctx.scope_ctx_stack[n_scopes - 2];
+
+                let n_lifted = scope.lifted_decls.len();
                 scope.locals.extend(scope.lifted_decls.drain(..));
 
                 let body = body.transform(ctx)?;
 
-                let scope = ctx.scope_ctx_stack.last_mut().unwrap();
-                scope.lifted_decls.extend(scope.locals.drain(n_decls..));
+                // put the lifted decls back
+                let scope = &mut ctx.scope_ctx_stack[n_scopes - 2];
+                scope
+                    .lifted_decls
+                    .extend(scope.locals.drain(scope.locals.len() - n_lifted..));
 
                 Ok(body)
             });
