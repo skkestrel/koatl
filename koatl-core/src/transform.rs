@@ -1217,17 +1217,23 @@ fn transform_if_matches_expr<'src, 'ast>(
     let var = ctx.create_aux_var("if_matches", span.start);
     let meta = pattern.preprocess()?;
 
-    let on_success = scoped(ctx, ScopeCtx::new(), |ctx| {
+    let (pattern, on_success) = scoped(ctx, ScopeCtx::new(), |ctx| {
         for capture in &meta.captures {
             declare_var(ctx, &(capture.clone(), pattern.1), DeclType::Let)?;
         }
 
+        // pattern needs to know about the declared vars above
+        let pattern = pre.bind(pattern.transform(ctx)?);
+
         let mut py_then = PyBlock::new();
         let py_then_expr = py_then.bind(then_block.transform_expecting_new_block_scope(ctx)?);
         py_then.push(a.assign(a.ident(var.clone(), PyAccessCtx::Store), py_then_expr));
-        Ok(py_then)
+
+        Ok((pattern, py_then))
     })?
     .0;
+
+    let pattern_span = pattern.tl_span;
 
     let on_fail = if let Some(else_block) = else_block {
         scoped(ctx, ScopeCtx::new(), |ctx| {
@@ -1244,9 +1250,17 @@ fn transform_if_matches_expr<'src, 'ast>(
         )])
     };
 
-    let matcher = create_binary_matcher(ctx, subject, pattern, &meta, on_success, on_fail)?;
+    let mut cases = vec![a.match_case(pattern, None, on_success)];
 
-    pre.extend(matcher);
+    if !meta.default {
+        cases.push(a.match_case(
+            (PyPattern::As(None, None), pattern_span).into(),
+            None,
+            on_fail,
+        ))
+    }
+
+    pre.push(a.match_(subject, cases));
 
     Ok(SPyExprWithPre {
         value: a.ident(var, PyAccessCtx::Load),
@@ -1303,6 +1317,7 @@ fn transform_if_expr<'src, 'ast>(
     })
 }
 
+#[derive(Debug)]
 struct PatternInfo<'src> {
     default: bool,
     captures: Vec<Ident<'src>>,
