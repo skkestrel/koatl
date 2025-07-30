@@ -1268,6 +1268,89 @@ fn transform_if_matches_expr<'src, 'ast>(
     })
 }
 
+fn transform_if_matches_not_never_expr<'src, 'ast>(
+    ctx: &mut TfCtx<'src>,
+    subject: &'ast SExpr<'src>,
+    pattern_neg: &'ast SPattern<'src>,
+    pattern_meta: &'ast PatternInfo<'src>,
+    then_block: &'ast SExpr<'src>,
+    else_block: Option<&'ast SExpr<'src>>,
+    span: &Span,
+) -> TfResult<SPyExprWithPre<'src>> {
+    let mut pre = PyBlock::new();
+    let subject = pre.bind(subject.transform(ctx)?);
+
+    let a = PyAstBuilder::new(*span);
+    let var = ctx.create_aux_var("if_matches_not", span.start);
+
+    let on_no_match = scoped(ctx, ScopeCtx::new(), |ctx| {
+        let span = then_block.1;
+
+        let err = || {
+            TfErrBuilder::default()
+                .message(concat!(
+                    "then block of 'if ... matches not ...' with named captures ",
+                    "must have type Never (raise, return, continue, break)"
+                ))
+                .span(span)
+                .build_errs()
+        };
+
+        let Expr::Block(then_block) = &then_block.0 else {
+            return Err(err());
+        };
+
+        let then_block = then_block.transform(ctx)?;
+
+        let PyBlockExpr::Never = then_block.value else {
+            return Err(err());
+        };
+
+        Ok(then_block.pre)
+    })?
+    .0;
+
+    // these declarations are available to all code after this stmt
+    for capture in &pattern_meta.captures {
+        declare_var(ctx, &(capture.clone(), pattern_neg.1), DeclType::Let)?;
+    }
+
+    let pattern_span = pattern_neg.1;
+    let pattern = pre.bind(pattern_neg.transform(ctx)?);
+
+    let on_match = if let Some(else_block) = else_block {
+        scoped(ctx, ScopeCtx::new(), |ctx| {
+            let mut py_else = PyBlock::new();
+            let py_else_expr = py_else.bind(else_block.transform_expecting_new_block_scope(ctx)?);
+            py_else.push(a.assign(a.ident(var.clone(), PyAccessCtx::Store), py_else_expr));
+            Ok(py_else)
+        })?
+        .0
+    } else {
+        PyBlock(vec![a.assign(
+            a.ident(var.clone(), PyAccessCtx::Store),
+            a.literal(PyLiteral::None),
+        )])
+    };
+
+    let mut cases = vec![a.match_case(pattern, None, on_match)];
+
+    if !pattern_meta.default {
+        cases.push(a.match_case(
+            (PyPattern::As(None, None), pattern_span).into(),
+            None,
+            on_no_match,
+        ))
+    }
+
+    pre.push(a.match_(subject, cases));
+
+    Ok(SPyExprWithPre {
+        value: a.ident(var, PyAccessCtx::Load),
+        pre,
+    })
+}
+
 fn transform_if_expr<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     cond: &'ast SExpr<'src>,
@@ -1277,6 +1360,18 @@ fn transform_if_expr<'src, 'ast>(
 ) -> TfResult<SPyExprWithPre<'src>> {
     if let Expr::Matches(expr, pattern) = &cond.0 {
         return transform_if_matches_expr(ctx, expr, pattern, then_block, else_block, span);
+    }
+
+    if let Expr::Unary(UnaryOp::Not, expr) = &cond.0 {
+        if let Expr::Matches(expr, pattern) = &expr.0 {
+            let meta = pattern.preprocess()?;
+
+            if !meta.captures.is_empty() {
+                return transform_if_matches_not_never_expr(
+                    ctx, expr, pattern, &meta, then_block, else_block, span,
+                );
+            }
+        }
     }
 
     let mut pre = PyBlock::new();
@@ -2671,7 +2766,12 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
         match &stmt {
             Stmt::Expr(expr) => {
                 let expr = pre.bind(expr.transform_with_placeholder_guard(ctx)?);
-                pre.push(a.expr(expr));
+
+                if let PyExpr::Ident(_, PyAccessCtx::Load) = &expr.value {
+                    // this is a no-op, so we can skip it
+                } else {
+                    pre.push(a.expr(expr));
+                }
             }
             Stmt::Assert(expr, msg) => {
                 let expr = pre.bind(expr.transform_with_placeholder_guard(ctx)?);
@@ -3137,7 +3237,11 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 let meta = pattern.preprocess()?;
                 if meta.captures.len() > 0 {
                     return Err(TfErrBuilder::default()
-                        .message("Capturing non-'_' names in a 'matches' condition is only allowed in 'if ... matches ...'.")
+                        .message(concat!(
+                            "Non-'_' captures in a 'matches' are only ",
+                            "allowed in 'if ... matches ...', ",
+                            "or 'if ... matches not ...' constructions."
+                        ))
                         .span(*span)
                         .build_errs());
                 }
