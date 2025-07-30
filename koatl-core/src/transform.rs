@@ -167,8 +167,9 @@ trait SIdentExt<'src> {
 
     fn transform(&self, ctx: &TfCtx<'src>) -> PyIdent<'src>;
 
-    // For when it appears on the lhs. Need to explicitly capture sometimes.
-    fn transform_binding(&self, ctx: &mut TfCtx<'src>) -> TfResult<PyIdent<'src>>;
+    // When an ident appears on the lhs, this should be called before transform
+    // so that the local decl can be prepared for transform to find later.
+    fn prepare_binding(&self, ctx: &mut TfCtx<'src>) -> TfResult<PyIdent<'src>>;
 }
 
 impl<'src> SIdentExt<'src> for SIdent<'src> {
@@ -183,7 +184,7 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
         return self.escape();
     }
 
-    fn transform_binding(&self, ctx: &mut TfCtx<'src>) -> TfResult<PyIdent<'src>> {
+    fn prepare_binding(&self, ctx: &mut TfCtx<'src>) -> TfResult<PyIdent<'src>> {
         let scope = ctx.scope_ctx_stack.last_mut().ok_or_else(|| {
             TfErrBuilder::default()
                 .message("Internal error: expected a scope")
@@ -193,6 +194,8 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
 
         if scope.is_class_scope || scope.is_global_scope {
             // at class or global scope, binding can happen without 'let'
+
+            // prepare a declaration so transform() knows what to do later
 
             if !scope.locals.iter().rev().any(|d| d.ident == self.0) {
                 scope.locals.push(Declaration {
@@ -286,12 +289,20 @@ struct ScopeCtx<'src> {
     is_class_scope: bool,
     is_global_scope: bool,
     is_py_fn_scope: bool,
+
+    /**
+     * This enables special treatment for defining
+     * recursive functions; lifted_decls are added to the
+     * containing scope when processing the function body.
+     */
+    lifted_decls: Vec<Declaration<'src>>,
 }
 
 impl<'src> ScopeCtx<'src> {
     fn new() -> Self {
         Self {
             locals: Vec::new(),
+            lifted_decls: Vec::new(),
             is_py_fn_scope: false,
             is_class_scope: false,
             is_global_scope: false,
@@ -300,6 +311,7 @@ impl<'src> ScopeCtx<'src> {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ScopeSearchResultMut<'slf, 'src> {
     decl: &'slf mut Declaration<'src>,
 
@@ -358,14 +370,11 @@ impl<'src> ScopeCtxStackExt<'src> for Vec<ScopeCtx<'src>> {
     }
 }
 
-fn declare_var<'src>(
+fn create_declaration<'src>(
     ctx: &mut TfCtx<'src>,
     ident: &SIdent<'src>,
     modifier: DeclType,
-) -> TfResult<PyBlock<'src>> {
-    let mut pre = PyBlock::new();
-    let a = PyAstBuilder::new(ident.1);
-
+) -> TfResult<Option<Declaration<'src>>> {
     match modifier {
         DeclType::Global => {
             if ctx.scope_ctx_stack.len() == 1 {
@@ -378,18 +387,16 @@ fn declare_var<'src>(
             if !ctx.fn_ctx_stack.is_empty() {
                 let fn_scope = ctx.fn_ctx_stack.last_mut().unwrap();
                 fn_scope.globals.insert(ident.escape());
-                pre.push(a.global(vec![ident.escape()]).into());
             }
 
-            let scope = ctx.scope_ctx_stack.last_mut().unwrap();
-            scope.locals.push(Declaration {
+            return Ok(Some(Declaration {
                 ident: ident.0.clone(),
                 py_ident: ident.escape(),
                 const_: false,
                 const_assigned: None,
                 loc: ident.1,
                 typ: PyDeclType::GlobalCapture,
-            });
+            }));
         }
         DeclType::Export => {
             if ctx.scope_ctx_stack.len() > 1 {
@@ -400,8 +407,10 @@ fn declare_var<'src>(
             }
 
             ctx.exports.push(ident.escape());
+
+            return Ok(None);
         }
-        DeclType::Let | DeclType::Const => 'block: {
+        DeclType::Let | DeclType::Const => {
             let Some(last_ctx) = ctx.scope_ctx_stack.last_mut() else {
                 return Err(TfErrBuilder::default()
                     .message("Internal error: expected a scope")
@@ -412,6 +421,16 @@ fn declare_var<'src>(
             let is_const = modifier == DeclType::Const;
 
             if last_ctx.is_class_scope || last_ctx.is_global_scope {
+                let global = last_ctx.is_global_scope;
+
+                if let Some(found) = ctx.scope_ctx_stack.find_decl(ident) {
+                    return Err(TfErrBuilder::default()
+                        .message("Cannot shadow declarations in a class or global scope")
+                        .span(ident.1)
+                        .context("Declared here", found.decl.loc)
+                        .build_errs());
+                }
+
                 if is_const {
                     return Err(TfErrBuilder::default()
                         .message("Cannot declare a constant in a class or global scope")
@@ -422,26 +441,21 @@ fn declare_var<'src>(
                 // global scope.
                 // add a declaration so that inner scopes know how to capture it
 
-                let decl = Declaration {
+                return Ok(Some(Declaration {
                     ident: ident.clone().0,
                     py_ident: ident.escape(),
                     loc: ident.1,
                     const_: is_const,
                     const_assigned: None,
-                    typ: if last_ctx.is_global_scope {
+                    typ: if global {
                         PyDeclType::Global
                     } else {
                         PyDeclType::Local
                     },
-                };
-
-                last_ctx.locals.push(decl);
-
-                break 'block;
+                }));
             }
 
-            let scope_stack = &mut ctx.scope_ctx_stack;
-            let cur_scope = scope_stack.last().unwrap();
+            let cur_scope = ctx.scope_ctx_stack.last().unwrap();
 
             // need to make sure variable is completely shadowed, so construct a unique identifier
             let py_ident = format!(
@@ -452,8 +466,6 @@ fn declare_var<'src>(
             )
             .into();
 
-            let cur_scope = scope_stack.last_mut().unwrap();
-
             let new_decl = Declaration {
                 ident: ident.0.clone(),
                 py_ident,
@@ -463,13 +475,30 @@ fn declare_var<'src>(
                 typ: PyDeclType::Local,
             };
 
-            cur_scope.locals.push(new_decl);
-
-            break 'block;
+            return Ok(Some(new_decl));
         }
     }
+}
 
-    Ok(pre)
+fn declare_var<'src>(
+    ctx: &mut TfCtx<'src>,
+    ident: &SIdent<'src>,
+    modifier: DeclType,
+) -> TfResult<()> {
+    if let Some(decl) = create_declaration(ctx, ident, modifier)? {
+        ctx.scope_ctx_stack
+            .last_mut()
+            .ok_or_else(|| {
+                TfErrBuilder::default()
+                    .message("Internal error: expected a scope")
+                    .span(ident.1)
+                    .build_errs()
+            })?
+            .locals
+            .push(decl);
+    }
+
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -648,7 +677,6 @@ fn destructure_list<'src, 'ast>(
     let mut post = PyBlock::new();
 
     let mut lhs_items = vec![];
-    let mut decls = vec![];
     let mut seen_spread = false;
 
     for item in items.iter() {
@@ -657,7 +685,6 @@ fn destructure_list<'src, 'ast>(
                 let item_bindings = destructure(ctx, expr, modifier)?;
                 lhs_items.push(PyListItem::Item(item_bindings.assign_to));
                 post.extend(item_bindings.post);
-                decls.extend(item_bindings.declarations);
             }
             ListItem::Spread(expr) => {
                 if seen_spread {
@@ -671,7 +698,6 @@ fn destructure_list<'src, 'ast>(
                 let item_bindings = destructure(ctx, expr, modifier)?;
                 lhs_items.push(PyListItem::Spread(item_bindings.assign_to));
                 post.extend(item_bindings.post);
-                decls.extend(item_bindings.declarations);
             }
         }
     }
@@ -687,7 +713,6 @@ fn destructure_list<'src, 'ast>(
     Ok(DestructureBindings {
         post,
         assign_to: a.ident(cursor_var, PyAccessCtx::Store),
-        declarations: decls,
     })
 }
 
@@ -724,7 +749,6 @@ fn destructure_tuple<'src, 'ast>(
     ]);
 
     let mut post_stmts = vec![];
-    let mut decls = vec![];
 
     // a = list_var[0]
     // b = list_var[1]
@@ -738,7 +762,6 @@ fn destructure_tuple<'src, 'ast>(
             ListItem::Item(expr) => {
                 let item_bindings = destructure(ctx, expr, modifier)?;
                 post_stmts.extend(item_bindings.post);
-                decls.extend(item_bindings.declarations);
 
                 stmts.push(
                     a.assign(
@@ -771,7 +794,6 @@ fn destructure_tuple<'src, 'ast>(
                 // TODO restrict to only idents
                 let item_bindings = destructure(ctx, expr, modifier)?;
                 post_stmts.extend(item_bindings.post);
-                decls.extend(item_bindings.declarations);
 
                 stmts.push(a.assign(
                     item_bindings.assign_to,
@@ -798,7 +820,6 @@ fn destructure_tuple<'src, 'ast>(
     Ok(DestructureBindings {
         post: stmts,
         assign_to: a.ident(cursor_var, PyAccessCtx::Store),
-        declarations: decls,
     })
 }
 
@@ -822,7 +843,6 @@ fn destructure_mapping<'src, 'ast>(
     )]);
 
     let mut post_stmts = vec![];
-    let mut decls = vec![];
 
     // a = dict_var.pop(a_key)
     // b = dict_var.pop(b_key)
@@ -832,10 +852,10 @@ fn destructure_mapping<'src, 'ast>(
     for item in items.iter() {
         match item {
             MappingItem::Ident(ident) => stmts.push(a.assign(
-                a.ident(ident.transform_binding(ctx)?, PyAccessCtx::Store),
+                a.ident(ident.prepare_binding(ctx)?, PyAccessCtx::Store),
                 a.call(
                     a.attribute(a.load_ident(dict_var.clone()), "pop", PyAccessCtx::Load),
-                    vec![a.call_arg(a.literal(PyLiteral::Str(ident.transform_binding(ctx)?)))],
+                    vec![a.call_arg(a.literal(PyLiteral::Str(ident.prepare_binding(ctx)?)))],
                 ),
             )),
             MappingItem::Item(key, expr) => {
@@ -843,7 +863,6 @@ fn destructure_mapping<'src, 'ast>(
                 let key_node = key.transform(ctx)?;
                 post_stmts.extend(key_node.pre);
                 post_stmts.extend(item_bindings.post);
-                decls.extend(item_bindings.declarations);
 
                 stmts.push(a.assign(
                     item_bindings.assign_to,
@@ -871,7 +890,6 @@ fn destructure_mapping<'src, 'ast>(
         let item_bindings = destructure(ctx, spread_var, modifier)?;
 
         post_stmts.extend(item_bindings.post);
-        decls.extend(item_bindings.declarations);
 
         stmts.push(a.assign(item_bindings.assign_to, a.load_ident(dict_var.clone())));
     }
@@ -881,14 +899,61 @@ fn destructure_mapping<'src, 'ast>(
     Ok(DestructureBindings {
         post: stmts,
         assign_to: a.ident(cursor_var, PyAccessCtx::Store),
-        declarations: decls,
     })
 }
 
 struct DestructureBindings<'a> {
     assign_to: SPyExpr<'a>,
     post: PyBlock<'a>,
-    declarations: Vec<PyIdent<'a>>,
+}
+
+fn destructure_decls<'src, 'ast>(
+    ctx: &mut TfCtx<'src>,
+    target: &'ast SExpr<'src>,
+    modifier: DeclType,
+) -> TfResult<Vec<Declaration<'src>>> {
+    let mut decls = vec![];
+
+    match &target.0 {
+        Expr::Ident(ident) => {
+            if let Some(decl) = create_declaration(ctx, ident, modifier)? {
+                decls.push(decl);
+            }
+        }
+        Expr::RawAttribute(..) | Expr::Attribute(..) | Expr::Subscript(..) => {}
+        Expr::List(items) | Expr::Tuple(items) => {
+            for item in items {
+                match item {
+                    ListItem::Item(expr) => {
+                        decls.extend(destructure_decls(ctx, expr, modifier)?);
+                    }
+                    ListItem::Spread(expr) => {
+                        decls.extend(destructure_decls(ctx, expr, modifier)?);
+                    }
+                }
+            }
+        }
+        Expr::Mapping(items) => {
+            for item in items {
+                match item {
+                    MappingItem::Ident(ident) => {
+                        if let Some(decl) = create_declaration(ctx, ident, modifier)? {
+                            decls.push(decl);
+                        }
+                    }
+                    MappingItem::Item(_, expr) => {
+                        decls.extend(destructure_decls(ctx, expr, modifier)?);
+                    }
+                    MappingItem::Spread(expr) => {
+                        decls.extend(destructure_decls(ctx, expr, modifier)?);
+                    }
+                }
+            }
+        }
+        _ => {}
+    };
+
+    Ok(decls)
 }
 
 fn destructure<'src, 'ast>(
@@ -897,19 +962,14 @@ fn destructure<'src, 'ast>(
     modifier: Option<DeclType>,
 ) -> TfResult<DestructureBindings<'src>> {
     let mut post = PyBlock::new();
-    let mut decls = Vec::<PyIdent<'src>>::new();
 
     let assign_to: SPyExpr<'src>;
 
     match &target.0 {
         Expr::Ident(..) | Expr::RawAttribute(..) | Expr::Attribute(..) | Expr::Subscript(..) => {
             let target_node = match &target.0 {
-                Expr::Ident(id) => {
-                    if let Some(modifier) = modifier {
-                        declare_var(ctx, id, modifier)?;
-                    }
-
-                    decls.push(id.transform_binding(ctx)?);
+                Expr::Ident(ident) => {
+                    ident.prepare_binding(ctx)?;
                     target.transform_with_access(ctx, PyAccessCtx::Store)?
                 }
                 Expr::RawAttribute(..) | Expr::Subscript(..) => {
@@ -942,28 +1002,24 @@ fn destructure<'src, 'ast>(
             };
 
             post.extend(target_node.pre);
-
             assign_to = target_node.value;
         }
         Expr::List(items) => {
             let bindings = destructure_list(ctx, target, items, modifier)?;
 
             post.extend(bindings.post);
-            decls.extend(bindings.declarations);
             assign_to = bindings.assign_to;
         }
         Expr::Tuple(items) => {
             let bindings = destructure_tuple(ctx, target, items, modifier)?;
 
             post.extend(bindings.post);
-            decls.extend(bindings.declarations);
             assign_to = bindings.assign_to;
         }
         Expr::Mapping(items) => {
             let bindings = destructure_mapping(ctx, target, items, modifier)?;
 
             post.extend(bindings.post);
-            decls.extend(bindings.declarations);
             assign_to = bindings.assign_to;
         }
         _ => {
@@ -974,11 +1030,7 @@ fn destructure<'src, 'ast>(
         }
     };
 
-    Ok(DestructureBindings {
-        post,
-        assign_to,
-        declarations: decls,
-    })
+    Ok(DestructureBindings { post, assign_to })
 }
 
 fn transform_assignment<'src, 'ast>(
@@ -989,6 +1041,20 @@ fn transform_assignment<'src, 'ast>(
     span: &Span,
 ) -> TfResult<PyBlock<'src>> {
     let mut stmts = PyBlock::new();
+    let a = PyAstBuilder::new(*span);
+
+    let decls = if let Some(modifier) = modifier {
+        destructure_decls(ctx, lhs, modifier)?
+    } else {
+        vec![]
+    };
+
+    // mark lifted decls so they can be seen by function bodies (for recursion to work)
+    ctx.scope_ctx_stack
+        .last_mut()
+        .unwrap()
+        .lifted_decls
+        .extend(decls);
 
     if let Expr::Ident(ident) = &lhs.0 {
         let mut decorators: Vec<&SExpr> = vec![];
@@ -1041,54 +1107,45 @@ fn transform_assignment<'src, 'ast>(
         if let Expr::Fn(arglist, body) = &cur_node {
             let decorators = py_decorators()?;
 
-            if let Some(modifier) = modifier {
-                declare_var(ctx, ident, modifier)?;
-            }
+            // commit the lifted decls in advance since this is a simple definition
+            let scope = ctx.scope_ctx_stack.last_mut().unwrap();
+            scope.locals.extend(scope.lifted_decls.drain(..));
 
-            // transform LHS after RHS
-            let py_ident = ident.transform_binding(ctx)?;
+            let py_ident = ident.prepare_binding(ctx)?;
 
-            return Ok(make_fn_def(
+            let fn_def = make_fn_def(
                 ctx,
                 py_ident.clone(),
                 FnDef::TlFnDef(arglist, body),
                 decorators,
                 span,
-            )?);
+            )?;
+
+            return Ok(fn_def);
         } else if let Expr::Class(bases, body) = &cur_node {
             let decorators = py_decorators()?;
 
-            if let Some(modifier) = modifier {
-                declare_var(ctx, ident, modifier)?;
-            }
+            // same as above
+            let scope = ctx.scope_ctx_stack.last_mut().unwrap();
+            scope.locals.extend(scope.lifted_decls.drain(..));
 
-            // transform LHS after RHS
-            let py_ident = ident.transform_binding(ctx)?;
+            let py_ident = ident.prepare_binding(ctx)?;
 
-            return Ok(make_class_def(
-                ctx,
-                py_ident.clone(),
-                &bases,
-                &body,
-                decorators,
-                span,
-            )?);
+            let cls_def = make_class_def(ctx, py_ident.clone(), &bases, &body, decorators, span)?;
+
+            return Ok(cls_def);
         };
     };
 
     let value_node = rhs.transform_with_placeholder_guard(ctx)?;
     stmts.extend(value_node.pre);
 
-    // remember to transform LHS after RHS
-    let destructure = destructure(ctx, lhs, modifier)?;
+    // now commit the lifted decls so that the destructure has a target
+    let scope = ctx.scope_ctx_stack.last_mut().unwrap();
+    scope.locals.extend(scope.lifted_decls.drain(..));
 
-    stmts.push(
-        (
-            PyStmt::Assign(destructure.assign_to, value_node.value),
-            lhs.1,
-        )
-            .into(),
-    );
+    let destructure = destructure(ctx, lhs, modifier)?;
+    stmts.push(a.assign(destructure.assign_to, value_node.value));
     stmts.extend(destructure.post);
 
     Ok(stmts)
@@ -1824,8 +1881,7 @@ enum FnDef<'src, 'ast> {
 }
 
 /**
- * Note: whenever calling this function with `FnDef::PyFnDef`, the caller
- * should interact with ctx.fn_ctx_stack, similar to below.
+ * This function uses lifted_decls to store future declarations to make recursion work.
  */
 fn prepare_py_fn<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
@@ -1867,7 +1923,16 @@ fn prepare_py_fn<'src, 'ast>(
             py_body.extend(post);
 
             let result = fn_scoped(ctx, FnCtx::new(), |ctx| {
+                // we need to temporarily lift declarations so they
+                // can be seen by the function body
+                let scope = ctx.scope_ctx_stack.last_mut().unwrap();
+                let n_decls = scope.lifted_decls.len();
+                scope.locals.extend(scope.lifted_decls.drain(..));
+
                 let body = body.transform(ctx)?;
+
+                let scope = ctx.scope_ctx_stack.last_mut().unwrap();
+                scope.lifted_decls.extend(scope.locals.drain(n_decls..));
 
                 Ok(body)
             });
