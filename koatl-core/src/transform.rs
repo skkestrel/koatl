@@ -1202,6 +1202,58 @@ fn transform_assignment<'src, 'ast>(
     Ok(stmts)
 }
 
+fn transform_if_matches_expr<'src, 'ast>(
+    ctx: &mut TfCtx<'src>,
+    subject: &'ast SExpr<'src>,
+    pattern: &'ast SPattern<'src>,
+    then_block: &'ast SExpr<'src>,
+    else_block: Option<&'ast SExpr<'src>>,
+    span: &Span,
+) -> TfResult<SPyExprWithPre<'src>> {
+    let mut pre = PyBlock::new();
+    let subject = pre.bind(subject.transform(ctx)?);
+
+    let a = PyAstBuilder::new(*span);
+    let var = ctx.create_aux_var("if_matches", span.start);
+    let meta = pattern.preprocess()?;
+
+    let on_success = scoped(ctx, ScopeCtx::new(), |ctx| {
+        for capture in &meta.captures {
+            declare_var(ctx, &(capture.clone(), pattern.1), DeclType::Let)?;
+        }
+
+        let mut py_then = PyBlock::new();
+        let py_then_expr = py_then.bind(then_block.transform_expecting_new_block_scope(ctx)?);
+        py_then.push(a.assign(a.ident(var.clone(), PyAccessCtx::Store), py_then_expr));
+        Ok(py_then)
+    })?
+    .0;
+
+    let on_fail = if let Some(else_block) = else_block {
+        scoped(ctx, ScopeCtx::new(), |ctx| {
+            let mut py_else = PyBlock::new();
+            let py_else_expr = py_else.bind(else_block.transform_expecting_new_block_scope(ctx)?);
+            py_else.push(a.assign(a.ident(var.clone(), PyAccessCtx::Store), py_else_expr));
+            Ok(py_else)
+        })?
+        .0
+    } else {
+        PyBlock(vec![a.assign(
+            a.ident(var.clone(), PyAccessCtx::Store),
+            a.literal(PyLiteral::None),
+        )])
+    };
+
+    let matcher = create_binary_matcher(ctx, subject, pattern, &meta, on_success, on_fail)?;
+
+    pre.extend(matcher);
+
+    Ok(SPyExprWithPre {
+        value: a.ident(var, PyAccessCtx::Load),
+        pre,
+    })
+}
+
 fn transform_if_expr<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     cond: &'ast SExpr<'src>,
@@ -1209,6 +1261,10 @@ fn transform_if_expr<'src, 'ast>(
     else_block: Option<&'ast SExpr<'src>>,
     span: &Span,
 ) -> TfResult<SPyExprWithPre<'src>> {
+    if let Expr::Matches(expr, pattern) = &cond.0 {
+        return transform_if_matches_expr(ctx, expr, pattern, then_block, else_block, span);
+    }
+
     let mut pre = PyBlock::new();
     let cond = pre.bind(cond.transform(ctx)?);
     let a = PyAstBuilder::new(*span);

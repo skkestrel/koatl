@@ -71,6 +71,6 @@ assert_eq(
 
 x = 1
 assert_eq([1, 2, 3] matches [1, 2, 3], True)
-assert_eq([1, 2, 3] matches [.x, y, 3], True)
+assert_eq([1, 2, 3] matches [.x, _, 3], True)
 
 assert_eq(try 1 matches 1, True)

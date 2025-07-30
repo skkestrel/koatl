@@ -11,9 +11,9 @@ fstr = f"x = {(y => y)(x)}"
 assert_eq(fstr, "x = 1")
 
 fstr = f"={
-    a = 1
-    b = 2
-    c = 3
+    let a = 1
+    let b = 2
+    let c = 3
     a * b * c
 }="
 assert_eq(fstr, "=6=")
