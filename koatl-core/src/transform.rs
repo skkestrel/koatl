@@ -1219,7 +1219,7 @@ fn transform_if_expr<'src, 'ast>(
 
     let py_then = scoped(ctx, ScopeCtx::new(), |ctx| {
         let mut py_then = PyBlock::new();
-        let py_then_expr = py_then.bind(then_block.transform(ctx)?);
+        let py_then_expr = py_then.bind(then_block.transform_expecting_new_block_scope(ctx)?);
         py_then.push(a.assign(store_ret_var.clone(), py_then_expr));
         Ok(py_then)
     })?
@@ -1228,7 +1228,7 @@ fn transform_if_expr<'src, 'ast>(
     let py_else = if let Some(else_block) = else_block {
         scoped(ctx, ScopeCtx::new(), |ctx| {
             let mut py_else = PyBlock::new();
-            let py_else_expr = py_else.bind(else_block.transform(ctx)?);
+            let py_else_expr = py_else.bind(else_block.transform_expecting_new_block_scope(ctx)?);
             py_else.push(a.assign(store_ret_var.clone(), py_else_expr));
             Ok(py_else)
         })?
@@ -1706,7 +1706,7 @@ fn transform_match_expr<'src, 'ast>(
                 None
             };
 
-            let py_block = case.body.transform(ctx)?;
+            let py_block = case.body.transform_expecting_new_block_scope(ctx)?;
             let mut block_stmts = py_block.pre;
 
             block_stmts.push(a.assign(store_ret_var.clone(), py_block.value));
@@ -1782,7 +1782,9 @@ fn make_class_def<'src, 'ast>(
     scope.is_class_scope = true;
 
     let py_body = scoped(ctx, scope, |ctx| {
-        let mut py_body = body.transform(ctx)?.drop_expr(ctx);
+        let mut py_body = body
+            .transform_expecting_new_block_scope(ctx)?
+            .drop_expr(ctx);
 
         if py_body.is_empty() {
             py_body.push((PyStmt::Pass, *span).into());
@@ -2022,7 +2024,7 @@ fn prepare_py_fn<'src, 'ast>(
                 let n_lifted = scope.lifted_decls.len();
                 scope.locals.extend(scope.lifted_decls.drain(..));
 
-                let body = body.transform(ctx)?;
+                let body = body.transform_expecting_new_block_scope(ctx)?;
 
                 // put the lifted decls back
                 let scope = &mut ctx.scope_ctx_stack[n_scopes - 2];
@@ -2643,7 +2645,10 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                     let (matcher, cursor) = create_throwing_matcher(ctx, target, &meta)?;
                     py_body.extend(matcher);
-                    py_body.extend(body.transform(ctx)?.drop_expr(ctx));
+                    py_body.extend(
+                        body.transform_expecting_new_block_scope(ctx)?
+                            .drop_expr(ctx),
+                    );
 
                     pre.push(a.for_(
                         a.ident(cursor.clone(), PyAccessCtx::Store),
@@ -2666,7 +2671,9 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 })?;
 
                 let body_block = scoped(ctx, ScopeCtx::new(), |ctx| {
-                    Ok(body.transform(ctx)?.drop_expr(ctx))
+                    Ok(body
+                        .transform_expecting_new_block_scope(ctx)?
+                        .drop_expr(ctx))
                 })?
                 .0;
 
@@ -2701,14 +2708,18 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
             }
             Stmt::Try(body, excepts, finally) => {
                 let body_block = scoped(ctx, ScopeCtx::new(), |ctx| {
-                    Ok(body.transform(ctx)?.drop_expr(ctx))
+                    Ok(body
+                        .transform_expecting_new_block_scope(ctx)?
+                        .drop_expr(ctx))
                 })?
                 .0;
 
                 let finally_block = if let Some(finally) = finally {
                     Some(
                         scoped(ctx, ScopeCtx::new(), |ctx| {
-                            Ok(finally.transform(ctx)?.drop_expr(ctx))
+                            Ok(finally
+                                .transform_expecting_new_block_scope(ctx)?
+                                .drop_expr(ctx))
                         })?
                         .0,
                     )
@@ -2849,6 +2860,18 @@ trait SExprExt<'src> {
         ctx: &mut TfCtx<'src>,
         py_ctx: PyAccessCtx,
     ) -> TfResult<SPyExprWithPre<'src>>;
+
+    fn transform_expecting_new_block_scope<'ast>(
+        &'ast self,
+        ctx: &mut TfCtx<'src>,
+    ) -> TfResult<SPyExprWithPre<'src>>;
+
+    fn transform_full<'ast>(
+        &'ast self,
+        ctx: &mut TfCtx<'src>,
+        py_ctx: PyAccessCtx,
+        create_new_block_scope: bool,
+    ) -> TfResult<SPyExprWithPre<'src>>;
 }
 
 impl<'src> SExprExt<'src> for SExpr<'src> {
@@ -2895,7 +2918,23 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
     fn transform_with_access<'ast>(
         &'ast self,
         ctx: &mut TfCtx<'src>,
+        py_ctx: PyAccessCtx,
+    ) -> TfResult<SPyExprWithPre<'src>> {
+        self.transform_full(ctx, py_ctx, true)
+    }
+
+    fn transform_expecting_new_block_scope<'ast>(
+        &'ast self,
+        ctx: &mut TfCtx<'src>,
+    ) -> TfResult<SPyExprWithPre<'src>> {
+        self.transform_full(ctx, PyAccessCtx::Load, false)
+    }
+
+    fn transform_full<'ast>(
+        &'ast self,
+        ctx: &mut TfCtx<'src>,
         access_ctx: PyAccessCtx,
+        create_new_block_scope: bool,
     ) -> TfResult<SPyExprWithPre<'src>> {
         let (expr, span) = self;
         let a = PyAstBuilder::new(*span);
@@ -2971,21 +3010,14 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             Expr::Class(bases, body) => {
                 let name: Cow<_> = ctx.create_aux_var("clsexp", span.start).into();
 
-                let mut scope = ScopeCtx::new();
-                scope.is_class_scope = true;
-
-                scoped(ctx, scope, |ctx| {
-                    pre.extend(make_class_def(
-                        ctx,
-                        name.clone(),
-                        bases,
-                        body,
-                        PyDecorators::new(),
-                        span,
-                    )?);
-
-                    Ok(())
-                })?;
+                pre.extend(make_class_def(
+                    ctx,
+                    name.clone(),
+                    bases,
+                    body,
+                    PyDecorators::new(),
+                    span,
+                )?);
 
                 a.load_ident(name)
             }
@@ -3013,9 +3045,11 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 span,
             )?),
             Expr::Block(block) => {
-                // TODO this doesn't introduce a new scope properly - fix in combination with functions, ifs, etc
-
-                let block = pre.bind(block.transform(ctx)?);
+                let block = if create_new_block_scope {
+                    pre.bind(scoped(ctx, ScopeCtx::new(), |ctx| block.transform(ctx))?.0)
+                } else {
+                    pre.bind(block.transform(ctx)?)
+                };
 
                 match block {
                     PyBlockExpr::Expr(expr) => expr,
@@ -3032,8 +3066,12 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 let var = ctx.create_aux_var("matches", span.start);
 
                 let meta = pattern.preprocess()?;
-
-                // TODO create a new scope here somehow for ifs, prevent leaking.
+                if meta.captures.len() > 0 {
+                    return Err(TfErrBuilder::default()
+                        .message("Capturing names in a 'matches' condition is only allowed in 'if ... matches ...'.")
+                        .span(*span)
+                        .build_errs());
+                }
 
                 let matcher = create_binary_matcher(
                     ctx,
