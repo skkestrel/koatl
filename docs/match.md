@@ -86,9 +86,10 @@ x = try a except NameError() # caught
 y = try a except ValueError() # exception will be raised!
 ```
 
-## Matches-expressions
+## Matches-expressions and guards
 
-Matches-expressions resolve to either True or False depending on whether the value matches the provided pattern:
+Matches-expressions resolve to either True or False depending on whether the value matches the provided pattern,
+and the bound names are available in the following block:
 
 ```koatl
 >>> x = [1, 2, 3]
@@ -97,16 +98,17 @@ Matches-expressions resolve to either True or False depending on whether the val
 1 [2, 3]
 ```
 
-`matches not` is the inverse of `matches`.
+`matches not` is the inverse; and bound names are available afterwards, but only if the type of the next block is Never (i.e., it raises, returns, breaks, or continues at the end)
 
 ```koatl
->>> 1 matches 1
-True
->>> 1 matches not 1
-False
+>>> if [1, 2] matches not [x, y]:
+>>>     raise
+>>> print(x, y)
+1 2
 ```
 
+These restrictions can be avoided by making sure to not bind any names in the pattern:
+
 ```koatl
->>> [1, 2, 3] matches not [x, y]
-True
+>>> x = [1, 2] matches not [_, _]
 ```

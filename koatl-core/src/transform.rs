@@ -2803,7 +2803,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     let expr = pre.bind(expr.transform_with_placeholder_guard(ctx)?);
                     pre.push(a.raise(Some(expr)));
                 } else {
-                    pre.push(a.raise(None));
+                    pre.push(a.raise(Some(a.call(a.tl_builtin("Exception"), vec![]))));
                 }
             }
             Stmt::For(target, iter, body) => {

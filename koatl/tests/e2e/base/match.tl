@@ -74,3 +74,16 @@ assert_eq([1, 2, 3] matches [1, 2, 3], True)
 assert_eq([1, 2, 3] matches [.x, _, 3], True)
 
 assert_eq(try 1 matches 1, True)
+
+f = () =>
+    if [1, 2, 3] matches [1, 2, x]:
+        assert_eq(x, 3)
+    else:
+        assert False
+
+    if [1, 2, 3] matches not [1, 2, x]:
+        raise
+    else:
+        assert_eq(x, 3)
+
+f()
