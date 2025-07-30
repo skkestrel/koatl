@@ -36,7 +36,9 @@ ValueError() matches Ok() == False
 ValueError() matches Err() == True
 ```
 
-The Result monad represents error handling and early return.
+The Result monad represents error handling and early return - `Ok` is success, while `None` and `Err` types are failure.
+
+> Note: unlike Rust's Result, `None` and `Err` are distinct error-ish types.
 
 ```koatl
 f = () =>

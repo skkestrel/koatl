@@ -29,6 +29,12 @@ export Result = class(Monad):
         else:
             return self
 
+    map_none = (self, f) =>
+        if self matches None:
+            return f()
+        else:
+            return self
+
 OkMeta = class(type):
     __instancecheck__ = (cls, instance) => __tl__.ok(instance)
 
@@ -42,10 +48,11 @@ export Ok = class(metaclass=OkMeta):
     # so need to copy the methods over manually from Result
 
     # We could just use the object fallback methods, but this avoids
-    # the manual __tl__.vget
+    # the manual __tl__.vget so is slightly faster
     bind_once = Result.bind_once
     bind_gen = Result.bind_gen
     map_err = Result.map_err
+    map_none = Result.map_none
 
     assert = staticmethod& value =>
         value match:
@@ -59,6 +66,12 @@ register_global_attr(
     object,
     "map_err",
     Result.map_err
+)
+
+register_global_attr(
+    object,
+    "map_none",
+    Result.map_none
 )
 
 register_global_attr(

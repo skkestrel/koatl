@@ -46,10 +46,11 @@ bind_once = (self, f) => f(self)
 pure = staticmethod& v => v
 ```
 
-### `map_err`
+### `map_err` and `map_none`
 
-Like above, this is available on all objects, and is roughly equivalent to:
+Like above, these are available on all objects, and roughly equivalent to:
 
 ```koatl
 map_err = (self, f) => self matches BaseException() then f(self) else self
+map_none = (self, f) => self matches None then f() else self
 ```
