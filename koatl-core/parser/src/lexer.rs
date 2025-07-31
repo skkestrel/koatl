@@ -7,7 +7,7 @@ use chumsky::{
 };
 use std::{collections::HashSet, fmt};
 
-use crate::ast::{Span, Spanned};
+use crate::ast::{Span, SpannableExt, Spanned};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token<'src> {
@@ -27,6 +27,15 @@ pub enum Token<'src> {
 
 #[derive(Debug)]
 pub struct TokenList<'src>(pub Vec<Spanned<Token<'src>>>);
+
+impl<'src> IntoIterator for TokenList<'src> {
+    type Item = Spanned<Token<'src>>;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
 
 impl fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -53,8 +62,8 @@ impl<'src> std::iter::FromIterator<Spanned<Token<'src>>> for TokenList<'src> {
 
 impl fmt::Display for TokenList<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for (i, (token, span)) in self.0.iter().enumerate() {
-            write!(f, "{token}")?;
+        for (i, stoken) in self.0.iter().enumerate() {
+            write!(f, "{}", stoken.value)?;
             if i < self.0.len() - 1 {
                 write!(f, " ")?;
             }
@@ -207,7 +216,7 @@ where
 
     fn parse_indentation(&mut self) -> TResult<'src, Spanned<usize>> {
         let start = self.cursor();
-        let mut indent_level = 0;
+        let mut indent_level: usize = 0;
 
         if self.peek().is_none() {
             return Err(Rich::custom(
@@ -226,7 +235,7 @@ where
         }
 
         self.parse_nonsemantic()?;
-        Ok((indent_level, self.span_since(&start)))
+        Ok(indent_level.spanned(self.span_since(&start)))
     }
 
     fn parse_ident_or_token(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
@@ -247,21 +256,18 @@ where
 
         let ident = self.slice_since(&start);
         if self.keywords.contains(ident) {
-            return Ok((Token::Kw(ident), self.span_since(&start)));
+            return Ok(Token::Kw(ident).spanned(self.span_since(&start)));
         }
 
         if ident == "True" {
-            return Ok((Token::Bool(true), self.span_since(&start)));
+            return Ok(Token::Bool(true).spanned(self.span_since(&start)));
         } else if ident == "False" {
-            return Ok((Token::Bool(false), self.span_since(&start)));
+            return Ok(Token::Bool(false).spanned(self.span_since(&start)));
         } else if ident == "None" {
-            return Ok((Token::None, self.span_since(&start)));
+            return Ok(Token::None.spanned(self.span_since(&start)));
         }
 
-        Ok((
-            Token::Ident(self.slice_since(&start)),
-            self.span_since(&start),
-        ))
+        Ok(Token::Ident(self.slice_since(&start)).spanned(self.span_since(&start)))
     }
 
     fn parse_symbol(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
@@ -283,17 +289,14 @@ where
                 for _ in 0..polygram.len() {
                     self.next();
                 }
-                return Ok((Token::Symbol(polygram), self.span_since(&start)));
+                return Ok(Token::Symbol(polygram).spanned(self.span_since(&start)));
             }
         }
         for monogram in MONOGRAMS.chars() {
             if sl.starts_with(monogram) {
                 self.input.rewind(saved);
                 self.next();
-                return Ok((
-                    Token::Symbol(self.slice_since(&start)),
-                    self.span_since(&start),
-                ));
+                return Ok(Token::Symbol(self.slice_since(&start)).spanned(self.span_since(&start)));
             }
         }
 
@@ -345,10 +348,7 @@ where
         }
 
         Ok((
-            (
-                Token::Num(self.slice_since(&start)),
-                self.span_since(&start),
-            ),
+            Token::Num(self.slice_since(&start)).spanned(self.span_since(&start)),
             after_dot,
         ))
     }
@@ -535,7 +535,7 @@ where
         let mut s = String::new();
         loop {
             if self.try_parse(|x| x.parse_seq("\"")).is_ok() {
-                return Ok((Token::Str(s), self.span_since(&start)));
+                return Ok(Token::Str(s).spanned(self.span_since(&start)));
             }
 
             if self.try_parse(|x| x.parse_newline()).is_ok() {
@@ -554,7 +554,7 @@ where
         let mut s = String::new();
         loop {
             if self.try_parse(|x| x.parse_seq("\"\"\"")).is_ok() {
-                return Ok((Token::Str(s), self.span_since(&start)));
+                return Ok(Token::Str(s).spanned(self.span_since(&start)));
             }
 
             s.push(self.next().ok_or_else(|| {
@@ -581,9 +581,9 @@ where
                 .is_ok()
             {
                 if tokens.len() == 0 {
-                    tokens.push((Token::FstrBegin(current_str), self.span_since(&marker)));
+                    tokens.push(Token::FstrBegin(current_str).spanned(self.span_since(&marker)));
                 } else {
-                    tokens.push((Token::FstrContinue(current_str), self.span_since(&marker)));
+                    tokens.push(Token::FstrContinue(current_str).spanned(self.span_since(&marker)));
                 }
 
                 return Ok(TokenList(tokens));
@@ -610,35 +610,34 @@ where
 
             if self.try_parse(|x| x.parse_seq("{")).is_ok() {
                 if tokens.len() == 0 {
-                    tokens.push((Token::FstrBegin(current_str), self.span_since(&marker)));
+                    tokens.push(Token::FstrBegin(current_str).spanned(self.span_since(&marker)));
                 } else {
-                    tokens.push((Token::FstrContinue(current_str), self.span_since(&marker)));
+                    tokens.push(Token::FstrContinue(current_str).spanned(self.span_since(&marker)));
                 }
                 current_str = String::new();
 
                 self.parse_nonsemantic()?;
                 let _ = self.try_parse(|x| x.parse_newline());
 
-                let (expr, expr_span) =
-                    self.try_parse(|x| x.parse_block(0, NewBlockType::BeginInput))?;
+                let sexpr = self.try_parse(|x| x.parse_block(0, NewBlockType::BeginInput))?;
 
                 let _ = self.try_parse(|x| x.parse_newline());
                 self.try_parse(|x| x.parse_indentation())?;
                 self.try_parse(|x| x.parse_seq("}"))?;
 
-                tokens.push((
-                    Token::Symbol("BEGIN_BLOCK"),
-                    Span::new(expr_span.context, expr_span.start..expr_span.start),
-                ));
-                tokens.extend(expr.0);
-                tokens.push((
-                    Token::Eol,
-                    Span::new(expr_span.context, expr_span.end..expr_span.end),
-                ));
-                tokens.push((
-                    Token::Symbol("END_BLOCK"),
-                    Span::new(expr_span.context, expr_span.end..expr_span.end),
-                ));
+                tokens.push(Token::Symbol("BEGIN_BLOCK").spanned(Span::new(
+                    sexpr.span.context,
+                    sexpr.span.start..sexpr.span.start,
+                )));
+                tokens.extend(sexpr.value);
+                tokens.push(Token::Eol.spanned(Span::new(
+                    sexpr.span.context,
+                    sexpr.span.end..sexpr.span.end,
+                )));
+                tokens.push(Token::Symbol("END_BLOCK").spanned(Span::new(
+                    sexpr.span.context,
+                    sexpr.span.end..sexpr.span.end,
+                )));
 
                 marker = self.cursor();
 
@@ -709,24 +708,26 @@ where
         // TODO should parse_empty_line be part of parse_indentation?
         while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
 
-        let (indent_level, indent_span) =
-            self.try_parse(|x| x.parse_indentation()).map_err(|_| {
-                Rich::custom(
-                    self.span_since(&self.cursor()),
-                    "expected indentation at the beginning of parse_block",
-                )
-            })?;
+        let indent_level = self.try_parse(|x| x.parse_indentation()).map_err(|_| {
+            Rich::custom(
+                self.span_since(&self.cursor()),
+                "expected indentation at the beginning of parse_block",
+            )
+        })?;
 
         match block_type {
             NewBlockType::BeginInput => {}
             NewBlockType::NewBlock => {
-                if indent_level <= current_indent {
-                    return Err(Rich::custom(indent_span, "expected new block indentation"));
+                if indent_level.value <= current_indent {
+                    return Err(Rich::custom(
+                        indent_level.span,
+                        "expected new block indentation",
+                    ));
                 }
             }
             NewBlockType::Continuation => {
-                if indent_level <= current_indent {
-                    return Err(Rich::custom(indent_span, "expected continuation"));
+                if indent_level.value <= current_indent {
+                    return Err(Rich::custom(indent_level.span, "expected continuation"));
                 }
             }
         }
@@ -768,10 +769,10 @@ where
                         break;
                     }
 
-                    if let Token::Symbol(s) = &tok.0 {
+                    if let Token::Symbol(s) = &tok.value {
                         let char = s.chars().next().unwrap_or('\0');
                         if OPEN_DELIMS.contains(&char) {
-                            delim_stack.push((char, tok.1));
+                            delim_stack.push((char, tok.span));
                         } else if let Some(i) = CLOSE_DELIMS.iter().position(|&c| c == char) {
                             let corresponding_open = OPEN_DELIMS[i];
 
@@ -811,7 +812,7 @@ where
                 expect_new_block = false;
 
                 if let Some(last_token) = tokens.last() {
-                    if let Token::Symbol(s) = last_token.0 {
+                    if let Token::Symbol(s) = last_token.value {
                         if s == "=>"
                             || s == ":"
                             || OPEN_DELIMS.contains(&s.chars().next().unwrap_or('\0'))
@@ -841,29 +842,26 @@ where
 
             if expect_new_block {
                 let new_block =
-                    self.try_parse(|x| x.parse_block(indent_level, NewBlockType::NewBlock));
+                    self.try_parse(|x| x.parse_block(indent_level.value, NewBlockType::NewBlock));
 
-                if let Ok((new_block, new_block_span)) = new_block {
-                    tokens.push((
-                        Token::Symbol("BEGIN_BLOCK"),
-                        Span::new(
-                            new_block_span.context,
-                            new_block_span.start..new_block_span.start,
-                        ),
-                    ));
-                    tokens.extend(new_block.0);
+                if let Ok(new_block) = new_block {
+                    tokens.push(Token::Symbol("BEGIN_BLOCK").spanned(Span::new(
+                        new_block.span.context,
+                        new_block.span.start..new_block.span.start,
+                    )));
+                    tokens.extend(new_block.value);
 
                     let end_span = Span::new(
-                        new_block_span.context,
-                        new_block_span.end..new_block_span.end,
+                        new_block.span.context,
+                        new_block.span.end..new_block.span.end,
                     );
 
                     // don't push another eol if the last token is already eol (edge case fix)
-                    if tokens.last().is_none_or(|t| t.0 != Token::Eol) {
-                        tokens.push((Token::Eol, end_span));
+                    if tokens.last().is_none_or(|t| t.value != Token::Eol) {
+                        tokens.push(Token::Eol.spanned(end_span));
                     }
 
-                    tokens.push((Token::Symbol("END_BLOCK"), end_span));
+                    tokens.push(Token::Symbol("END_BLOCK").spanned(end_span));
 
                     // continue in order to catch trailing characters after the block
                     continue;
@@ -878,17 +876,17 @@ where
 
             while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
 
-            if let Ok((cur_indent_level, cur_indent_span)) =
-                self.look_ahead(|x| x.parse_indentation())
-            {
-                if cur_indent_level > indent_level {
+            if let Ok(cur_indent) = self.look_ahead(|x| x.parse_indentation()) {
+                if cur_indent.value > indent_level.value {
                     // handle continuation
-                    let (new_block, new_block_span) = self
-                        .try_parse(|x| x.parse_block(indent_level, NewBlockType::Continuation))?;
+                    let new_block = self.try_parse(|x| {
+                        x.parse_block(indent_level.value, NewBlockType::Continuation)
+                    })?;
 
-                    tokens.extend(new_block.0);
+                    tokens.extend(new_block.value);
+
                     continue;
-                } else if cur_indent_level < indent_level {
+                } else if cur_indent.value < indent_level.value {
                     // end of the block - rewind
                     self.input.rewind(before_newline);
                     break;
@@ -898,8 +896,8 @@ where
 
                 if block_type != NewBlockType::Continuation {
                     // don't push another eol if the last token is already eol (edge case fix)
-                    if tokens.last().is_none_or(|t| t.0 != Token::Eol) {
-                        tokens.push((Token::Eol, eol_span));
+                    if tokens.last().is_none_or(|t| t.value != Token::Eol) {
+                        tokens.push(Token::Eol.spanned(eol_span));
                     }
                 }
             } else {
@@ -919,14 +917,17 @@ where
          */
         let block_span = if let Some(last_block_token) = tokens.last() {
             Span::new(
-                indent_span.context,
-                indent_span.start..last_block_token.1.end,
+                indent_level.span.context,
+                indent_level.span.start..last_block_token.span.end,
             )
         } else {
-            Span::new(indent_span.context, indent_span.start..indent_span.end)
+            Span::new(
+                indent_level.span.context,
+                indent_level.span.start..indent_level.span.end,
+            )
         };
 
-        Ok((TokenList(tokens), block_span))
+        Ok(TokenList(tokens).spanned(block_span))
     }
 
     fn tokenize_input(&mut self) -> TResult<'src, TokenList<'src>> {
@@ -936,9 +937,13 @@ where
             return Ok(TokenList(vec![]));
         }
 
-        let (mut tokens, span) = self.parse_block(0, NewBlockType::BeginInput)?;
-        tokens.0.push((Token::Eol, self.span_since(&self.cursor())));
-        Ok(tokens)
+        let mut tokens = self.parse_block(0, NewBlockType::BeginInput)?;
+        tokens
+            .value
+            .0
+            .push(Token::Eol.spanned(self.span_since(&self.cursor())));
+
+        Ok(tokens.value)
     }
 }
 

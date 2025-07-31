@@ -1,10 +1,36 @@
-use std::{borrow::Cow, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 use chumsky::span::SimpleSpan;
 
 pub type Span = SimpleSpan<usize, ()>;
-pub type Spanned<T> = (T, Span);
-pub type Indirect<T> = Rc<T>;
+
+#[derive(Debug, Clone)]
+pub struct Spanned<T> {
+    pub span: Span,
+    pub value: T,
+}
+
+pub trait SpannableExt<T> {
+    fn spanned(self, span: Span) -> Spanned<T>;
+}
+
+impl<T> SpannableExt<T> for T {
+    fn spanned(self, span: Span) -> Spanned<T> {
+        Spanned { span, value: self }
+    }
+}
+
+pub type Indirect<T> = Rc<RefCell<T>>;
+
+pub trait IndirectExt<T> {
+    fn indirect(self) -> Indirect<T>;
+}
+
+impl<T> IndirectExt<T> for T {
+    fn indirect(self) -> Indirect<T> {
+        Rc::new(RefCell::new(self))
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
 pub enum BinaryOp {
@@ -53,6 +79,16 @@ impl<'a> From<Cow<'a, str>> for Ident<'a> {
 pub type SIdent<'a> = Spanned<Ident<'a>>;
 
 #[derive(Debug, Clone)]
+pub enum Literal<'a> {
+    Num(Cow<'a, str>),
+    Str(Cow<'a, str>),
+    Bool(bool),
+    None,
+}
+
+pub type SLiteral<'a> = Spanned<Literal<'a>>;
+
+#[derive(Debug, Clone)]
 pub enum ImportList<'a> {
     // ident, alias
     Leaves(Vec<(SIdent<'a>, Option<SIdent<'a>>)>),
@@ -78,169 +114,188 @@ pub enum DeclType {
     Const,
 }
 
-// TODO should these be cows
 #[derive(Debug, Clone)]
-pub enum Stmt<'a> {
+pub enum Stmt<'a, TNode, TPattern> {
     Module,
-    Decl(Vec<SIdent<'a>>, DeclType),
-    Assign(Indirect<SExpr<'a>>, Indirect<SExpr<'a>>, Option<DeclType>),
-    Expr(SExpr<'a>),
+    Decl(Vec<TNode>, DeclType),
+    Assign(TNode, TNode, Option<DeclType>),
+    Expr(TNode),
 
-    Return(SExpr<'a>),
-    While(SExpr<'a>, SExpr<'a>),
-    For(SPattern<'a>, SExpr<'a>, SExpr<'a>),
+    Return(TNode),
+    While(TNode, TNode),
+    For(TPattern, TNode, TNode),
     Import(ImportStmt<'a>),
-    Try(SExpr<'a>, Vec<Indirect<MatchCase<'a>>>, Option<SExpr<'a>>),
-    Assert(SExpr<'a>, Option<SExpr<'a>>),
-    Raise(Option<SExpr<'a>>),
+    Try(
+        TNode,
+        Vec<Indirect<MatchCase<TNode, TPattern>>>,
+        Option<TNode>,
+    ),
+    Assert(TNode, Option<TNode>),
+    Raise(Option<TNode>),
+
     Break,
     Continue,
-    Err,
 }
 
-pub type SStmt<'a> = Spanned<Stmt<'a>>;
-
 #[derive(Debug, Clone)]
-pub enum Literal<'a> {
-    Num(Cow<'a, str>),
-    Str(Cow<'a, str>),
-    Bool(bool),
-    None,
-}
-
-pub type SLiteral<'a> = Spanned<Literal<'a>>;
-
-#[derive(Debug, Clone)]
-pub struct FmtExpr<'a> {
-    pub expr: SExpr<'a>,
+pub struct FmtExpr<'a, TExpr> {
+    pub expr: TExpr,
     pub fmt: Option<Ident<'a>>,
 }
 
-pub type SFmtExpr<'a> = Spanned<FmtExpr<'a>>;
-
 #[derive(Debug, Clone)]
-pub enum ListItem<'a> {
-    Item(SExpr<'a>),
-    Spread(SExpr<'a>),
+pub enum ListItem<TExpr> {
+    Item(TExpr),
+    Spread(TExpr),
 }
 
 #[derive(Debug, Clone)]
-pub enum MappingItem<'a> {
+pub enum MappingItem<'a, TExpr> {
     Ident(SIdent<'a>),
-    Item(SExpr<'a>, SExpr<'a>),
-    Spread(SExpr<'a>),
+    Item(TExpr, TExpr),
+    Spread(TExpr),
 }
 
 #[derive(Debug, Clone)]
-pub enum CallItem<'a> {
-    Arg(SExpr<'a>),
-    Kwarg(SIdent<'a>, SExpr<'a>),
-    ArgSpread(SExpr<'a>),
-    KwargSpread(SExpr<'a>),
+pub enum CallItem<'a, TExpr> {
+    Arg(TExpr),
+    Kwarg(SIdent<'a>, TExpr),
+    ArgSpread(TExpr),
+    KwargSpread(TExpr),
 }
 
-pub type SCallItem<'a> = Spanned<CallItem<'a>>;
-
 #[derive(Debug, Clone)]
-pub enum ArgDefItem<'a> {
-    Arg(ISPattern<'a>, Option<SExpr<'a>>),
+pub enum ArgDefItem<'a, TExpr, TPattern> {
+    Arg(TPattern, Option<TExpr>),
     ArgSpread(SIdent<'a>),
     KwargSpread(SIdent<'a>),
 }
 
-pub type SArgItem<'a> = Spanned<ArgDefItem<'a>>;
-
 #[derive(Debug, Clone)]
-pub struct MatchCase<'src> {
-    pub pattern: Option<Indirect<SPattern<'src>>>,
-    pub guard: Option<SExpr<'src>>,
-    pub body: SExpr<'src>,
+pub struct MatchCase<TExpr, TPattern> {
+    pub pattern: Option<TPattern>,
+    pub guard: Option<TExpr>,
+    pub body: TExpr,
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr<'a> {
+pub enum Expr<'a, TExpr, TPattern> {
     Literal(SLiteral<'a>),
     Ident(SIdent<'a>),
     Placeholder,
-    Tuple(Vec<ListItem<'a>>),
-    List(Vec<ListItem<'a>>),
-    Mapping(Vec<MappingItem<'a>>),
-    Slice(
-        Option<Indirect<SExpr<'a>>>,
-        Option<Indirect<SExpr<'a>>>,
-        Option<Indirect<SExpr<'a>>>,
-    ),
+    Tuple(Vec<ListItem<TExpr>>),
+    List(Vec<ListItem<TExpr>>),
+    Mapping(Vec<MappingItem<'a, TExpr>>),
+    Slice(Option<TExpr>, Option<TExpr>, Option<TExpr>),
 
-    Unary(UnaryOp, Indirect<SExpr<'a>>),
-    Binary(BinaryOp, Indirect<SExpr<'a>>, Indirect<SExpr<'a>>),
+    Unary(UnaryOp, TExpr),
+    Binary(BinaryOp, TExpr, TExpr),
 
-    Await(Indirect<SExpr<'a>>),
-    Yield(Indirect<SExpr<'a>>),
-    YieldFrom(Indirect<SExpr<'a>>),
+    Await(TExpr),
+    Yield(TExpr),
+    YieldFrom(TExpr),
 
-    If(
-        Indirect<SExpr<'a>>,
-        Indirect<SExpr<'a>>,
-        Option<Indirect<SExpr<'a>>>,
-    ),
-    Match(Indirect<SExpr<'a>>, Vec<Indirect<MatchCase<'a>>>),
-    Matches(Indirect<SExpr<'a>>, ISPattern<'a>),
-    Class(Vec<SCallItem<'a>>, Indirect<SExpr<'a>>),
+    If(TExpr, TExpr, Option<TExpr>),
+    Match(TExpr, Vec<Indirect<MatchCase<TExpr, TPattern>>>),
+    Matches(TExpr, TPattern),
+    Class(Vec<CallItem<'a, TExpr>>, TExpr),
 
-    Call(Indirect<SExpr<'a>>, Vec<SCallItem<'a>>),
-    Subscript(Indirect<SExpr<'a>>, Vec<ListItem<'a>>),
-    RawAttribute(Indirect<SExpr<'a>>, SIdent<'a>),
-    ScopedAttribute(Indirect<SExpr<'a>>, Indirect<SExpr<'a>>),
-    Attribute(Indirect<SExpr<'a>>, SIdent<'a>),
+    Call(TExpr, Vec<CallItem<'a, TExpr>>),
+    Subscript(TExpr, Vec<ListItem<TExpr>>),
+    RawAttribute(TExpr, SIdent<'a>),
+    ScopedAttribute(TExpr, TExpr),
+    Attribute(TExpr, SIdent<'a>),
 
-    MappedCall(Indirect<SExpr<'a>>, Vec<SCallItem<'a>>),
-    MappedSubscript(Indirect<SExpr<'a>>, Vec<ListItem<'a>>),
-    MappedRawAttribute(Indirect<SExpr<'a>>, SIdent<'a>),
-    MappedScopedAttribute(Indirect<SExpr<'a>>, Indirect<SExpr<'a>>),
-    MappedAttribute(Indirect<SExpr<'a>>, SIdent<'a>),
+    MappedCall(TExpr, Vec<CallItem<'a, TExpr>>),
+    MappedSubscript(TExpr, Vec<ListItem<TExpr>>),
+    MappedRawAttribute(TExpr, SIdent<'a>),
+    MappedScopedAttribute(TExpr, TExpr),
+    MappedAttribute(TExpr, SIdent<'a>),
 
-    Checked(Indirect<SExpr<'a>>, Option<ISPattern<'a>>),
+    Checked(TExpr, Option<TPattern>),
 
-    Fn(Vec<ArgDefItem<'a>>, Indirect<SExpr<'a>>),
-    Fstr(Spanned<String>, Vec<(SFmtExpr<'a>, Spanned<String>)>),
+    Fn(Vec<Spanned<ArgDefItem<'a, TExpr, TPattern>>>, TExpr),
+    Fstr(Spanned<String>, Vec<(FmtExpr<'a, TExpr>, Spanned<String>)>),
 
-    Decorated(Indirect<SExpr<'a>>, Indirect<SExpr<'a>>),
+    Decorated(TExpr, TExpr),
 
     Block(Vec<SStmt<'a>>),
 }
 
-pub type SExpr<'a> = Spanned<Expr<'a>>;
+// Patterns
 
 #[derive(Debug, Clone)]
-pub enum PatternSequenceItem<'a> {
-    Item(ISPattern<'a>),
+pub enum PatternSequenceItem<'a, TPattern> {
+    Item(TPattern),
     Spread(Option<SIdent<'a>>),
 }
 
 #[derive(Debug, Clone)]
-pub enum PatternMappingItem<'a> {
+pub enum PatternMappingItem<'a, TExpr, TPattern> {
     Ident(SIdent<'a>),
-    Item(SExpr<'a>, ISPattern<'a>),
+    Item(TExpr, TPattern),
     Spread(Option<SIdent<'a>>),
 }
 
 #[derive(Debug, Clone)]
-pub enum PatternClassItem<'a> {
-    Item(ISPattern<'a>),
-    Kw(SIdent<'a>, ISPattern<'a>),
+pub enum PatternClassItem<'a, TPattern> {
+    Item(TPattern),
+    Kw(SIdent<'a>, TPattern),
 }
 
 #[derive(Debug, Clone)]
-pub enum Pattern<'a> {
+pub enum Pattern<'a, TExpr, TPattern> {
     Capture(Option<SIdent<'a>>),
-    Value(SExpr<'a>),
-    As(ISPattern<'a>, SIdent<'a>),
-    Or(Vec<ISPattern<'a>>),
+    Value(TExpr),
+    As(TPattern, SIdent<'a>),
+    Or(Vec<TPattern>),
     Literal(SLiteral<'a>),
-    Sequence(Vec<PatternSequenceItem<'a>>),
-    Mapping(Vec<PatternMappingItem<'a>>),
-    Class(SExpr<'a>, Vec<PatternClassItem<'a>>),
+    Sequence(Vec<PatternSequenceItem<'a, TPattern>>),
+    Mapping(Vec<PatternMappingItem<'a, TExpr, TPattern>>),
+    Class(TExpr, Vec<PatternClassItem<'a, TPattern>>),
 }
 
-pub type SPattern<'a> = Spanned<Pattern<'a>>;
-pub type ISPattern<'a> = Indirect<SPattern<'a>>;
+// Spanned types
+
+#[derive(Debug, Clone)]
+pub struct SPattern<'a>(pub Spanned<Pattern<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>>);
+pub type SPatternInner<'a> = Pattern<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;
+
+impl<'a> SPattern<'a> {
+    pub fn span(&self) -> Span {
+        self.0.span
+    }
+
+    pub fn value(&self) -> &Pattern<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>> {
+        &self.0.value
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SExpr<'a>(pub Spanned<Expr<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>>);
+pub type SExprInner<'a> = Expr<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;
+
+impl<'a> SExpr<'a> {
+    pub fn span(&self) -> Span {
+        self.0.span
+    }
+
+    pub fn value(&self) -> &Expr<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>> {
+        &self.0.value
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SStmt<'a>(pub Spanned<Stmt<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>>);
+
+impl<'a> SStmt<'a> {
+    pub fn span(&self) -> Span {
+        self.0.span
+    }
+
+    pub fn value(&self) -> &Stmt<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>> {
+        &self.0.value
+    }
+}
+
+pub type SMatchCase<'a> = MatchCase<Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;

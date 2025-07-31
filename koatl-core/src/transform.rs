@@ -2971,14 +2971,6 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     pre.push(a.import(aliases));
                 };
             }
-            Stmt::Err => {
-                return Err(TfErrBuilder::default()
-                    .message(
-                        "unexpected statement error (should have been caught in lexer)".to_owned(),
-                    )
-                    .span(*span)
-                    .build_errs());
-            }
             Stmt::Module => {
                 return Err(TfErrBuilder::default()
                     .message("Module statements are not allowed in the transform phase".to_owned())

@@ -7,18 +7,50 @@ use crate::ast::*;
 use crate::lexer::*;
 use chumsky::{extra::ParserExtra, input::ValueInput, prelude::*};
 
+pub trait PatternParserExt<'tokens, 'src: 'tokens, I, E>:
+    Parser<'tokens, I, SPatternInner<'src>, E>
+where
+    I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
+    E: ParserExtra<'tokens, I>,
+    Self: Clone,
+{
+    fn spanned_pattern(self) -> impl Parser<'tokens, I, SPattern<'src>, E> + Clone + Sized {
+        self.map_with(|x, e| SPattern(x.spanned(e.span())))
+    }
+}
+
+impl<'tokens, 'src: 'tokens, I, E, P> PatternParserExt<'tokens, 'src, I, E> for P
+where
+    P: Parser<'tokens, I, SPatternInner<'src>, E> + Clone,
+    I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
+    E: ParserExtra<'tokens, I>,
+{
+}
+
+pub trait ExprParserExt<'tokens, 'src: 'tokens, I, E>:
+    Parser<'tokens, I, SExprInner<'src>, E> + Sized + Clone
+where
+    I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
+    E: ParserExtra<'tokens, I>,
+{
+    fn spanned_expr(self) -> impl Parser<'tokens, I, SExpr<'src>, E> + Clone + Sized {
+        self.map_with(|x, e| SExpr(x.spanned(e.span())))
+    }
+}
+
+impl<'tokens, 'src: 'tokens, I, E, P> ExprParserExt<'tokens, 'src, I, E> for P
+where
+    P: Parser<'tokens, I, SExprInner<'src>, E> + Sized + Clone,
+    I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
+    E: ParserExtra<'tokens, I>,
+{
+}
+
 pub trait ParserExt<'tokens, 'src: 'tokens, I, O, E>: Parser<'tokens, I, O, E>
 where
     I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
     E: ParserExtra<'tokens, I>,
 {
-    fn spanned(self) -> impl Parser<'tokens, I, Spanned<O>, E> + Clone + Sized
-    where
-        Self: Sized + Clone,
-    {
-        self.map_with(|x, e| (x, e.span()))
-    }
-
     fn delimited_by_with_eol(
         self,
         start: impl Parser<'tokens, I, Token<'src>, E> + Clone,
@@ -80,6 +112,10 @@ where
     .boxed()
 }
 
+fn unwrap_indirect<T: Clone>(value: Indirect<T>) -> T {
+    Rc::unwrap_or_clone(value).borrow().clone()
+}
+
 const START_BLOCK: Token = Token::Symbol(":");
 type TExtra<'tokens, 'src> = extra::Err<Rich<'tokens, Token<'src>, Span>>;
 
@@ -111,10 +147,14 @@ where
     let mut pattern =
         Recursive::<chumsky::recursive::Indirect<TInput, SPattern, TExtra>>::declare();
 
-    let literal_pattern = literal.clone().map(Pattern::Literal).spanned().boxed();
+    let literal_pattern = literal
+        .clone()
+        .map(|x| Pattern::Literal(x))
+        .spanned_pattern()
+        .boxed();
 
     fn to_wildcard<'src>(id: SIdent<'src>) -> Option<SIdent<'src>> {
-        if id.0.0 == "_" { None } else { Some(id) }
+        if id.value.0 == "_" { None } else { Some(id) }
     }
 
     let value_pattern = symbol(".")
@@ -122,20 +162,20 @@ where
         .or_not()
         .then(qualified_ident.clone())
         .try_map(|(q, value), _e| {
-            Ok(if let Expr::RawAttribute(..) = value.0 {
-                Pattern::Value(value)
+            Ok(if let Expr::RawAttribute(..) = value.0.value {
+                Pattern::Value(value.indirect())
             } else if q.is_some() {
-                Pattern::Value(value)
-            } else if let Expr::Ident(id) = value.0 {
+                Pattern::Value(value.indirect())
+            } else if let Expr::Ident(id) = value.0.value {
                 Pattern::Capture(to_wildcard(id))
             } else {
                 return Err(Rich::custom(
-                    value.1,
+                    value.0.span,
                     "Internal error: value pattern must be an identifier or attribute",
                 ));
             })
         })
-        .spanned()
+        .spanned_pattern()
         .boxed();
 
     let group_pattern = pattern
@@ -147,20 +187,22 @@ where
         symbol("*")
             .ignore_then(ident.clone())
             .map(|x| PatternSequenceItem::Spread(to_wildcard(x))),
-        pattern.clone().map(|x| PatternSequenceItem::Item(x.into())),
+        pattern
+            .clone()
+            .map(|x| PatternSequenceItem::Item(x.indirect())),
     ))
     .boxed();
 
     let sequence_pattern = enumeration(sequence_item.clone(), symbol(","))
         .map(Pattern::Sequence)
         .delimited_by_with_eol(symbol("["), symbol("]"))
-        .spanned()
+        .spanned_pattern()
         .boxed();
 
     let sequence_pattern2 = enumeration(sequence_item.clone(), symbol(","))
         .map(Pattern::Sequence)
         .delimited_by_with_eol(symbol("("), symbol(")"))
-        .spanned()
+        .spanned_pattern()
         .boxed();
 
     let nary_sequence_pattern = sequence_item
@@ -172,12 +214,13 @@ where
             if items.len() == 1 && last_comma.is_none() {
                 let item = items.into_iter().next().unwrap();
                 if let PatternSequenceItem::Item(inner) = item {
-                    Rc::unwrap_or_clone(inner)
+                    // TODO ???
+                    unwrap_indirect(inner)
                 } else {
-                    (Pattern::Sequence(vec![item]), e.span())
+                    SPattern(Pattern::Sequence(vec![item]).spanned(e.span()))
                 }
             } else {
-                (Pattern::Sequence(items), e.span())
+                SPattern(Pattern::Sequence(items).spanned(e.span()))
             }
         })
         .boxed();
@@ -189,23 +232,24 @@ where
         choice((
             ident
                 .clone()
-                .map(|(s, span)| Expr::Literal((Literal::Str(s.0), span)))
-                .spanned(),
-            literal.clone().map(Expr::Literal).spanned(),
+                .map(|id| Expr::Literal(Literal::Str(id.value.0).spanned(id.span)))
+                .spanned_expr(),
+            literal.clone().map(Expr::Literal).spanned_expr(),
             sexpr
                 .clone()
                 .delimited_by_with_eol(symbol("("), symbol(")")),
         ))
         .then_ignore(symbol(":"))
         .then(pattern.clone())
-        .map(|(key, value)| PatternMappingItem::Item(key, value.into())),
+        .map(|(key, value)| PatternMappingItem::Item(key.indirect(), value.indirect())),
         ident.clone().map(PatternMappingItem::Ident),
-    ));
+    ))
+    .boxed();
 
     let mapping_pattern = enumeration(mapping_item, symbol(","))
-        .map(Pattern::Mapping)
+        .map(SPatternInner::Mapping)
         .delimited_by_with_eol(symbol("{"), symbol("}"))
-        .spanned()
+        .spanned_pattern()
         .boxed();
 
     let class_item = choice((
@@ -213,8 +257,10 @@ where
             .clone()
             .then_ignore(symbol("="))
             .then(pattern.clone())
-            .map(|(key, value)| PatternClassItem::Kw(key, value.into())),
-        pattern.clone().map(|x| PatternClassItem::Item(x.into())),
+            .map(|(key, value)| PatternClassItem::Kw(key, value.indirect())),
+        pattern
+            .clone()
+            .map(|x| PatternClassItem::Item(x.indirect())),
     ))
     .boxed();
 
@@ -227,8 +273,8 @@ where
                 .collect::<Vec<_>>()
                 .delimited_by_with_eol(symbol("("), symbol(")")),
         )
-        .map(|(a, b)| Pattern::Class(a, b))
-        .spanned()
+        .map(|(a, b)| Pattern::Class(a.indirect(), b))
+        .spanned_pattern()
         .boxed();
 
     let closed_pattern = choice((
@@ -244,16 +290,16 @@ where
 
     let or_pattern = closed_pattern
         .clone()
-        .map(Indirect::new)
+        .map(|x| x.indirect())
         .separated_by(symbol("|").then(just(Token::Eol).or_not()))
         .at_least(1)
         .allow_leading()
         .collect::<Vec<_>>()
         .map_with(|x, e| {
             if x.len() == 1 {
-                Rc::unwrap_or_clone(x.into_iter().next().unwrap())
+                unwrap_indirect(x.into_iter().next().unwrap())
             } else {
-                (Pattern::Or(x), e.span())
+                SPattern(Pattern::Or(x).spanned(e.span()))
             }
         });
 
@@ -261,7 +307,7 @@ where
         .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not())
         .map_with(|(pattern, as_ident), e| {
             if let Some(as_ident) = as_ident {
-                (Pattern::As(pattern.into(), as_ident), e.span())
+                SPattern(Pattern::As(pattern.indirect(), as_ident).spanned(e.span()))
             } else {
                 pattern
             }
@@ -273,7 +319,9 @@ where
             as_pattern,
             value_pattern,
             closed_pattern.clone(),
-            symbol("_").map(|_| Pattern::Capture(None)).spanned(),
+            symbol("_")
+                .map(|_| Pattern::Capture(None))
+                .spanned_pattern(),
         ))
         .labelled("pattern"),
     );
@@ -291,7 +339,7 @@ pub fn match_expr<'tokens, 'src: 'tokens, TInput, PLHS, PGuard, PPattern, PBody>
     expr_or_inline_stmt_or_block: PBody,
 ) -> (
     impl Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone,
-    impl Parser<'tokens, TInput, Vec<Indirect<MatchCase<'src>>>, TExtra<'tokens, 'src>> + Clone,
+    impl Parser<'tokens, TInput, Vec<Indirect<SMatchCase<'src>>>, TExtra<'tokens, 'src>> + Clone,
 )
 where
     TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
@@ -305,10 +353,10 @@ where
         just(Token::Kw("if")).ignore_then(case_guard).or_not(),
         symbol("=>").ignore_then(expr_or_inline_stmt_or_block.clone()),
     ))
-    .map(|(pattern, guard, body)| MatchCase {
-        pattern: Some(pattern.into()),
-        guard,
-        body,
+    .map(|(pattern, guard, body)| SMatchCase {
+        pattern: Some(pattern.indirect()),
+        guard: guard.map(|x| x.indirect()),
+        body: body.indirect(),
     })
     .labelled("match-case")
     .as_context()
@@ -317,10 +365,10 @@ where
     let default_case = just(Token::Ident("default"))
         .then(just(START_BLOCK).or_not())
         .ignore_then(expr_or_inline_stmt_or_block.clone())
-        .map(|x| MatchCase {
+        .map(|x| SMatchCase {
             pattern: None,
             guard: None,
-            body: x,
+            body: x.indirect(),
         })
         .boxed();
 
@@ -329,7 +377,7 @@ where
             .or_not()
             .ignore_then(case_.clone())
             .then_ignore(just(Token::Eol))
-            .map(Indirect::new)
+            .map(|x| x.indirect())
             .repeated()
             .collect::<Vec<_>>()
             .then(default_case.clone().then_ignore(just(Token::Eol)).or_not())
@@ -338,14 +386,14 @@ where
                 just(Token::Symbol("END_BLOCK")),
             ),
         case_
-            .map(Indirect::new)
+            .map(|x| x.indirect())
             .separated_by(just(Token::Kw("else")))
             .allow_trailing()
             .collect::<Vec<_>>()
             .then(default_case.or_not()),
     ))
     .map(|(mut cases, default)| {
-        cases.extend(default.into_iter().map(Indirect::new));
+        cases.extend(default.into_iter().map(|x| x.indirect()));
         cases
     })
     .boxed();
@@ -359,7 +407,7 @@ where
         )
         .map_with(|(scrutinee, cases), e| {
             if let Some(cases) = cases {
-                (Expr::Match(Indirect::new(scrutinee), cases), e.span())
+                SExpr(Expr::Match(scrutinee.indirect(), cases).spanned(e.span()))
             } else {
                 scrutinee
             }
@@ -395,8 +443,14 @@ where
         let uni_fn = pattern
             .clone()
             .then(fn_body.clone())
-            .map(|(x, body)| Expr::Fn(vec![ArgDefItem::Arg(x.into(), None)], Indirect::new(body)))
-            .spanned()
+            .map(|(x, body)| {
+                let span = x.0.span;
+                Expr::Fn(
+                    vec![ArgDefItem::Arg(x.indirect(), None).spanned(span)],
+                    body.indirect(),
+                )
+            })
+            .spanned_expr()
             .labelled("uni-fn")
             .boxed();
 
@@ -411,8 +465,11 @@ where
                 pattern
                     .clone()
                     .then(symbol("=").ignore_then(expr.clone()).or_not())
-                    .map(|(key, value)| ArgDefItem::Arg(key.into(), value)),
-            )),
+                    .map(|(key, value)| {
+                        ArgDefItem::Arg(key.indirect(), value.map(|x| x.indirect()))
+                    }),
+            ))
+            .map_with(|x, e| x.spanned(e.span())),
             symbol(","),
         )
         .labelled("argument-def-list")
@@ -422,8 +479,8 @@ where
             .clone()
             .delimited_by_with_eol(symbol("("), symbol(")"))
             .then(fn_body)
-            .map(|(args, body)| Expr::Fn(args, Indirect::new(body)))
-            .spanned()
+            .map(|(args, body)| SExprInner::Fn(args, body.indirect()))
+            .spanned_expr()
             .labelled("multi-fn")
             .as_context()
             .boxed();
@@ -458,7 +515,7 @@ where
         .clone()
         .delimited_by(symbol("BEGIN_BLOCK"), symbol("END_BLOCK"))
         .map(Expr::Block)
-        .spanned()
+        .spanned_expr()
         .boxed();
 
     let expr_or_block = choice((block.clone(), expr.clone())).boxed();
@@ -467,9 +524,9 @@ where
         block.clone(),
         inline_stmt
             .clone()
-            .map_with(|x, e| match x.0 {
-                Stmt::Expr(x) => x,
-                _ => (Expr::Block(vec![x]), e.span()),
+            .map_with(|x, e| match x.0.value {
+                Stmt::Expr(x) => unwrap_indirect(x),
+                _ => SExpr(Expr::Block(vec![x]).spanned(e.span())),
             })
             .boxed(),
     ))
@@ -481,49 +538,52 @@ where
         Token::Bool(s) => Literal::Bool(s),
         Token::None => Literal::None
     }
-    .spanned()
+    .map_with(|x, e| x.spanned(e.span()))
+    .labelled("literal")
     .boxed();
 
     let literal_expr = literal
         .clone()
         .map(Expr::Literal)
-        .labelled("literal")
-        .spanned()
+        .spanned_expr()
+        .labelled("literal-expr")
         .boxed();
 
     let ident = select! {
         Token::Ident(s) => Ident(Cow::Borrowed(s)),
     }
-    .spanned()
+    .map_with(|x, e| x.spanned(e.span()))
     .labelled("identifier")
     .boxed();
 
     let ident_expr = ident
         .clone()
         .map(Expr::Ident)
-        .spanned()
-        .labelled("identifier-expression")
+        .spanned_expr()
+        .labelled("identifier-expr")
         .boxed();
 
     let placeholder = select! {
         Token::Symbol("$") => Expr::Placeholder,
     }
-    .spanned()
+    .spanned_expr()
     .labelled("placeholder")
     .boxed();
 
     let list_item = choice((
-        symbol("*").ignore_then(expr.clone()).map(ListItem::Spread),
-        expr.clone().map(ListItem::Item),
+        symbol("*")
+            .ignore_then(expr.clone())
+            .map(|x| ListItem::Spread(x.indirect())),
+        expr.clone().map(|x| ListItem::Item(x.indirect())),
     ))
     .boxed();
 
     let list = enumeration(list_item.clone(), symbol(","))
         .delimited_by_with_eol(symbol("["), symbol("]"))
         .map(Expr::List)
+        .spanned_expr()
         .labelled("list")
         .as_context()
-        .spanned()
         .boxed();
 
     let nary_tuple = group((
@@ -536,11 +596,11 @@ where
     ))
     .try_map_with(
         |(first, rest, last_comma), e| -> Result<SExpr, Rich<'tokens, Token<'src>, Span>> {
-            let mut items = Vec::<ListItem>::new();
+            let mut items = Vec::<ListItem<Indirect<SExpr>>>::new();
 
             match first {
                 ListItem::Item(expr) if rest.is_empty() && last_comma.is_none() => {
-                    return Ok(expr);
+                    return Ok(unwrap_indirect(expr));
                 }
                 // ListItem::Spread(expr) if rest.is_empty() && last_comma.is_none() => {
                 //     // should this be an error?
@@ -550,16 +610,13 @@ where
                 //         "Spread operator must be in a list or tuple",
                 //     ));
                 // }
-                ListItem::Item(..) => {
-                    items.push(first);
-                }
-                ListItem::Spread(..) => {
+                _ => {
                     items.push(first);
                 }
             }
             items.extend(rest);
 
-            Ok((Expr::Tuple(items), e.span()))
+            Ok(SExpr(Expr::Tuple(items).spanned(e.span())))
         },
     )
     .labelled("nary-tuple")
@@ -569,61 +626,59 @@ where
     let mapping = enumeration(
         choice((
             symbol("**")
-                .ignore_then(expr.clone())
+                .ignore_then(expr.clone().map(|x| x.indirect()))
                 .map(MappingItem::Spread),
             choice((
                 ident
                     .clone()
-                    .map(|(s, span)| Expr::Literal((Literal::Str(s.0), span)))
-                    .spanned(),
+                    .map(|id| Expr::Literal(Literal::Str(id.value.0).spanned(id.span)))
+                    .spanned_expr(),
                 literal_expr.clone(),
                 expr.clone().delimited_by_with_eol(symbol("("), symbol(")")),
             ))
             .then_ignore(symbol(":"))
             .then(expr.clone())
-            .map(|(key, value)| MappingItem::Item(key, value)),
+            .map(|(key, value)| MappingItem::Item(key.indirect(), value.indirect())),
             ident.clone().map(MappingItem::Ident),
         )),
         symbol(","),
     )
     .delimited_by_with_eol(just(Token::Symbol("{")), just(Token::Symbol("}")))
     .map(Expr::Mapping)
+    .spanned_expr()
     .labelled("mapping")
     .as_context()
-    .spanned()
     .boxed();
 
     let fstr_begin = select! {
         Token::FstrBegin(s) => s,
-    };
+    }
+    .map_with(|x, e| x.spanned(e.span()));
+
     let fstr_continue = select! {
         Token::FstrContinue(s) => s,
-    };
+    }
+    .map_with(|x, e| x.spanned(e.span()));
 
     let fstr = fstr_begin
-        .spanned()
         .then(
             expr_or_block
                 .clone()
-                .spanned()
-                .then(fstr_continue.spanned())
+                .then(fstr_continue)
                 .map(|(block, cont)| {
                     (
-                        (
-                            FmtExpr {
-                                expr: block.0,
-                                fmt: None,
-                            },
-                            block.1,
-                        ),
+                        FmtExpr {
+                            expr: block.indirect(),
+                            fmt: None,
+                        },
                         cont,
                     )
                 })
                 .repeated()
                 .collect::<Vec<_>>(),
         )
-        .map(|(begin, parts)| Expr::Fstr(begin, parts))
-        .spanned()
+        .map(|(begin, parts)| SExprInner::Fstr(begin, parts))
+        .spanned_expr()
         .labelled("f-string")
         .boxed();
 
@@ -635,10 +690,9 @@ where
                         .clone()
                         .then_ignore(symbol("="))
                         .then(expr.clone())
-                        .map(|(key, value)| CallItem::Kwarg(key, value)),
-                    expr.clone().map(CallItem::Arg),
+                        .map(|(key, value)| CallItem::Kwarg(key, value.indirect())),
+                    expr.clone().map(|x| CallItem::Arg(x.indirect())),
                 ))
-                .spanned()
                 .boxed(),
                 symbol(","),
             )
@@ -648,9 +702,9 @@ where
         .then_ignore(just(START_BLOCK))
         .then(expr_or_inline_stmt_or_block.clone())
         .map(|(arglist, block)| {
-            Expr::Class(arglist.unwrap_or_else(|| Vec::new()), Indirect::new(block))
+            SExprInner::Class(arglist.unwrap_or_else(|| Vec::new()), block.indirect())
         })
-        .spanned()
+        .spanned_expr()
         .labelled("class")
         .boxed();
 
@@ -667,13 +721,9 @@ where
             .or_not(),
         )))
         .map(|(cond, if_, else_)| {
-            Expr::If(
-                Indirect::new(cond),
-                Indirect::new(if_),
-                else_.map(Indirect::new),
-            )
+            Expr::If(cond.indirect(), if_.indirect(), else_.map(|x| x.indirect()))
         })
-        .spanned()
+        .spanned_expr()
         .labelled("if")
         .boxed();
 
@@ -681,7 +731,7 @@ where
         .clone()
         .foldl_with(
             symbol(".").ignore_then(ident.clone()).repeated(),
-            |lhs, rhs, e| (Expr::RawAttribute(Indirect::new(lhs), rhs), e.span()),
+            |lhs, rhs, e| SExpr(Expr::RawAttribute(lhs.indirect(), rhs).spanned(e.span())),
         )
         .boxed();
 
@@ -696,8 +746,8 @@ where
         .ignore_then(expr.clone())
         .then_ignore(just(START_BLOCK))
         .then(cases.clone())
-        .map(|(scrutinee, cases)| Expr::Match(Indirect::new(scrutinee), cases))
-        .spanned()
+        .map(|(scrutinee, cases)| Expr::Match(scrutinee.indirect(), cases))
+        .spanned_expr()
         .labelled("classic-match")
         .as_context()
         .boxed();
@@ -706,7 +756,7 @@ where
         symbol("(")
             .then(symbol(")"))
             .map(|_| Expr::Tuple(vec![]))
-            .spanned(),
+            .spanned_expr(),
         nary_tuple
             .clone()
             .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
@@ -735,11 +785,12 @@ where
     .at_least(1)
     .foldr_with(expr.clone(), |lhs, expr, e| {
         let expr = match lhs {
-            ControlKw::Await => Expr::Await(Indirect::new(expr)),
-            ControlKw::Yield => Expr::Yield(Indirect::new(expr)),
-            ControlKw::YieldFrom => Expr::YieldFrom(Indirect::new(expr)),
+            ControlKw::Await => Expr::Await(expr.indirect()),
+            ControlKw::Yield => Expr::Yield(expr.indirect()),
+            ControlKw::YieldFrom => Expr::YieldFrom(expr.indirect()),
         };
-        (expr, e.span())
+
+        SExpr(expr.spanned(e.span()))
     })
     .labelled("control-expression");
 
@@ -764,11 +815,11 @@ where
     );
 
     enum Postfix<'a> {
-        Call(Vec<SCallItem<'a>>),
-        Subscript(Vec<ListItem<'a>>),
+        Call(Vec<CallItem<'a, SExpr<'a>>>),
+        Subscript(Vec<ListItem<SExpr<'a>>>),
         Attribute(SIdent<'a>),
         ScopedAttribute(SExpr<'a>),
-        ScopedAttributeCall(SExpr<'a>, Vec<SCallItem<'a>>),
+        ScopedAttributeCall(SExpr<'a>, Vec<CallItem<'a, SExpr<'a>>>),
         RawAttribute(SIdent<'a>),
     }
 
@@ -776,18 +827,17 @@ where
         choice((
             symbol("*")
                 .ignore_then(expr.clone())
-                .map(CallItem::ArgSpread),
+                .map(|x| CallItem::ArgSpread(x.indirect())),
             symbol("**")
                 .ignore_then(expr.clone())
-                .map(CallItem::KwargSpread),
+                .map(|x| CallItem::KwargSpread(x.indirect())),
             ident
                 .clone()
                 .then_ignore(symbol("="))
                 .then(expr.clone())
-                .map(|(key, value)| CallItem::Kwarg(key, value)),
-            expr.clone().map(CallItem::Arg),
+                .map(|(key, value)| CallItem::Kwarg(key, value.indirect())),
+            expr.clone().map(|x| CallItem::Arg(x.indirect())),
         ))
-        .spanned()
         .boxed(),
         symbol(","),
     )
@@ -1036,7 +1086,7 @@ where
                     .or_not(),
             )
             .map(|(expr, typs)| Expr::Checked(Indirect::new(expr), typs.map(Indirect::new)))
-            .spanned()
+            .with_span()
             .labelled("checked")
             .boxed(),
     );
@@ -1084,7 +1134,7 @@ where
         .ignore_then(binary4.clone().or_not())
         .then(symbol("..").ignore_then(binary4.clone().or_not()).or_not())
         .map(|(e1, e2)| Expr::Slice(None, e1.map(Indirect::new), e2.flatten().map(Indirect::new)))
-        .spanned()
+        .with_span()
         .labelled("slice")
         .boxed();
 
@@ -1369,7 +1419,7 @@ where
             try_stmt.then_ignore(just(Token::Eol)),
         ))
         .labelled("statement")
-        .spanned()
+        .with_span()
         .boxed(),
     );
 
@@ -1385,7 +1435,7 @@ where
             continue_stmt,
         ))
         .labelled("inline-statement")
-        .spanned()
+        .with_span()
         .boxed(),
     );
 
