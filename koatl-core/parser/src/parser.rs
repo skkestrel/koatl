@@ -815,11 +815,10 @@ where
     );
 
     enum Postfix<'a> {
-        Call(Vec<CallItem<'a, SExpr<'a>>>),
-        Subscript(Vec<ListItem<SExpr<'a>>>),
+        Call(Vec<CallItem<'a, Indirect<SExpr<'a>>>>),
+        Subscript(Vec<ListItem<Indirect<SExpr<'a>>>>),
         Attribute(SIdent<'a>),
         ScopedAttribute(SExpr<'a>),
-        ScopedAttributeCall(SExpr<'a>, Vec<CallItem<'a, SExpr<'a>>>),
         RawAttribute(SIdent<'a>),
     }
 
@@ -851,8 +850,10 @@ where
 
     let subscript = enumeration(
         choice((
-            symbol("*").ignore_then(expr.clone()).map(ListItem::Spread),
-            expr.clone().map(ListItem::Item),
+            symbol("*")
+                .ignore_then(expr.clone())
+                .map(|x| ListItem::Spread(x.indirect())),
+            expr.clone().map(|x| ListItem::Item(x.indirect())),
         ))
         .boxed(),
         symbol(","),
@@ -869,14 +870,7 @@ where
 
     let then = symbol(".")
         .ignore_then(expr.clone().delimited_by_with_eol(symbol("("), symbol(")")))
-        .then(call_args.or_not())
-        .map(|(rhs, args)| {
-            if let Some(args) = args {
-                Postfix::ScopedAttributeCall(rhs, args)
-            } else {
-                Postfix::ScopedAttribute(rhs)
-            }
-        })
+        .map(|rhs| Postfix::ScopedAttribute(rhs))
         .labelled("then-attribute")
         .boxed();
 
@@ -895,55 +889,35 @@ where
                 .then(choice((call, subscript, attribute, then, raw_attr)))
                 .repeated(),
             |expr, (coal, op), e| -> SExpr {
-                (
+                SExpr(
                     if coal.is_none() {
                         match op {
-                            Postfix::Call(args) => Expr::Call(Indirect::new(expr), args),
-                            Postfix::Subscript(args) => Expr::Subscript(Indirect::new(expr), args),
+                            Postfix::Call(args) => Expr::Call(expr.indirect(), args),
+                            Postfix::Subscript(args) => Expr::Subscript(expr.indirect(), args),
                             Postfix::RawAttribute(attr) => {
-                                Expr::RawAttribute(Indirect::new(expr), attr)
+                                Expr::RawAttribute(expr.indirect(), attr)
                             }
                             Postfix::ScopedAttribute(rhs) => {
-                                Expr::ScopedAttribute(Indirect::new(expr), Indirect::new(rhs))
+                                Expr::ScopedAttribute(expr.indirect(), rhs.indirect())
                             }
-                            Postfix::ScopedAttributeCall(rhs, args) => Expr::Call(
-                                // TODO optimize this case in the AST by skipping partial application
-                                Indirect::new((
-                                    Expr::ScopedAttribute(Indirect::new(expr), Indirect::new(rhs)),
-                                    e.span(),
-                                )),
-                                args,
-                            ),
-                            Postfix::Attribute(rhs) => Expr::Attribute(Indirect::new(expr), rhs),
+                            Postfix::Attribute(rhs) => Expr::Attribute(expr.indirect(), rhs),
                         }
                     } else {
                         match op {
-                            Postfix::Call(args) => Expr::MappedCall(Indirect::new(expr), args),
+                            Postfix::Call(args) => Expr::MappedCall(expr.indirect(), args),
                             Postfix::Subscript(args) => {
-                                Expr::MappedSubscript(Indirect::new(expr), args)
+                                Expr::MappedSubscript(expr.indirect(), args)
                             }
                             Postfix::RawAttribute(attr) => {
-                                Expr::MappedRawAttribute(Indirect::new(expr), attr)
+                                Expr::MappedRawAttribute(expr.indirect(), attr)
                             }
                             Postfix::ScopedAttribute(rhs) => {
-                                Expr::MappedScopedAttribute(Indirect::new(expr), Indirect::new(rhs))
+                                Expr::MappedScopedAttribute(expr.indirect(), rhs.indirect())
                             }
-                            Postfix::ScopedAttributeCall(rhs, args) => Expr::Call(
-                                Indirect::new((
-                                    Expr::MappedScopedAttribute(
-                                        Indirect::new(expr),
-                                        Indirect::new(rhs),
-                                    ),
-                                    e.span(),
-                                )),
-                                args,
-                            ),
-                            Postfix::Attribute(rhs) => {
-                                Expr::MappedAttribute(Indirect::new(expr), rhs)
-                            }
+                            Postfix::Attribute(rhs) => Expr::MappedAttribute(expr.indirect(), rhs),
                         }
-                    },
-                    e.span(),
+                    }
+                    .spanned(e.span()),
                 )
             },
         )
@@ -955,10 +929,7 @@ where
         .then(symbol("&").ignore_then(expr.clone()).or_not())
         .map_with(|(lhs, rhs), e| {
             if let Some(rhs) = rhs {
-                (
-                    Expr::Decorated(Indirect::new(lhs), Indirect::new(rhs)),
-                    e.span(),
-                )
+                SExpr(Expr::Decorated(lhs.indirect(), rhs.indirect()).spanned(e.span()))
             } else {
                 lhs
             }
@@ -978,7 +949,7 @@ where
         .repeated()
         .foldr_with(
             choice((decorator, checked.clone())),
-            |op: UnaryOp, rhs: SExpr, e| (Expr::Unary(op, Indirect::new(rhs)), e.span()),
+            |op: UnaryOp, rhs: SExpr, e| SExpr(Expr::Unary(op, rhs.indirect()).spanned(e.span())),
         )
         .labelled("unary-expression")
         .boxed(),
@@ -1001,10 +972,7 @@ where
         if !right_assoc {
             arg.clone()
                 .foldl_with(op.then(arg).repeated(), |lhs, (op, rhs), e| {
-                    (
-                        Expr::Binary(op, Indirect::new(lhs), Indirect::new(rhs)),
-                        e.span(),
-                    )
+                    SExpr(Expr::Binary(op, lhs.indirect(), rhs.indirect()).spanned(e.span()))
                 })
                 .boxed()
         } else {
@@ -1013,9 +981,8 @@ where
                     .then(op.then(bin.or(arg.clone())).or_not())
                     .map_with(|(lhs, matched), e| {
                         if let Some((op, rhs)) = matched {
-                            (
-                                Expr::Binary(op, Indirect::new(lhs), Indirect::new(rhs)),
-                                e.span(),
+                            SExpr(
+                                Expr::Binary(op, lhs.indirect(), rhs.indirect()).spanned(e.span()),
                             )
                         } else {
                             lhs
@@ -1074,7 +1041,8 @@ where
 
     let not = just(Token::Kw("not"))
         .ignore_then(not_or_try.clone())
-        .map_with(|expr, e| (Expr::Unary(UnaryOp::Not, Indirect::new(expr)), e.span()))
+        .map(|expr| Expr::Unary(UnaryOp::Not, expr.indirect()))
+        .spanned_expr()
         .boxed();
 
     checked.define(
@@ -1085,8 +1053,8 @@ where
                     .ignore_then(closed_pattern.clone())
                     .or_not(),
             )
-            .map(|(expr, typs)| Expr::Checked(Indirect::new(expr), typs.map(Indirect::new)))
-            .with_span()
+            .map(|(expr, typs)| Expr::Checked(expr.indirect(), typs.map(|x| x.indirect())))
+            .spanned_expr()
             .labelled("checked")
             .boxed(),
     );
@@ -1117,13 +1085,13 @@ where
         if a.is_none() && b.is_none() {
             lhs
         } else {
-            (
+            SExpr(
                 Expr::Slice(
-                    Some(Indirect::new(lhs)),
-                    a.flatten().map(Indirect::new),
-                    b.flatten().map(Indirect::new),
-                ),
-                e.span(),
+                    Some(lhs.indirect()),
+                    a.flatten().map(|x| x.indirect()),
+                    b.flatten().map(|x| x.indirect()),
+                )
+                .spanned(e.span()),
             )
         }
     })
@@ -1133,8 +1101,14 @@ where
     let slice1 = symbol("..")
         .ignore_then(binary4.clone().or_not())
         .then(symbol("..").ignore_then(binary4.clone().or_not()).or_not())
-        .map(|(e1, e2)| Expr::Slice(None, e1.map(Indirect::new), e2.flatten().map(Indirect::new)))
-        .with_span()
+        .map(|(e1, e2)| {
+            Expr::Slice(
+                None,
+                e1.map(|x| x.indirect()),
+                e2.flatten().map(|x| x.indirect()),
+            )
+        })
+        .spanned_expr()
         .labelled("slice")
         .boxed();
 
@@ -1159,21 +1133,19 @@ where
         .map_with(|(expr, matches_part), e| {
             if let Some((not, pattern)) = matches_part {
                 if not.is_some() {
-                    (
+                    SExpr(
                         Expr::Unary(
                             UnaryOp::Not,
-                            Indirect::new((
-                                Expr::Matches(Indirect::new(expr), Indirect::new(pattern)),
-                                e.span(),
-                            )),
-                        ),
-                        e.span(),
+                            SExpr(
+                                Expr::Matches(expr.indirect(), pattern.indirect())
+                                    .spanned(e.span()),
+                            )
+                            .indirect(),
+                        )
+                        .spanned(e.span()),
                     )
                 } else {
-                    (
-                        Expr::Matches(Indirect::new(expr), Indirect::new(pattern)),
-                        e.span(),
-                    )
+                    SExpr(Expr::Matches(expr.indirect(), pattern.indirect()).spanned(e.span()))
                 }
             } else {
                 expr
@@ -1206,13 +1178,9 @@ where
         )
         .map_with(|(cond, if_cases), e| {
             if let Some((if_, else_)) = if_cases {
-                (
-                    Expr::If(
-                        Indirect::new(cond),
-                        Indirect::new(if_),
-                        else_.map(Indirect::new),
-                    ),
-                    e.span(),
+                SExpr(
+                    Expr::If(cond.indirect(), if_.indirect(), else_.map(|x| x.indirect()))
+                        .spanned(e.span()),
                 )
             } else {
                 cond
@@ -1245,7 +1213,7 @@ where
     let decl_stmt = decl_mod
         .clone()
         .then(ident.clone().separated_by(symbol(",")).collect())
-        .map(|(decl, idents)| Stmt::Decl(idents, decl))
+        .map(|(decl, idents)| SStmtInner::Decl(idents, decl))
         .boxed();
 
     let assign_stmt = group((
@@ -1253,7 +1221,7 @@ where
         nary_tuple.clone(),
         symbol("=").ignore_then(nary_tuple.clone()),
     ))
-    .map(|(decl, lhs, rhs)| Stmt::Assign(lhs.into(), rhs.into(), decl))
+    .map(|(decl, lhs, rhs)| SStmtInner::Assign(lhs.indirect(), rhs.indirect(), decl))
     .boxed();
 
     let inline_assign_stmt = group((
@@ -1261,18 +1229,21 @@ where
         expr.clone(),
         symbol("=").ignore_then(expr.clone()),
     ))
-    .map(|(decl, lhs, rhs)| Stmt::Assign(lhs.into(), rhs.into(), decl))
+    .map(|(decl, lhs, rhs)| SStmtInner::Assign(lhs.indirect(), rhs.indirect(), decl))
     .boxed();
 
-    let expr_stmt = nary_tuple.clone().map(Stmt::Expr).boxed();
+    let expr_stmt = nary_tuple
+        .clone()
+        .map(|x| SStmtInner::Expr(x.indirect()))
+        .boxed();
 
-    let inline_expr_stmt = expr.clone().map(Stmt::Expr).boxed();
+    let inline_expr_stmt = expr.clone().map(|x| SStmtInner::Expr(x.indirect())).boxed();
 
     let while_stmt = just(Token::Kw("while"))
         .ignore_then(expr.clone())
         .then_ignore(just(START_BLOCK))
         .then(expr_or_inline_stmt_or_block.clone())
-        .map(|(cond, body)| Stmt::While(cond, body))
+        .map(|(cond, body)| SStmtInner::While(cond.indirect(), body.indirect()))
         .labelled("while statement")
         .boxed();
 
@@ -1281,10 +1252,10 @@ where
         .ignore_then(nary_pattern.clone().or_not())
         .boxed()
         .then(just(START_BLOCK).ignore_then(expr_or_inline_stmt_or_block.clone()))
-        .map(|(pattern, body)| MatchCase {
-            pattern: pattern.map(Indirect::new),
+        .map(|(pattern, body)| SMatchCase {
+            pattern: pattern.map(|x| x.indirect()),
             guard: None,
-            body,
+            body: body.indirect(),
         })
         .labelled("except block")
         .boxed();
@@ -1300,10 +1271,12 @@ where
         .then(just(START_BLOCK))
         .ignore_then(group((
             expr_or_inline_stmt_or_block.clone(),
-            except_block.map(Indirect::new).repeated().collect(),
+            except_block.map(|x| x.indirect()).repeated().collect(),
             finally_block.or_not(),
         )))
-        .map(|(body, excepts, finally)| Stmt::Try(body, excepts, finally))
+        .map(|(body, excepts, finally)| {
+            SStmtInner::Try(body.indirect(), excepts, finally.map(|x| x.indirect()))
+        })
         .labelled("try statement")
         .boxed();
 
@@ -1313,48 +1286,50 @@ where
             expr.clone().then_ignore(just(START_BLOCK)),
             expr_or_inline_stmt_or_block.clone(),
         )))
-        .map(|(decl, iter, body)| Stmt::For(decl, iter, body))
+        .map(|(decl, iter, body)| {
+            SStmtInner::For(decl.indirect(), iter.indirect(), body.indirect())
+        })
         .labelled("for statement")
         .boxed();
 
     let return_stmt = just(Token::Kw("return"))
         .ignore_then(nary_tuple.clone())
-        .map(Stmt::Return)
+        .map(|x| SStmtInner::Return(x.indirect()))
         .labelled("return statement")
         .boxed();
 
     let inline_return_stmt = just(Token::Kw("return"))
         .ignore_then(expr.clone())
-        .map(Stmt::Return)
+        .map(|x| SStmtInner::Return(x.indirect()))
         .labelled("inline return statement")
         .boxed();
 
     let assert_stmt = just(Token::Ident("assert"))
         .ignore_then(expr.clone())
         .then(symbol(",").ignore_then(expr.clone()).or_not())
-        .map(|(x, y)| Stmt::Assert(x, y))
+        .map(|(x, y)| SStmtInner::Assert(x.indirect(), y.map(|y| y.indirect())))
         .labelled("assert statement")
         .boxed();
 
     let raise_stmt = just(Token::Kw("raise"))
         .ignore_then(nary_tuple.clone().or_not())
-        .map(Stmt::Raise)
+        .map(|x| SStmtInner::Raise(x.map(|x| x.indirect())))
         .labelled("raise statement")
         .boxed();
 
     let inline_raise_stmt = just(Token::Kw("raise"))
         .ignore_then(expr.clone().or_not())
-        .map(Stmt::Raise)
+        .map(|x| SStmtInner::Raise(x.map(|x| x.indirect())))
         .labelled("inline raise statement")
         .boxed();
 
     let break_stmt = just(Token::Kw("break"))
-        .map(|_| Stmt::Break)
+        .map(|_| SStmtInner::Break)
         .labelled("break statement")
         .boxed();
 
     let continue_stmt = just(Token::Kw("continue"))
-        .map(|_| Stmt::Continue)
+        .map(|_| SStmtInner::Continue)
         .labelled("continue statement")
         .boxed();
 
@@ -1389,8 +1364,8 @@ where
             ))
             .boxed(),
         )))
-        .map(|(reexport, (level, trunk, import_list))| -> Stmt {
-            Stmt::Import(ImportStmt {
+        .map(|(reexport, (level, trunk, import_list))| {
+            SStmtInner::Import(ImportStmt {
                 trunk,
                 imports: import_list,
                 level,
@@ -1400,7 +1375,7 @@ where
         .labelled("import statement")
         .boxed();
 
-    let module_stmt = just(Token::Kw("module")).map(|_| Stmt::Module);
+    let module_stmt = just(Token::Kw("module")).map(|_| SStmtInner::Module);
 
     stmt.define(
         choice((
@@ -1419,7 +1394,7 @@ where
             try_stmt.then_ignore(just(Token::Eol)),
         ))
         .labelled("statement")
-        .with_span()
+        .map_with(|x, e| SStmt(x.spanned(e.span())))
         .boxed(),
     );
 
@@ -1435,7 +1410,7 @@ where
             continue_stmt,
         ))
         .labelled("inline-statement")
-        .with_span()
+        .map_with(|x, e| SStmt(x.spanned(e.span())))
         .boxed(),
     );
 
@@ -1455,7 +1430,7 @@ pub fn parse_tokens<'tokens, 'src: 'tokens>(
                 .0
                 .as_slice()
                 // convert the span type with map
-                .map((src.len()..src.len()).into(), |(t, s)| (t, s)),
+                .map((src.len()..src.len()).into(), |tok| (&tok.value, &tok.span)),
         )
         .into_output_errors()
 }

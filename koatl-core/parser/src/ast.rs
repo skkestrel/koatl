@@ -117,7 +117,7 @@ pub enum DeclType {
 #[derive(Debug, Clone)]
 pub enum Stmt<'a, TNode, TPattern> {
     Module,
-    Decl(Vec<TNode>, DeclType),
+    Decl(Vec<SIdent<'a>>, DeclType),
     Assign(TNode, TNode, Option<DeclType>),
     Expr(TNode),
 
@@ -287,6 +287,7 @@ impl<'a> SExpr<'a> {
 
 #[derive(Debug, Clone)]
 pub struct SStmt<'a>(pub Spanned<Stmt<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>>);
+pub type SStmtInner<'a> = Stmt<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;
 
 impl<'a> SStmt<'a> {
     pub fn span(&self) -> Span {
