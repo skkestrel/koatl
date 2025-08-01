@@ -1,34 +1,32 @@
-use std::{borrow::Cow, cell::RefCell, rc::Rc};
+use std::{borrow::Cow, fmt::Display};
 
 use chumsky::span::SimpleSpan;
 
-pub type Span = SimpleSpan<usize, ()>;
+pub type Indirect<T> = Box<T>;
 
-#[derive(Debug, Clone)]
-pub struct Spanned<T> {
-    pub span: Span,
-    pub value: T,
+pub trait FromIndirect<T> {
+    fn extract(self) -> T;
 }
 
-pub trait SpannableExt<T> {
-    fn spanned(self, span: Span) -> Spanned<T>;
-}
-
-impl<T> SpannableExt<T> for T {
-    fn spanned(self, span: Span) -> Spanned<T> {
-        Spanned { span, value: self }
+impl<T: Clone> FromIndirect<T> for Indirect<T> {
+    fn extract(self) -> T {
+        *self
     }
 }
 
-pub type Indirect<T> = Rc<RefCell<T>>;
-
-pub trait IndirectExt<T> {
+pub trait IntoIndirect<T> {
     fn indirect(self) -> Indirect<T>;
 }
 
-impl<T> IndirectExt<T> for T {
+impl<T> IntoIndirect<T> for Indirect<T> {
     fn indirect(self) -> Indirect<T> {
-        Rc::new(RefCell::new(self))
+        self
+    }
+}
+
+impl<T> IntoIndirect<T> for T {
+    fn indirect(self) -> Indirect<T> {
+        Box::new(self)
     }
 }
 
@@ -69,6 +67,12 @@ pub enum UnaryOp {
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Ident<'a>(pub Cow<'a, str>);
+
+impl<'a> Display for Ident<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 impl<'a> From<Cow<'a, str>> for Ident<'a> {
     fn from(value: Cow<'a, str>) -> Self {
@@ -125,11 +129,7 @@ pub enum Stmt<'a, TNode, TPattern> {
     While(TNode, TNode),
     For(TPattern, TNode, TNode),
     Import(ImportStmt<'a>),
-    Try(
-        TNode,
-        Vec<Indirect<MatchCase<TNode, TPattern>>>,
-        Option<TNode>,
-    ),
+    Try(TNode, Vec<MatchCase<TNode, TPattern>>, Option<TNode>),
     Assert(TNode, Option<TNode>),
     Raise(Option<TNode>),
 
@@ -196,7 +196,7 @@ pub enum Expr<'a, TExpr, TPattern> {
     YieldFrom(TExpr),
 
     If(TExpr, TExpr, Option<TExpr>),
-    Match(TExpr, Vec<Indirect<MatchCase<TExpr, TPattern>>>),
+    Match(TExpr, Vec<MatchCase<TExpr, TPattern>>),
     Matches(TExpr, TPattern),
     Class(Vec<CallItem<'a, TExpr>>, TExpr),
 
@@ -214,7 +214,7 @@ pub enum Expr<'a, TExpr, TPattern> {
 
     Checked(TExpr, Option<TPattern>),
 
-    Fn(Vec<Spanned<ArgDefItem<'a, TExpr, TPattern>>>, TExpr),
+    Fn(Vec<ArgDefItem<'a, TExpr, TPattern>>, TExpr),
     Fstr(Spanned<String>, Vec<(FmtExpr<'a, TExpr>, Spanned<String>)>),
 
     Decorated(TExpr, TExpr),
@@ -257,46 +257,69 @@ pub enum Pattern<'a, TExpr, TPattern> {
 
 // Spanned types
 
+pub type Span = SimpleSpan<usize, ()>;
+
 #[derive(Debug, Clone)]
-pub struct SPattern<'a>(pub Spanned<Pattern<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>>);
+pub struct Spanned<T> {
+    pub span: Span,
+    pub value: T,
+}
+
+pub trait Spannable<T> {
+    fn spanned(self, span: Span) -> Spanned<T>;
+}
+
+impl<T> Spannable<T> for T {
+    fn spanned(self, span: Span) -> Spanned<T> {
+        Spanned { span, value: self }
+    }
+}
+
 pub type SPatternInner<'a> = Pattern<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;
 
-impl<'a> SPattern<'a> {
-    pub fn span(&self) -> Span {
-        self.0.span
-    }
+#[derive(Debug, Clone)]
+pub struct SPattern<'a> {
+    pub value: SPatternInner<'a>,
+    pub span: Span,
+}
 
-    pub fn value(&self) -> &Pattern<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>> {
-        &self.0.value
+impl<'a> SPatternInner<'a> {
+    pub fn spanned(self, span: Span) -> SPattern<'a> {
+        SPattern { value: self, span }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct SExpr<'a>(pub Spanned<Expr<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>>);
 pub type SExprInner<'a> = Expr<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;
 
-impl<'a> SExpr<'a> {
-    pub fn span(&self) -> Span {
-        self.0.span
-    }
+#[derive(Debug, Clone)]
+pub struct SExpr<'a> {
+    pub value: SExprInner<'a>,
+    pub span: Span,
+}
 
-    pub fn value(&self) -> &Expr<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>> {
-        &self.0.value
+impl<'a> SExprInner<'a> {
+    pub fn spanned(self, span: Span) -> SExpr<'a> {
+        SExpr { value: self, span }
+    }
+}
+
+pub type SStmtInner<'a> = Stmt<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;
+
+impl<'a> SStmtInner<'a> {
+    pub fn spanned(self, span: Span) -> SStmt<'a> {
+        SStmt { value: self, span }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct SStmt<'a>(pub Spanned<Stmt<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>>);
-pub type SStmtInner<'a> = Stmt<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;
-
-impl<'a> SStmt<'a> {
-    pub fn span(&self) -> Span {
-        self.0.span
-    }
-
-    pub fn value(&self) -> &Stmt<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>> {
-        &self.0.value
-    }
+pub struct SStmt<'a> {
+    pub value: SStmtInner<'a>,
+    pub span: Span,
 }
 
+pub type SListItem<'a> = ListItem<Indirect<SExpr<'a>>>;
+pub type SMappingItem<'a> = MappingItem<'a, Indirect<SExpr<'a>>>;
 pub type SMatchCase<'a> = MatchCase<Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;
+pub type SCallItem<'a> = CallItem<'a, Indirect<SExpr<'a>>>;
+pub type SArgDefItem<'a> = ArgDefItem<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;
+pub type SFmtExpr<'a> = FmtExpr<'a, Indirect<SExpr<'a>>>;

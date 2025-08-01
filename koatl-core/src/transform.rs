@@ -5,7 +5,7 @@ use crate::{
     py::{ast::*, util::PyAstBuilder},
 };
 use once_cell::sync::Lazy;
-use parser::{ast::*, util::AstBuilder};
+use parser::ast::*;
 
 #[derive(Debug)]
 pub struct TfErr {
@@ -174,7 +174,7 @@ trait SIdentExt<'src> {
 
 impl<'src> SIdentExt<'src> for SIdent<'src> {
     fn escape(&self) -> PyIdent<'src> {
-        self.0.escape()
+        self.value.escape()
     }
 
     fn transform(&self, ctx: &TfCtx<'src>) -> PyIdent<'src> {
@@ -188,7 +188,7 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
         let scope = ctx.scope_ctx_stack.last_mut().ok_or_else(|| {
             TfErrBuilder::default()
                 .message("Internal error: expected a scope")
-                .span(self.1)
+                .span(self.span)
                 .build_errs()
         })?;
 
@@ -197,11 +197,11 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
 
             // prepare a declaration so transform() knows what to do later
 
-            if !scope.locals.iter().rev().any(|d| d.ident == self.0) {
+            if !scope.locals.iter().rev().any(|d| d.ident == self.value) {
                 scope.locals.push(Declaration {
-                    ident: self.0.clone(),
+                    ident: self.value.clone(),
                     py_ident: self.escape(),
-                    loc: self.1,
+                    loc: self.span,
                     const_: false,
                     const_assigned: None,
                     typ: if scope.is_global_scope {
@@ -220,13 +220,13 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
                 if let Some(assigned) = found.decl.const_assigned {
                     return Err(TfErrBuilder::default()
                         .message("Can only assign to a constant once")
-                        .span(self.1)
+                        .span(self.span)
                         .context("Declared here", found.decl.loc)
                         .context("Assigned here", assigned)
                         .build_errs());
                 }
 
-                found.decl.const_assigned = Some(self.1);
+                found.decl.const_assigned = Some(self.span);
             }
 
             if found.py_local {
@@ -258,7 +258,7 @@ impl<'src> SIdentExt<'src> for SIdent<'src> {
 
         Err(TfErrBuilder::default()
             .message("Undeclared identifier; either declare with 'let' or mark as 'global'.")
-            .span(self.1)
+            .span(self.span)
             .build_errs())
     }
 }
@@ -344,7 +344,7 @@ trait ScopeCtxStackExt<'src> {
 impl<'src> ScopeCtxStackExt<'src> for Vec<ScopeCtx<'src>> {
     fn find_decl<'slf>(&'slf self, ident: &SIdent<'src>) -> Option<ScopeSearchResult<'slf, 'src>> {
         for scope in self.iter().rev() {
-            if let Some(decl) = scope.locals.iter().rev().find(|d| d.ident == ident.0) {
+            if let Some(decl) = scope.locals.iter().rev().find(|d| d.ident == ident.value) {
                 return Some(ScopeSearchResult { decl });
             }
         }
@@ -360,7 +360,12 @@ impl<'src> ScopeCtxStackExt<'src> for Vec<ScopeCtx<'src>> {
         let mut crossed_py_scope = false;
 
         for scope in self.iter_mut().rev() {
-            if let Some(decl) = scope.locals.iter_mut().rev().find(|d| d.ident == ident.0) {
+            if let Some(decl) = scope
+                .locals
+                .iter_mut()
+                .rev()
+                .find(|d| d.ident == ident.value)
+            {
                 return Some(ScopeSearchResultMut {
                     decl,
                     local: !crossed_tl_scope,
@@ -389,7 +394,7 @@ fn create_declaration<'src>(
             if ctx.scope_ctx_stack.len() == 1 {
                 return Err(TfErrBuilder::default()
                     .message("Global declaration is not allowed at the module level")
-                    .span(ident.1)
+                    .span(ident.span)
                     .build_errs());
             }
 
@@ -399,11 +404,11 @@ fn create_declaration<'src>(
             }
 
             return Ok(Some(Declaration {
-                ident: ident.0.clone(),
+                ident: ident.value.clone(),
                 py_ident: ident.escape(),
                 const_: false,
                 const_assigned: None,
-                loc: ident.1,
+                loc: ident.span,
                 typ: PyDeclType::GlobalCapture,
             }));
         }
@@ -411,7 +416,7 @@ fn create_declaration<'src>(
             if ctx.scope_ctx_stack.len() > 1 {
                 return Err(TfErrBuilder::default()
                     .message("Export declaration is only allowed at the module level")
-                    .span(ident.1)
+                    .span(ident.span)
                     .build_errs());
             }
 
@@ -423,7 +428,7 @@ fn create_declaration<'src>(
             let Some(last_ctx) = ctx.scope_ctx_stack.last_mut() else {
                 return Err(TfErrBuilder::default()
                     .message("Internal error: expected a scope")
-                    .span(ident.1)
+                    .span(ident.span)
                     .build_errs());
             };
 
@@ -435,7 +440,7 @@ fn create_declaration<'src>(
                 if let Some(found) = ctx.scope_ctx_stack.find_decl(ident) {
                     return Err(TfErrBuilder::default()
                         .message("Cannot shadow declarations in a class or global scope")
-                        .span(ident.1)
+                        .span(ident.span)
                         .context("Declared here", found.decl.loc)
                         .build_errs());
                 }
@@ -443,7 +448,7 @@ fn create_declaration<'src>(
                 if is_const {
                     return Err(TfErrBuilder::default()
                         .message("Cannot declare a constant in a class or global scope")
-                        .span(ident.1)
+                        .span(ident.span)
                         .build_errs());
                 }
 
@@ -451,9 +456,9 @@ fn create_declaration<'src>(
                 // add a declaration so that inner scopes know how to capture it
 
                 return Ok(Some(Declaration {
-                    ident: ident.clone().0,
+                    ident: ident.clone().value,
                     py_ident: ident.escape(),
-                    loc: ident.1,
+                    loc: ident.span,
                     const_: is_const,
                     const_assigned: None,
                     typ: if global {
@@ -469,16 +474,16 @@ fn create_declaration<'src>(
             // need to make sure variable is completely shadowed, so construct a unique identifier
             let py_ident = format!(
                 "let_{}_{}_{}",
-                ident.0.0,
+                ident.value,
                 cur_scope.locals.len(),
                 ctx.scope_id_counter
             )
             .into();
 
             let new_decl = Declaration {
-                ident: ident.0.clone(),
+                ident: ident.value.clone(),
                 py_ident,
-                loc: ident.1,
+                loc: ident.span,
                 const_: is_const,
                 const_assigned: None,
                 typ: PyDeclType::Local,
@@ -500,7 +505,7 @@ fn declare_var<'src>(
             .ok_or_else(|| {
                 TfErrBuilder::default()
                     .message("Internal error: expected a scope")
-                    .span(ident.1)
+                    .span(ident.span)
                     .build_errs()
             })?
             .locals
@@ -645,7 +650,7 @@ impl<'src> BlockExt<'src> for [SStmt<'src>] {
         let final_stmt = iter.next().unwrap();
         let mut value = PyBlockExpr::Nothing;
 
-        match &final_stmt.0 {
+        match &final_stmt.value {
             Stmt::Expr(expr) => match expr.transform_with_placeholder_guard(ctx) {
                 Ok(expr_with_aux) => {
                     value = PyBlockExpr::Expr(pre.bind(expr_with_aux));
@@ -675,14 +680,14 @@ impl<'src> BlockExt<'src> for [SStmt<'src>] {
 fn destructure_list<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     target: &'ast SExpr<'src>,
-    items: &'ast [ListItem<'src>],
+    items: &'ast [SListItem<'src>],
     modifier: Option<DeclType>,
 ) -> TfResult<DestructureBindings<'src>> {
-    let cursor_var = ctx.create_aux_var("des_curs", target.1.start);
+    let cursor_var = ctx.create_aux_var("des_curs", target.span.start);
 
     // a, b, *c = cursor_var
 
-    let a = PyAstBuilder::new(target.1);
+    let a = PyAstBuilder::new(target.span);
     let mut post = PyBlock::new();
 
     let mut lhs_items = vec![];
@@ -699,7 +704,7 @@ fn destructure_list<'src, 'ast>(
                 if seen_spread {
                     return Err(TfErrBuilder::default()
                         .message("Destructuring assignment with multiple spreads is not allowed")
-                        .span(target.1)
+                        .span(target.span)
                         .build_errs());
                 }
                 seen_spread = true;
@@ -728,17 +733,17 @@ fn destructure_list<'src, 'ast>(
 fn destructure_tuple<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     target: &'ast SExpr<'src>,
-    items: &'ast [ListItem<'src>],
+    items: &'ast [SListItem<'src>],
     modifier: Option<DeclType>,
 ) -> TfResult<DestructureBindings<'src>> {
-    let cursor_var = ctx.create_aux_var("des_curs", target.1.start);
-    let tuple_var = ctx.create_aux_var("des_tuple", target.1.start);
-    let len_var = ctx.create_aux_var("des_len", target.1.start);
+    let cursor_var = ctx.create_aux_var("des_curs", target.span.start);
+    let tuple_var = ctx.create_aux_var("des_tuple", target.span.start);
+    let len_var = ctx.create_aux_var("des_len", target.span.start);
 
     // list_var = tuple(cursor_var)
     // len_var = len(list_var)
 
-    let a = PyAstBuilder::new(target.1);
+    let a = PyAstBuilder::new(target.span);
 
     let mut stmts = PyBlock(vec![
         a.assign(
@@ -795,7 +800,7 @@ fn destructure_tuple<'src, 'ast>(
                 if seen_spread {
                     return Err(TfErrBuilder::default()
                         .message("Destructuring assignment with multiple spreads is not allowed")
-                        .span(target.1)
+                        .span(target.span)
                         .build_errs());
                 }
                 seen_spread = true;
@@ -835,14 +840,14 @@ fn destructure_tuple<'src, 'ast>(
 fn destructure_mapping<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
     target: &'ast SExpr<'src>,
-    items: &'ast [MappingItem<'src>],
+    items: &'ast [SMappingItem<'src>],
     modifier: Option<DeclType>,
 ) -> TfResult<DestructureBindings<'src>> {
-    let cursor_var = ctx.create_aux_var("des_curs", target.1.start);
-    let dict_var = ctx.create_aux_var("des_dict", target.1.start);
+    let cursor_var = ctx.create_aux_var("des_curs", target.span.start);
+    let dict_var = ctx.create_aux_var("des_dict", target.span.start);
 
     // dict_var = dict(cursor_var)
-    let a = PyAstBuilder::new(target.1);
+    let a = PyAstBuilder::new(target.span);
     let mut stmts = PyBlock(vec![a.assign(
         a.ident(dict_var.clone(), PyAccessCtx::Store),
         a.call(
@@ -864,7 +869,7 @@ fn destructure_mapping<'src, 'ast>(
                 a.ident(ident.prepare_binding(ctx)?, PyAccessCtx::Store),
                 a.call(
                     a.attribute(a.load_ident(dict_var.clone()), "pop", PyAccessCtx::Load),
-                    vec![a.call_arg(a.literal(PyLiteral::Str(ident.prepare_binding(ctx)?)))],
+                    vec![a.call_arg(a.str(ident.prepare_binding(ctx)?))],
                 ),
             )),
             MappingItem::Item(key, expr) => {
@@ -885,7 +890,7 @@ fn destructure_mapping<'src, 'ast>(
                 if spread_var.is_some() {
                     return Err(TfErrBuilder::default()
                         .message("Destructuring assignment with multiple spreads is not allowed")
-                        .span(target.1)
+                        .span(target.span)
                         .build_errs());
                 }
 
@@ -923,7 +928,7 @@ fn destructure_decls<'src, 'ast>(
 ) -> TfResult<Vec<Declaration<'src>>> {
     let mut decls = vec![];
 
-    match &target.0 {
+    match &target.value {
         Expr::Ident(ident) => {
             if let Some(decl) = create_declaration(ctx, ident, modifier)? {
                 decls.push(decl);
@@ -974,9 +979,9 @@ fn destructure<'src, 'ast>(
 
     let assign_to: SPyExpr<'src>;
 
-    match &target.0 {
+    match &target.value {
         Expr::Ident(..) | Expr::RawAttribute(..) | Expr::Attribute(..) | Expr::Subscript(..) => {
-            let target_node = match &target.0 {
+            let target_node = match &target.value {
                 Expr::Ident(ident) => {
                     ident.prepare_binding(ctx)?;
                     target.transform_with_access(ctx, PyAccessCtx::Store)?
@@ -985,7 +990,7 @@ fn destructure<'src, 'ast>(
                     if modifier.is_some() {
                         return Err(TfErrBuilder::default()
                             .message("Only identifiers allowed in this destructuring")
-                            .span(target.1)
+                            .span(target.span)
                             .build_errs());
                     }
                     target.transform_with_access(ctx, PyAccessCtx::Store)?
@@ -994,14 +999,15 @@ fn destructure<'src, 'ast>(
                     if modifier.is_some() {
                         return Err(TfErrBuilder::default()
                             .message("Only identifiers allowed in this destructuring")
-                            .span(target.1)
+                            .span(target.span)
                             .build_errs());
                     }
 
                     // we need to replace an extension with a regular attribute
                     // when assigning to it
 
-                    let new_target = (Expr::RawAttribute(lhs.clone(), ext.clone()), target.1);
+                    let new_target =
+                        Expr::RawAttribute(lhs.clone(), ext.clone()).spanned(target.span);
 
                     new_target.transform_with_access(ctx, PyAccessCtx::Store)?
                 }
@@ -1034,7 +1040,7 @@ fn destructure<'src, 'ast>(
         _ => {
             return Err(TfErrBuilder::default()
                 .message("Assignment target is not allowed")
-                .span(target.1)
+                .span(target.span)
                 .build_errs());
         }
     };
@@ -1055,7 +1061,7 @@ fn transform_assignment<'src, 'ast>(
     if !ctx.scope_ctx_stack.last().unwrap().lifted_decls.is_empty() {
         return Err(TfErrBuilder::default()
             .message("Internal error: lifted decls should be empty at this point")
-            .span(lhs.1)
+            .span(lhs.span)
             .build_errs());
     }
 
@@ -1068,7 +1074,7 @@ fn transform_assignment<'src, 'ast>(
     {
         return Err(TfErrBuilder::default()
             .message("Internal error: lifted class decls should be empty at this point")
-            .span(lhs.1)
+            .span(lhs.span)
             .build_errs());
     }
 
@@ -1085,18 +1091,18 @@ fn transform_assignment<'src, 'ast>(
         .lifted_decls
         .extend(decls);
 
-    if let Expr::Ident(ident) = &lhs.0 {
+    if let Expr::Ident(ident) = &lhs.value {
         let mut decorators: Vec<&SExpr> = vec![];
-        let mut cur_node = &rhs.0;
+        let mut cur_node = &rhs.value;
 
         loop {
             match cur_node {
                 Expr::Binary(BinaryOp::Pipe, left, right) => {
-                    cur_node = &left.0;
+                    cur_node = &left.value;
                     decorators.push(right);
                 }
                 Expr::Decorated(deco, right) => {
-                    cur_node = &right.0;
+                    cur_node = &right.value;
                     decorators.push(deco);
                 }
                 Expr::Call(left, right) => {
@@ -1104,9 +1110,9 @@ fn transform_assignment<'src, 'ast>(
                         break;
                     }
 
-                    match &right[0].0 {
+                    match &right[0] {
                         CallItem::Arg(arg) => {
-                            cur_node = &arg.0;
+                            cur_node = &arg.value;
                             decorators.push(left);
                         }
                         _ => {
@@ -1219,7 +1225,7 @@ fn transform_if_matches_expr<'src, 'ast>(
 
     let (pattern, on_success) = scoped(ctx, ScopeCtx::new(), |ctx| {
         for capture in &meta.captures {
-            declare_var(ctx, &(capture.clone(), pattern.1), DeclType::Let)?;
+            declare_var(ctx, &capture.clone().spanned(pattern.span), DeclType::Let)?;
         }
 
         // pattern needs to know about the declared vars above
@@ -1244,10 +1250,9 @@ fn transform_if_matches_expr<'src, 'ast>(
         })?
         .0
     } else {
-        PyBlock(vec![a.assign(
-            a.ident(var.clone(), PyAccessCtx::Store),
-            a.literal(PyLiteral::None),
-        )])
+        PyBlock(vec![
+            a.assign(a.ident(var.clone(), PyAccessCtx::Store), a.none()),
+        ])
     };
 
     let mut cases = vec![a.match_case(pattern, None, on_success)];
@@ -1284,7 +1289,7 @@ fn transform_if_matches_not_never_expr<'src, 'ast>(
     let var = ctx.create_aux_var("if_matches_not", span.start);
 
     let on_no_match = scoped(ctx, ScopeCtx::new(), |ctx| {
-        let span = then_block.1;
+        let span = then_block.span;
 
         let err = || {
             TfErrBuilder::default()
@@ -1296,7 +1301,7 @@ fn transform_if_matches_not_never_expr<'src, 'ast>(
                 .build_errs()
         };
 
-        let Expr::Block(then_block) = &then_block.0 else {
+        let Expr::Block(then_block) = &then_block.value else {
             return Err(err());
         };
 
@@ -1312,10 +1317,14 @@ fn transform_if_matches_not_never_expr<'src, 'ast>(
 
     // these declarations are available to all code after this stmt
     for capture in &pattern_meta.captures {
-        declare_var(ctx, &(capture.clone(), pattern_neg.1), DeclType::Let)?;
+        declare_var(
+            ctx,
+            &capture.clone().spanned(pattern_neg.span),
+            DeclType::Let,
+        )?;
     }
 
-    let pattern_span = pattern_neg.1;
+    let pattern_span = pattern_neg.span;
     let pattern = pre.bind(pattern_neg.transform(ctx)?);
 
     let on_match = if let Some(else_block) = else_block {
@@ -1327,10 +1336,9 @@ fn transform_if_matches_not_never_expr<'src, 'ast>(
         })?
         .0
     } else {
-        PyBlock(vec![a.assign(
-            a.ident(var.clone(), PyAccessCtx::Store),
-            a.literal(PyLiteral::None),
-        )])
+        PyBlock(vec![
+            a.assign(a.ident(var.clone(), PyAccessCtx::Store), a.none()),
+        ])
     };
 
     let mut cases = vec![a.match_case(pattern, None, on_match)];
@@ -1358,12 +1366,12 @@ fn transform_if_expr<'src, 'ast>(
     else_block: Option<&'ast SExpr<'src>>,
     span: &Span,
 ) -> TfResult<SPyExprWithPre<'src>> {
-    if let Expr::Matches(expr, pattern) = &cond.0 {
+    if let Expr::Matches(expr, pattern) = &cond.value {
         return transform_if_matches_expr(ctx, expr, pattern, then_block, else_block, span);
     }
 
-    if let Expr::Unary(UnaryOp::Not, expr) = &cond.0 {
-        if let Expr::Matches(expr, pattern) = &expr.0 {
+    if let Expr::Unary(UnaryOp::Not, expr) = &cond.value {
+        if let Expr::Matches(expr, pattern) = &expr.value {
             let meta = pattern.preprocess()?;
 
             if !meta.captures.is_empty() {
@@ -1399,9 +1407,7 @@ fn transform_if_expr<'src, 'ast>(
         })?
         .0
     } else {
-        PyBlock(vec![
-            a.assign(store_ret_var.clone(), a.literal(PyLiteral::None)),
-        ])
+        PyBlock(vec![a.assign(store_ret_var.clone(), a.none())])
     };
 
     pre.push(a.if_(cond, py_then, Some(py_else)));
@@ -1429,26 +1435,26 @@ trait SPatternExt<'src> {
 
 impl<'src> SPatternExt<'src> for SPattern<'src> {
     fn preprocess(&self) -> TfResult<PatternInfo<'src>> {
-        let default = match &self.0 {
+        let default = match &self.value {
             Pattern::Capture(cap) => {
                 // Make sure that capture patterns do not start with an uppercase letter to
                 // prevent unexpectedly shadowing a type
 
                 if cap
                     .as_ref()
-                    .is_some_and(|x| char::is_uppercase(x.0.0.chars().nth(0).unwrap_or('_')))
+                    .is_some_and(|x| char::is_uppercase(x.value.0.chars().nth(0).unwrap_or('_')))
                 {
                     return Err(TfErrBuilder::default()
                                 .message(
                                     "Capture patterns must start with a lowercase letter; to match a type, add '()'",
                                 )
-                                .span(self.1)
+                                .span(self.span)
                                 .build_errs());
                 }
 
                 let mut captures = vec![];
                 if let Some(cap) = cap {
-                    captures.push(cap.0.clone());
+                    captures.push(cap.value.clone());
                 }
 
                 PatternInfo {
@@ -1458,7 +1464,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
             }
             Pattern::As(pattern, name) => {
                 let mut meta = pattern.preprocess()?;
-                meta.captures.push(name.0.clone());
+                meta.captures.push(name.value.clone());
                 meta
             }
             Pattern::Or(items) => {
@@ -1466,7 +1472,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                 let initial = iter.next().ok_or_else(|| {
                     TfErrBuilder::default()
                         .message("Or pattern must have at least one item")
-                        .span(self.1)
+                        .span(self.span)
                         .build_errs()
                 })?;
 
@@ -1476,7 +1482,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                     if initial.default {
                         return Err(TfErrBuilder::default()
                             .message("Default pattern makes remaining patterns unreachable")
-                            .span(item.1)
+                            .span(item.span)
                             .build_errs())?;
                     }
 
@@ -1486,7 +1492,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                     if meta.captures != initial.captures {
                         return Err(TfErrBuilder::default()
                             .message("Or patterns must bind the same names")
-                            .span(item.1)
+                            .span(item.span)
                             .build_errs());
                     }
                 }
@@ -1506,7 +1512,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                             captures.extend(meta.captures);
                         }
                         PatternSequenceItem::Spread(Some(inner)) => {
-                            captures.push(inner.0.clone());
+                            captures.push(inner.value.clone());
                         }
                         PatternSequenceItem::Spread(None) => {}
                     }
@@ -1521,13 +1527,13 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                 let mut captures = vec![];
                 for item in items {
                     match item {
-                        PatternMappingItem::Ident(id) => captures.push(id.0.clone()),
+                        PatternMappingItem::Ident(id) => captures.push(id.value.clone()),
                         PatternMappingItem::Item(_key, value) => {
                             let meta = value.preprocess()?;
                             captures.extend(meta.captures);
                         }
                         PatternMappingItem::Spread(Some(id)) => {
-                            captures.push(id.0.clone());
+                            captures.push(id.value.clone());
                         }
                         PatternMappingItem::Spread(None) => {}
                     }
@@ -1573,14 +1579,15 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
 
         let mut pre = PyBlock::new();
 
-        let (pattern, span) = self;
+        let pattern = &self.value;
+        let span = self.span;
 
         fn capture_slot<'src>(
             ctx: &TfCtx<'src>,
             v: &Option<SIdent<'src>>,
         ) -> Option<PyIdent<'src>> {
             v.clone().and_then(|x| {
-                if x.0.0 == "_" {
+                if x.value.0 == "_" {
                     None
                 } else {
                     Some(x.transform(ctx))
@@ -1593,15 +1600,15 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                 Some(Box::new(pre.bind(pattern.transform(ctx)?))),
                 Some(ident.transform(ctx).clone()),
             ),
-            Pattern::Literal(literal) => match literal.0 {
+            Pattern::Literal(literal) => match literal.value {
                 Literal::Num(..) | Literal::Str(..) => {
-                    PyPattern::Value((PyExpr::Literal(literal.0.transform(ctx)?), *span).into())
+                    PyPattern::Value((PyExpr::Literal(literal.value.transform(ctx)?), span).into())
                 }
                 Literal::Bool(..) | Literal::None => {
-                    PyPattern::Singleton(literal.0.transform(ctx)?)
+                    PyPattern::Singleton(literal.value.transform(ctx)?)
                 }
             },
-            Pattern::Capture(v) => PyPattern::As(None, capture_slot(ctx, v)),
+            Pattern::Capture(v) => PyPattern::As(None, capture_slot(ctx, &v)),
             Pattern::Value(v) => {
                 let v_node = pre.bind(v.transform(ctx)?);
 
@@ -1609,7 +1616,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                     PyExpr::Literal(..) | PyExpr::Attribute(..) => PyPattern::Value(v_node),
                     _ => {
                         let var = ctx.create_aux_var("mproxy", span.start);
-                        let a = PyAstBuilder::new(*span);
+                        let a = PyAstBuilder::new(span);
                         pre.push(a.assign(
                             a.ident(var.clone(), PyAccessCtx::Store),
                             a.call(a.load_ident("Record"), vec![a.call_kwarg("value", v_node)]),
@@ -1639,11 +1646,11 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                             if seen_spread {
                                 return Err(TfErrBuilder::default()
                                             .message("Destructuring assignment with multiple spreads is not allowed")
-                                            .span(*span)
+                                            .span(span)
                                             .build_errs());
                             }
                             seen_spread = true;
-                            PyPatternSequenceItem::Spread(capture_slot(ctx, item))
+                            PyPatternSequenceItem::Spread(capture_slot(ctx, &item))
                         }
                     };
 
@@ -1658,17 +1665,17 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                 for item in items {
                     match item {
                         PatternMappingItem::Ident(ident) => {
-                            if ident.0.0 == "_" {
+                            if ident.value.0 == "_" {
                                 return Err(TfErrBuilder::default()
                                     .message("Record matching '_' is not allowed")
-                                    .span(*span)
+                                    .span(span)
                                     .build_errs());
                             }
 
                             kvps.push((
-                                (PyExpr::Literal(PyLiteral::Str(ident.transform(ctx))), *span)
+                                (PyExpr::Literal(PyLiteral::Str(ident.transform(ctx))), span)
                                     .into(),
-                                (PyPattern::As(None, Some(ident.transform(ctx))), *span).into(),
+                                (PyPattern::As(None, Some(ident.transform(ctx))), span).into(),
                             ));
                         }
                         PatternMappingItem::Item(key, value) => {
@@ -1684,11 +1691,11 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                             if spread.is_some() {
                                 return Err(TfErrBuilder::default()
                                         .message("Destructuring assignment with multiple spreads is not allowed")
-                                        .span(*span)
+                                        .span(span)
                                         .build_errs());
                             }
 
-                            spread = capture_slot(ctx, value);
+                            spread = capture_slot(ctx, &value);
                         }
                     }
                 }
@@ -1705,7 +1712,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
                             if !kvps.is_empty() {
                                 return Err(TfErrBuilder::default()
                                     .message("Keyword patterns must come after positional patterns")
-                                    .span(*span)
+                                    .span(span)
                                     .build_errs());
                             }
                             values.push(pre.bind(value.transform(ctx)?));
@@ -1724,7 +1731,7 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
 
         Ok(WithPre {
             pre,
-            value: (transformed, *span).into(),
+            value: (transformed, span).into(),
         })
     }
 }
@@ -1737,13 +1744,13 @@ fn create_throwing_matcher<'src, 'ast>(
     pattern: &'ast SPattern<'src>,
     pattern_meta: &'ast PatternInfo<'src>,
 ) -> TfResult<(PyBlock<'src>, PyIdent<'src>)> {
-    if let Pattern::Capture(Some(id)) = &pattern.0 {
+    if let Pattern::Capture(Some(id)) = &pattern.value {
         return Ok((PyBlock::new(), id.transform(ctx)));
     }
 
-    let cursor = ctx.create_aux_var("matcher", pattern.1.start);
+    let cursor = ctx.create_aux_var("matcher", pattern.span.start);
 
-    let a = PyAstBuilder::new(pattern.1);
+    let a = PyAstBuilder::new(pattern.span);
     let success = PyBlock(vec![a.pass()]);
     let fail = PyBlock(vec![a.raise(Some(a.call(
         a.load_ident("MatchError"),
@@ -1752,7 +1759,7 @@ fn create_throwing_matcher<'src, 'ast>(
             a.fstr_expr(a.load_ident(cursor.clone()), None),
             a.fstr_str(format!(
                 " to pattern {}",
-                &ctx.source[pattern.1.start..pattern.1.end]
+                &ctx.source[pattern.span.start..pattern.span.end]
             )),
         ]))],
     )))]);
@@ -1782,7 +1789,7 @@ fn create_binary_matcher<'src, 'ast>(
     on_fail: PyBlock<'src>,
 ) -> TfResult<PyBlock<'src>> {
     let mut post = PyBlock::new();
-    let a = PyAstBuilder::new(pattern.1);
+    let a = PyAstBuilder::new(pattern.span);
     let pattern_node = pattern.transform(ctx)?;
 
     post.extend(pattern_node.pre);
@@ -1795,7 +1802,7 @@ fn create_binary_matcher<'src, 'ast>(
 
     if !pattern_meta.default {
         cases.push(PyMatchCase {
-            pattern: (PyPattern::As(None, None), pattern.1).into(),
+            pattern: (PyPattern::As(None, None), pattern.span).into(),
             guard: None,
             body: on_fail,
         });
@@ -1806,15 +1813,24 @@ fn create_binary_matcher<'src, 'ast>(
     Ok(post)
 }
 
+enum MatchSubject<'src, 'ast> {
+    Py(SPyExpr<'src>),
+    Tl(&'ast SExpr<'src>),
+}
+
 fn transform_match_expr<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
-    subject: &'ast SExpr<'src>,
-    cases: &[Indirect<MatchCase<'src>>],
+    subject: MatchSubject<'src, 'ast>,
+    cases: &[SMatchCase<'src>],
     fill_default_case: bool,
     span: &Span,
 ) -> TfResult<(SPyExprWithPre<'src>, bool)> {
-    let subject = subject.transform(ctx)?;
-    let mut pre = subject.pre;
+    let mut pre = PyBlock::new();
+    let subject = match subject {
+        MatchSubject::Tl(subject) => pre.bind(subject.transform(ctx)?),
+        MatchSubject::Py(subject) => subject,
+    };
+
     let a = PyAstBuilder::new(*span);
 
     let ret_varname = ctx.create_aux_var("matchexp", span.start);
@@ -1836,7 +1852,7 @@ fn transform_match_expr<'src, 'ast>(
         if has_default_case {
             return Err(TfErrBuilder::default()
                 .message("Previous default case makes remaining cases unreachable")
-                .span(case.body.1)
+                .span(case.body.span)
                 .build_errs());
         }
 
@@ -1857,7 +1873,7 @@ fn transform_match_expr<'src, 'ast>(
 
         scoped(ctx, ScopeCtx::new(), |ctx| {
             for capture in &meta.captures {
-                declare_var(ctx, &(capture.clone(), case.body.1), DeclType::Let)?;
+                declare_var(ctx, &capture.clone().spanned(case.body.span), DeclType::Let)?;
             }
 
             let pattern = if let Some(pattern) = &case.pattern {
@@ -1891,15 +1907,13 @@ fn transform_match_expr<'src, 'ast>(
         py_cases.push(PyMatchCase {
             pattern: (PyPattern::As(None, None), *span).into(),
             guard: None,
-            body: PyBlock(vec![
-                a.assign(store_ret_var.clone(), a.literal(PyLiteral::None)),
-            ]),
+            body: PyBlock(vec![a.assign(store_ret_var.clone(), a.none())]),
         });
 
         has_default_case = true;
     }
 
-    pre.push((PyStmt::Match(subject.value, py_cases), *span).into());
+    pre.push((PyStmt::Match(subject, py_cases), *span).into());
 
     Ok((
         SPyExprWithPre {
@@ -1922,7 +1936,7 @@ fn make_class_def<'src, 'ast>(
     let mut py_bases: Vec<PyCallItem<'src>> = vec![];
 
     for base in bases {
-        let call_item: PyCallItem<'src> = match &base.0 {
+        let call_item: PyCallItem<'src> = match &base {
             CallItem::Arg(expr) => {
                 let base_node = expr.transform_with_placeholder_guard(ctx)?;
                 stmts.extend(base_node.pre);
@@ -1990,7 +2004,7 @@ struct PyArgList<'src> {
 #[allow(non_snake_case)]
 fn make_arglist_CAUTION<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
-    args: &'ast [ArgDefItem<'src>],
+    args: &'ast [SArgDefItem<'src>],
 ) -> TfResult<PyArgList<'src>> {
     let mut pre = PyBlock::new();
     let mut post = PyBlock::new();
@@ -2034,16 +2048,16 @@ fn make_arglist_CAUTION<'src, 'ast>(
 
                     let scope_ctx = ctx.scope_ctx_stack.last_mut().unwrap();
                     for capture in &meta.captures {
-                        if scope_ctx.locals.iter().any(|d| d.ident.0 == capture.0) {
+                        if scope_ctx.locals.iter().any(|d| d.ident == *capture) {
                             return Err(TfErrBuilder::default()
                                 .message("Duplicate argument name in function definition")
-                                .span(arg_pattern.1)
+                                .span(arg_pattern.span)
                                 .build_errs());
                         }
 
                         scope_ctx
                             .locals
-                            .push(make_decl(capture.clone(), arg_pattern.1));
+                            .push(make_decl(capture.clone(), arg_pattern.span));
                     }
 
                     // TODO need to declare variables prior to matching
@@ -2053,14 +2067,14 @@ fn make_arglist_CAUTION<'src, 'ast>(
                 }
                 ArgDefItem::ArgSpread(name) => {
                     let scope_ctx = ctx.scope_ctx_stack.last_mut().unwrap();
-                    let decl = make_decl(name.0.clone(), name.1);
+                    let decl = make_decl(name.value.clone(), name.span);
                     let py_ident = decl.py_ident.clone();
                     scope_ctx.locals.push(decl);
                     PyArgDefItem::ArgSpread(py_ident)
                 }
                 ArgDefItem::KwargSpread(name) => {
                     let scope_ctx = ctx.scope_ctx_stack.last_mut().unwrap();
-                    let decl = make_decl(name.0.clone(), name.1);
+                    let decl = make_decl(name.value.clone(), name.span);
                     let py_ident = decl.py_ident.clone();
                     scope_ctx.locals.push(decl);
                     PyArgDefItem::KwargSpread(py_ident)
@@ -2096,7 +2110,7 @@ enum FnDef<'src, 'ast> {
     // Args, body, is_do, is_async
     PyFnDef(Vec<PyArgDefItem<'src>>, PyBlock<'src>, bool, bool),
 
-    TlFnDef(&'ast [ArgDefItem<'src>], &'ast SExpr<'src>),
+    TlFnDef(&'ast [SArgDefItem<'src>], &'ast SExpr<'src>),
 }
 
 #[allow(dead_code)]
@@ -2106,12 +2120,12 @@ fn debug_scopes(ctx: &TfCtx) -> String {
     for scope in &ctx.scope_ctx_stack {
         let mut locals = String::new();
         for decl in &scope.locals {
-            locals.push_str(&format!("{}: {}, ", decl.ident.0, decl.py_ident));
+            locals.push_str(&format!("{}: {}, ", decl.ident, decl.py_ident));
         }
 
         let mut lifted = String::new();
         for decl in &scope.lifted_decls {
-            lifted.push_str(&format!("{}: {}, ", decl.ident.0, decl.py_ident));
+            lifted.push_str(&format!("{}: {}, ", decl.ident, decl.py_ident));
         }
 
         s.push_str(&format!(
@@ -2468,7 +2482,7 @@ fn transform_call_items<'src, 'ast>(
     let mut pre = PyBlock::new();
 
     for arg in args {
-        match &arg.0 {
+        match &arg {
             CallItem::Arg(expr) => {
                 if started_kwargs {
                     return Err(TfErrBuilder::default()
@@ -2512,7 +2526,7 @@ fn transform_call_items<'src, 'ast>(
 
 fn transform_subscript_items<'src, 'ast>(
     ctx: &mut TfCtx<'src>,
-    indices: &'ast [ListItem<'src>],
+    indices: &'ast [SListItem<'src>],
     span: &Span,
 ) -> TfResult<WithPre<'src, SPyExpr<'src>>> {
     let mut pre = PyBlock::new();
@@ -2560,7 +2574,7 @@ fn transform_postfix_expr<'src, 'ast>(
     expr: &'ast SExpr<'src>,
     access_ctx: PyAccessCtx,
 ) -> TfResult<SPyExprWithPre<'src>> {
-    let (lift_lhs, lhs_node) = match &expr.0 {
+    let (lift_lhs, lhs_node) = match &expr.value {
         Expr::RawAttribute(obj, _) => (false, obj),
         Expr::Subscript(obj, _) => (false, obj),
         Expr::Call(obj, _) => (false, obj),
@@ -2574,23 +2588,23 @@ fn transform_postfix_expr<'src, 'ast>(
         _ => {
             return Err(TfErrBuilder::default()
                 .message("Internal error: Postfix expressions can only be attributes, subscripts, calls, or extensions")
-                .span(expr.1)
+                .span(expr.span)
                 .build_errs());
         }
     };
 
-    if let Expr::Attribute(..) | Expr::RawAttribute(..) = &expr.0 {
+    if let Expr::Attribute(..) | Expr::RawAttribute(..) = &expr.value {
     } else {
         if access_ctx != PyAccessCtx::Load {
             return Err(TfErrBuilder::default()
                 .message("Internal error: Cannot use null-coalescing in a non-Load context")
-                .span(expr.1)
+                .span(expr.span)
                 .build_errs());
         }
     }
 
     let mut pre = PyBlock::new();
-    let a = PyAstBuilder::new(expr.1);
+    let a = PyAstBuilder::new(expr.span);
 
     let lhs = if lift_lhs {
         pre.bind(lhs_node.transform_lifted(ctx)?)
@@ -2606,21 +2620,21 @@ fn transform_postfix_expr<'src, 'ast>(
         )
     };
 
-    let node = match &expr.0 {
+    let node = match &expr.value {
         Expr::Call(_, list) => {
-            let t = pre.bind(transform_call_items(ctx, &list, &expr.1)?);
+            let t = pre.bind(transform_call_items(ctx, &list, &expr.span)?);
             a.call(lhs, t)
         }
         Expr::MappedCall(_, list) => {
-            let t = pre.bind(transform_call_items(ctx, &list, &expr.1)?);
+            let t = pre.bind(transform_call_items(ctx, &list, &expr.span)?);
             guard_if_expr(a.call(lhs.clone(), t))
         }
         Expr::Subscript(_, list) => {
-            let t = pre.bind(transform_subscript_items(ctx, &list, &expr.1)?);
+            let t = pre.bind(transform_subscript_items(ctx, &list, &expr.span)?);
             a.subscript(lhs, t, access_ctx)
         }
         Expr::MappedSubscript(_, list) => {
-            let t = pre.bind(transform_subscript_items(ctx, &list, &expr.1)?);
+            let t = pre.bind(transform_subscript_items(ctx, &list, &expr.span)?);
             guard_if_expr(a.subscript(lhs.clone(), t, access_ctx))
         }
         Expr::RawAttribute(_, attr) => a.attribute(lhs, attr.escape(), access_ctx),
@@ -2643,22 +2657,16 @@ fn transform_postfix_expr<'src, 'ast>(
         }
         Expr::Attribute(_, rhs) => a.call(
             a.tl_builtin("vget"),
-            vec![
-                a.call_arg(lhs),
-                a.call_arg(a.literal(PyLiteral::Str(rhs.escape()))),
-            ],
+            vec![a.call_arg(lhs), a.call_arg(a.str(rhs.escape()))],
         ),
         Expr::MappedAttribute(_, rhs) => guard_if_expr(a.call(
             a.tl_builtin("vget"),
-            vec![
-                a.call_arg(lhs.clone()),
-                a.call_arg(a.literal(PyLiteral::Str(rhs.escape()))),
-            ],
+            vec![a.call_arg(lhs.clone()), a.call_arg(a.str(rhs.escape()))],
         )),
         _ => {
             return Err(TfErrBuilder::default()
                 .message("Internal error: Postfix expressions can only be attributes, subscripts, calls, or extensions")
-                .span(expr.1)
+                .span(expr.span)
                 .build_errs());
         }
     };
@@ -2669,15 +2677,19 @@ fn transform_postfix_expr<'src, 'ast>(
 fn matching_except_handler<'src>(
     ctx: &mut TfCtx<'src>,
     var_name: PyIdent<'src>,
-    handlers: &[Indirect<MatchCase<'src>>],
+    handlers: &[SMatchCase<'src>],
     span: &Span,
 ) -> TfResult<PyExceptHandler<'src>> {
     let a = PyAstBuilder::new(*span);
-    let b = AstBuilder::new(*span);
     let mut block = PyBlock::new();
 
-    let (mut match_stmt, has_default) =
-        transform_match_expr(ctx, &b.ident(var_name.clone()), handlers, false, span)?;
+    let (mut match_stmt, has_default) = transform_match_expr(
+        ctx,
+        MatchSubject::Py(a.load_ident(var_name.clone())),
+        handlers,
+        false,
+        span,
+    )?;
 
     if let PyStmt::Match(_, cases) = &mut match_stmt.pre.0.last_mut().unwrap().value {
         if !has_default {
@@ -2710,7 +2722,7 @@ trait ListItemsExt<'src> {
     ) -> TfResult<WithPre<'src, Vec<PyListItem<'src>>>>;
 }
 
-impl<'src> ListItemsExt<'src> for Vec<ListItem<'src>> {
+impl<'src> ListItemsExt<'src> for Vec<SListItem<'src>> {
     fn transform<'ast>(
         &'ast self,
         ctx: &mut TfCtx<'src>,
@@ -2758,8 +2770,9 @@ trait SStmtExt<'src> {
 impl<'src> SStmtExt<'src> for SStmt<'src> {
     fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlock<'src>> {
         let mut pre = PyBlock::new();
-        let (stmt, span) = self;
-        let a = PyAstBuilder::new(*span);
+        let stmt = &self.value;
+        let span = self.span;
+        let a = PyAstBuilder::new(span);
 
         let is_top_level = ctx.fn_ctx_stack.is_empty();
 
@@ -2790,11 +2803,11 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
             }
             Stmt::Decl(idents, modifier) => {
                 for ident in idents {
-                    declare_var(ctx, ident, *modifier)?;
+                    declare_var(ctx, &ident, *modifier)?;
                 }
             }
             Stmt::Assign(target, value, modifier) => {
-                let binding_stmts = transform_assignment(ctx, target, value, *modifier, span)?;
+                let binding_stmts = transform_assignment(ctx, target, value, *modifier, &span)?;
 
                 pre.extend(binding_stmts);
             }
@@ -2825,10 +2838,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                         a.ident(cursor.clone(), PyAccessCtx::Store),
                         a.call(
                             a.tl_builtin("vget"),
-                            vec![
-                                a.call_arg(iter),
-                                a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
-                            ],
+                            vec![a.call_arg(iter), a.call_arg(a.str("iter"))],
                         ),
                         py_body,
                     ));
@@ -2855,27 +2865,27 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                         // TODO revisit this!
                         return Err(TfErrBuilder::default()
                             .message("Await is not allowed in this complex loop condition")
-                            .span(*span)
+                            .span(span)
                             .build_errs());
                     }
 
                     if fn_ctx.is_do {
                         return Err(TfErrBuilder::default()
                             .message("Binding is not allowed in this complex loop condition")
-                            .span(*span)
+                            .span(span)
                             .build_errs());
                     }
 
                     let aux_fn = pre.bind(make_fn_exp(
                         ctx,
                         FnDef::PyFnDef(vec![], cond_node.pre, false, false),
-                        span,
+                        &span,
                     )?);
 
                     a.call(aux_fn, vec![])
                 };
 
-                pre.push((PyStmt::While(cond, body_block), *span).into());
+                pre.push((PyStmt::While(cond, body_block), span).into());
             }
             Stmt::Try(body, excepts, finally) => {
                 let body_block = scoped(ctx, ScopeCtx::new(), |ctx| {
@@ -2900,7 +2910,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                 let var_name = ctx.create_aux_var("e", span.start);
 
-                let excepts = matching_except_handler(ctx, var_name.into(), excepts, span)?;
+                let excepts = matching_except_handler(ctx, var_name.into(), excepts, &span)?;
 
                 pre.push(a.try_(body_block, vec![excepts], finally_block));
             }
@@ -2912,7 +2922,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 let base_module = import_stmt
                     .trunk
                     .iter()
-                    .map(|ident| ident.0.0.as_ref())
+                    .map(|ident| ident.value.0.as_ref())
                     .collect::<Vec<_>>()
                     .join(".");
 
@@ -2922,7 +2932,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     if !is_top_level {
                         return Err(TfErrBuilder::default()
                             .message("Re-exporting imports is not allowed inside functions")
-                            .span(*span)
+                            .span(span)
                             .build_errs());
                     }
                 }
@@ -2974,7 +2984,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
             Stmt::Module => {
                 return Err(TfErrBuilder::default()
                     .message("Module statements are not allowed in the transform phase".to_owned())
-                    .span(*span)
+                    .span(span)
                     .build_errs());
             }
         };
@@ -3045,12 +3055,12 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
     fn transform_lifted<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>> {
         let mut pre = PyBlock::new();
         let value = pre.bind(self.transform(ctx)?);
-        let a = PyAstBuilder::new(self.1);
+        let a = PyAstBuilder::new(self.span);
 
-        let expr = match self.0 {
+        let expr = match self.value {
             Expr::Ident(..) | Expr::Literal(..) => value,
             _ => {
-                let temp_var = ctx.create_aux_var("tmp", self.1.start);
+                let temp_var = ctx.create_aux_var("tmp", self.span.start);
 
                 pre.push(a.assign(a.ident(temp_var.clone(), PyAccessCtx::Store), value));
 
@@ -3065,15 +3075,15 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
         &'ast self,
         ctx: &mut TfCtx<'src>,
     ) -> TfResult<SPyExprWithPre<'src>> {
-        placeholder_guard(ctx, &self.1, |ctx| self.transform(ctx))
+        placeholder_guard(ctx, &self.span, |ctx| self.transform(ctx))
     }
 
     fn transform_with_deep_placeholder_guard<'ast>(
         &'ast self,
         ctx: &mut TfCtx<'src>,
     ) -> TfResult<SPyExprWithPre<'src>> {
-        match &self.0 {
-            Expr::Placeholder => transform_placeholder(ctx, &self.1, PyAccessCtx::Load),
+        match &self.value {
+            Expr::Placeholder => transform_placeholder(ctx, &self.span, PyAccessCtx::Load),
             _ => self.transform_with_placeholder_guard(ctx),
         }
     }
@@ -3099,8 +3109,9 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
         access_ctx: PyAccessCtx,
         create_new_block_scope: bool,
     ) -> TfResult<SPyExprWithPre<'src>> {
-        let (expr, span) = self;
-        let a = PyAstBuilder::new(*span);
+        let expr = &self.value;
+        let span = self.span;
+        let a = PyAstBuilder::new(span);
 
         let mut pre = PyBlock::<'src>::new();
 
@@ -3110,7 +3121,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 if access_ctx != PyAccessCtx::Load {
                     return Err(TfErrBuilder::default()
                         .message("Expression context must be Load for this expression")
-                        .span(*span)
+                        .span(span)
                         .build_errs());
                 }
             }
@@ -3118,55 +3129,69 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
 
         let value: SPyExpr<'src> = match &expr {
             Expr::Checked(expr, pattern) => {
-                let b = AstBuilder::new(*span);
-
                 let var_name = ctx.create_aux_var("chk", span.start);
 
                 // exception variable doesn't leave the except slope, so rebind it to chk
                 let err_name = ctx.create_aux_var("e", span.start);
 
-                // TODO avoid declaring variable here by constructing the output directly
-                // in the python ast
-                declare_var(ctx, &(Ident(var_name.clone()), expr.1), DeclType::Let)?;
-                declare_var(ctx, &(Ident(err_name.clone()), expr.1), DeclType::Let)?;
+                let mut try_body = PyBlock::new();
 
-                let try_body =
-                    b.block_expr(vec![b.assign(b.ident(var_name.clone()), expr.clone())]);
+                let expr = try_body.bind(expr.transform_with_placeholder_guard(ctx)?);
 
-                let mut handlers = vec![];
+                try_body.push(a.assign(a.ident(var_name.clone(), PyAccessCtx::Store), expr));
+
+                let mut cases = vec![];
+
                 if let Some(pattern) = pattern {
-                    handlers.push(Indirect::new(MatchCase {
-                        pattern: Some(pattern.clone()),
+                    let meta = pattern.preprocess()?;
+
+                    if meta.captures.len() > 0 {
+                        return Err(TfErrBuilder::default()
+                            .message("Non-'_' captures in a 'try'-expr are not allowed.")
+                            .span(span)
+                            .build_errs());
+                    }
+
+                    cases.push(PyMatchCase {
+                        pattern: pre.bind(pattern.transform(ctx)?),
                         guard: None,
-                        body: b.block_expr(vec![
-                            b.assign(b.ident(var_name.clone()), b.ident(err_name.clone())),
-                        ]),
-                    }));
+                        body: PyBlock(vec![a.assign(
+                            a.ident(var_name.clone(), PyAccessCtx::Store),
+                            a.load_ident(err_name.clone()),
+                        )]),
+                    });
+
+                    if !meta.default {
+                        cases.push(PyMatchCase {
+                            pattern: (PyPattern::As(None, None), span).into(),
+                            guard: None,
+                            body: PyBlock(vec![a.raise(None)]),
+                        });
+                    }
                 } else {
-                    handlers.push(Indirect::new(MatchCase {
-                        pattern: None,
+                    cases.push(PyMatchCase {
+                        pattern: (PyPattern::As(None, None), span).into(),
                         guard: None,
-                        body: b.block_expr(vec![
-                            b.assign(b.ident(var_name.clone()), b.ident(err_name.clone())),
-                        ]),
-                    }));
+                        body: PyBlock(vec![a.assign(
+                            a.ident(var_name.clone(), PyAccessCtx::Store),
+                            a.load_ident(err_name.clone()),
+                        )]),
+                    });
                 }
 
-                let py_err_name = (Ident(err_name.clone()), *span).transform(ctx);
+                let handler = PyExceptHandler {
+                    typ: None,
+                    name: Some(err_name.clone()),
+                    body: PyBlock(vec![a.match_(a.load_ident(err_name), cases)]),
+                };
 
-                let except_handler = matching_except_handler(ctx, py_err_name, &handlers, span)?;
+                pre.push(a.try_(try_body, vec![handler], None));
 
-                pre.push(a.try_(
-                    try_body.transform(ctx)?.drop_expr(ctx),
-                    vec![except_handler],
-                    None,
-                ));
-
-                pre.bind(b.ident(var_name).transform(ctx)?)
+                a.load_ident(var_name)
             }
-            Expr::Placeholder => pre.bind(transform_placeholder(ctx, span, access_ctx)?),
+            Expr::Placeholder => pre.bind(transform_placeholder(ctx, &span, access_ctx)?),
             Expr::Fn(arglist, body) => {
-                pre.bind(make_fn_exp(ctx, FnDef::TlFnDef(arglist, body), span)?)
+                pre.bind(make_fn_exp(ctx, FnDef::TlFnDef(arglist, body), &span)?)
             }
             Expr::Class(bases, body) => {
                 let name: Cow<_> = ctx.create_aux_var("clsexp", span.start).into();
@@ -3177,7 +3202,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     bases,
                     body,
                     PyDecorators::new(),
-                    span,
+                    &span,
                 )?);
 
                 a.load_ident(name)
@@ -3186,7 +3211,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 pre.bind(deco.transform(ctx)?),
                 vec![PyCallItem::Arg(pre.bind(expr.transform(ctx)?))],
             ),
-            Expr::Literal(lit) => a.literal(lit.0.transform(ctx)?),
+            Expr::Literal(lit) => a.literal(lit.value.transform(ctx)?),
             Expr::Ident(ident) => a.ident(ident.transform(ctx), access_ctx),
             Expr::RawAttribute(..)
             | Expr::MappedRawAttribute(..)
@@ -3203,7 +3228,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 cond,
                 then_block,
                 else_block.as_ref().map(|x| x.as_ref()),
-                span,
+                &span,
             )?),
             Expr::Block(block) => {
                 let block = if create_new_block_scope {
@@ -3217,13 +3242,12 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     PyBlockExpr::Nothing | PyBlockExpr::Never => a.none(),
                 }
             }
-            Expr::Match(subject, cases) => {
-                pre.bind(transform_match_expr(ctx, subject, cases, true, span)?.0)
-            }
+            Expr::Match(subject, cases) => pre
+                .bind(transform_match_expr(ctx, MatchSubject::Tl(subject), cases, true, &span)?.0),
             Expr::Matches(subject, pattern) => {
                 let subject = pre.bind(subject.transform(ctx)?);
 
-                let a = PyAstBuilder::new(*span);
+                let a = PyAstBuilder::new(span);
                 let var = ctx.create_aux_var("matches", span.start);
 
                 let meta = pattern.preprocess()?;
@@ -3234,7 +3258,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                             "allowed in 'if ... matches ...', ",
                             "or 'if ... matches not ...' constructions."
                         ))
-                        .span(*span)
+                        .span(span)
                         .build_errs());
                 }
 
@@ -3243,13 +3267,12 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     subject,
                     pattern,
                     &meta,
+                    PyBlock(vec![
+                        a.assign(a.ident(var.clone(), PyAccessCtx::Store), a.bool(true)),
+                    ]),
                     PyBlock(vec![a.assign(
                         a.ident(var.clone(), PyAccessCtx::Store),
-                        a.literal(PyLiteral::Bool(true)),
-                    )]),
-                    PyBlock(vec![a.assign(
-                        a.ident(var.clone(), PyAccessCtx::Store),
-                        a.literal(PyLiteral::Bool(false)),
+                        a.bool(false),
                     )]),
                 )?;
 
@@ -3312,7 +3335,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             }
             Expr::Await(expr) => {
                 ctx.fn_ctx_stack
-                    .set_async(ctx.allow_top_level_await, span)?;
+                    .set_async(ctx.allow_top_level_await, &span)?;
                 a.await_(pre.bind(expr.transform(ctx)?))
             }
             Expr::Yield(expr) => a.yield_(pre.bind(expr.transform(ctx)?)),
@@ -3320,7 +3343,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                 a.tl_builtin("vget"),
                 vec![
                     a.call_arg(pre.bind(expr.transform(ctx)?)),
-                    a.call_arg(a.literal(PyLiteral::Str("iter".into()))),
+                    a.call_arg(a.str("iter")),
                 ],
             )),
             Expr::Unary(op, expr) => 'block: {
@@ -3332,7 +3355,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     UnaryOp::Inv => PyUnaryOp::Inv,
                     UnaryOp::Not => PyUnaryOp::Not,
                     UnaryOp::Bind => {
-                        ctx.fn_ctx_stack.set_do(span)?;
+                        ctx.fn_ctx_stack.set_do(&span)?;
                         break 'block a.yield_(expr);
                     }
                 };
@@ -3348,7 +3371,7 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
                     match item {
                         MappingItem::Ident(id) => {
                             dict_items.push(PyDictItem::Item(
-                                a.literal(PyLiteral::Str(id.escape())),
+                                a.str(id.escape()),
                                 a.load_ident(id.transform(ctx)),
                             ));
                         }
@@ -3400,14 +3423,14 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
             Expr::Fstr(begin, parts) => {
                 let mut nodes = Vec::new();
 
-                nodes.push(PyFstrPart::Str(begin.0.clone().into()));
+                nodes.push(PyFstrPart::Str(begin.value.clone().into()));
 
                 for (fmt_expr, str_part) in parts {
                     // TODO format specifiers?
-                    let expr = pre.bind(fmt_expr.0.expr.transform(ctx)?);
+                    let expr = pre.bind(fmt_expr.expr.transform(ctx)?);
 
                     nodes.push(PyFstrPart::Expr(expr, None));
-                    nodes.push(PyFstrPart::Str(str_part.0.clone().into()));
+                    nodes.push(PyFstrPart::Str(str_part.value.clone().into()));
                 }
 
                 a.fstr(nodes)

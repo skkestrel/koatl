@@ -7,7 +7,7 @@ use chumsky::{
 };
 use std::{collections::HashSet, fmt};
 
-use crate::ast::{Span, SpannableExt, Spanned};
+use crate::ast::{Span, Spannable, Spanned};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token<'src> {

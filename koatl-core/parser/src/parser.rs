@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use std::borrow::Cow;
-use std::rc::Rc;
 
 use crate::ast::*;
 use crate::lexer::*;
@@ -15,7 +14,7 @@ where
     Self: Clone,
 {
     fn spanned_pattern(self) -> impl Parser<'tokens, I, SPattern<'src>, E> + Clone + Sized {
-        self.map_with(|x, e| SPattern(x.spanned(e.span())))
+        self.map_with(|x, e| x.spanned(e.span()))
     }
 }
 
@@ -34,7 +33,7 @@ where
     E: ParserExtra<'tokens, I>,
 {
     fn spanned_expr(self) -> impl Parser<'tokens, I, SExpr<'src>, E> + Clone + Sized {
-        self.map_with(|x, e| SExpr(x.spanned(e.span())))
+        self.map_with(|x, e| x.spanned(e.span()))
     }
 }
 
@@ -112,10 +111,6 @@ where
     .boxed()
 }
 
-fn unwrap_indirect<T: Clone>(value: Indirect<T>) -> T {
-    Rc::unwrap_or_clone(value).borrow().clone()
-}
-
 const START_BLOCK: Token = Token::Symbol(":");
 type TExtra<'tokens, 'src> = extra::Err<Rich<'tokens, Token<'src>, Span>>;
 
@@ -162,15 +157,15 @@ where
         .or_not()
         .then(qualified_ident.clone())
         .try_map(|(q, value), _e| {
-            Ok(if let Expr::RawAttribute(..) = value.0.value {
+            Ok(if let Expr::RawAttribute(..) = value.value {
                 Pattern::Value(value.indirect())
             } else if q.is_some() {
                 Pattern::Value(value.indirect())
-            } else if let Expr::Ident(id) = value.0.value {
+            } else if let Expr::Ident(id) = value.value {
                 Pattern::Capture(to_wildcard(id))
             } else {
                 return Err(Rich::custom(
-                    value.0.span,
+                    value.span,
                     "Internal error: value pattern must be an identifier or attribute",
                 ));
             })
@@ -215,12 +210,12 @@ where
                 let item = items.into_iter().next().unwrap();
                 if let PatternSequenceItem::Item(inner) = item {
                     // TODO ???
-                    unwrap_indirect(inner)
+                    inner.extract()
                 } else {
-                    SPattern(Pattern::Sequence(vec![item]).spanned(e.span()))
+                    Pattern::Sequence(vec![item]).spanned(e.span())
                 }
             } else {
-                SPattern(Pattern::Sequence(items).spanned(e.span()))
+                Pattern::Sequence(items).spanned(e.span())
             }
         })
         .boxed();
@@ -297,9 +292,9 @@ where
         .collect::<Vec<_>>()
         .map_with(|x, e| {
             if x.len() == 1 {
-                unwrap_indirect(x.into_iter().next().unwrap())
+                x.into_iter().next().unwrap().extract()
             } else {
-                SPattern(Pattern::Or(x).spanned(e.span()))
+                Pattern::Or(x).spanned(e.span())
             }
         });
 
@@ -307,7 +302,7 @@ where
         .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not())
         .map_with(|(pattern, as_ident), e| {
             if let Some(as_ident) = as_ident {
-                SPattern(Pattern::As(pattern.indirect(), as_ident).spanned(e.span()))
+                Pattern::As(pattern.indirect(), as_ident).spanned(e.span())
             } else {
                 pattern
             }
@@ -339,7 +334,7 @@ pub fn match_expr<'tokens, 'src: 'tokens, TInput, PLHS, PGuard, PPattern, PBody>
     expr_or_inline_stmt_or_block: PBody,
 ) -> (
     impl Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone,
-    impl Parser<'tokens, TInput, Vec<Indirect<SMatchCase<'src>>>, TExtra<'tokens, 'src>> + Clone,
+    impl Parser<'tokens, TInput, Vec<SMatchCase<'src>>, TExtra<'tokens, 'src>> + Clone,
 )
 where
     TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
@@ -377,7 +372,6 @@ where
             .or_not()
             .ignore_then(case_.clone())
             .then_ignore(just(Token::Eol))
-            .map(|x| x.indirect())
             .repeated()
             .collect::<Vec<_>>()
             .then(default_case.clone().then_ignore(just(Token::Eol)).or_not())
@@ -386,14 +380,13 @@ where
                 just(Token::Symbol("END_BLOCK")),
             ),
         case_
-            .map(|x| x.indirect())
             .separated_by(just(Token::Kw("else")))
             .allow_trailing()
             .collect::<Vec<_>>()
             .then(default_case.or_not()),
     ))
     .map(|(mut cases, default)| {
-        cases.extend(default.into_iter().map(|x| x.indirect()));
+        cases.extend(default.into_iter());
         cases
     })
     .boxed();
@@ -407,7 +400,7 @@ where
         )
         .map_with(|(scrutinee, cases), e| {
             if let Some(cases) = cases {
-                SExpr(Expr::Match(scrutinee.indirect(), cases).spanned(e.span()))
+                Expr::Match(scrutinee.indirect(), cases).spanned(e.span())
             } else {
                 scrutinee
             }
@@ -443,13 +436,7 @@ where
         let uni_fn = pattern
             .clone()
             .then(fn_body.clone())
-            .map(|(x, body)| {
-                let span = x.0.span;
-                Expr::Fn(
-                    vec![ArgDefItem::Arg(x.indirect(), None).spanned(span)],
-                    body.indirect(),
-                )
-            })
+            .map(|(x, body)| Expr::Fn(vec![ArgDefItem::Arg(x.indirect(), None)], body.indirect()))
             .spanned_expr()
             .labelled("uni-fn")
             .boxed();
@@ -468,8 +455,7 @@ where
                     .map(|(key, value)| {
                         ArgDefItem::Arg(key.indirect(), value.map(|x| x.indirect()))
                     }),
-            ))
-            .map_with(|x, e| x.spanned(e.span())),
+            )),
             symbol(","),
         )
         .labelled("argument-def-list")
@@ -524,9 +510,9 @@ where
         block.clone(),
         inline_stmt
             .clone()
-            .map_with(|x, e| match x.0.value {
-                Stmt::Expr(x) => unwrap_indirect(x),
-                _ => SExpr(Expr::Block(vec![x]).spanned(e.span())),
+            .map_with(|x, e| match x.value {
+                Stmt::Expr(x) => x.extract(),
+                _ => Expr::Block(vec![x]).spanned(e.span()),
             })
             .boxed(),
     ))
@@ -600,7 +586,7 @@ where
 
             match first {
                 ListItem::Item(expr) if rest.is_empty() && last_comma.is_none() => {
-                    return Ok(unwrap_indirect(expr));
+                    return Ok(expr.extract());
                 }
                 // ListItem::Spread(expr) if rest.is_empty() && last_comma.is_none() => {
                 //     // should this be an error?
@@ -616,7 +602,7 @@ where
             }
             items.extend(rest);
 
-            Ok(SExpr(Expr::Tuple(items).spanned(e.span())))
+            Ok(Expr::Tuple(items).spanned(e.span()))
         },
     )
     .labelled("nary-tuple")
@@ -731,7 +717,7 @@ where
         .clone()
         .foldl_with(
             symbol(".").ignore_then(ident.clone()).repeated(),
-            |lhs, rhs, e| SExpr(Expr::RawAttribute(lhs.indirect(), rhs).spanned(e.span())),
+            |lhs, rhs, e| Expr::RawAttribute(lhs.indirect(), rhs).spanned(e.span()),
         )
         .boxed();
 
@@ -790,7 +776,7 @@ where
             ControlKw::YieldFrom => Expr::YieldFrom(expr.indirect()),
         };
 
-        SExpr(expr.spanned(e.span()))
+        expr.spanned(e.span())
     })
     .labelled("control-expression");
 
@@ -889,36 +875,30 @@ where
                 .then(choice((call, subscript, attribute, then, raw_attr)))
                 .repeated(),
             |expr, (coal, op), e| -> SExpr {
-                SExpr(
-                    if coal.is_none() {
-                        match op {
-                            Postfix::Call(args) => Expr::Call(expr.indirect(), args),
-                            Postfix::Subscript(args) => Expr::Subscript(expr.indirect(), args),
-                            Postfix::RawAttribute(attr) => {
-                                Expr::RawAttribute(expr.indirect(), attr)
-                            }
-                            Postfix::ScopedAttribute(rhs) => {
-                                Expr::ScopedAttribute(expr.indirect(), rhs.indirect())
-                            }
-                            Postfix::Attribute(rhs) => Expr::Attribute(expr.indirect(), rhs),
+                if coal.is_none() {
+                    match op {
+                        Postfix::Call(args) => Expr::Call(expr.indirect(), args),
+                        Postfix::Subscript(args) => Expr::Subscript(expr.indirect(), args),
+                        Postfix::RawAttribute(attr) => Expr::RawAttribute(expr.indirect(), attr),
+                        Postfix::ScopedAttribute(rhs) => {
+                            Expr::ScopedAttribute(expr.indirect(), rhs.indirect())
                         }
-                    } else {
-                        match op {
-                            Postfix::Call(args) => Expr::MappedCall(expr.indirect(), args),
-                            Postfix::Subscript(args) => {
-                                Expr::MappedSubscript(expr.indirect(), args)
-                            }
-                            Postfix::RawAttribute(attr) => {
-                                Expr::MappedRawAttribute(expr.indirect(), attr)
-                            }
-                            Postfix::ScopedAttribute(rhs) => {
-                                Expr::MappedScopedAttribute(expr.indirect(), rhs.indirect())
-                            }
-                            Postfix::Attribute(rhs) => Expr::MappedAttribute(expr.indirect(), rhs),
-                        }
+                        Postfix::Attribute(rhs) => Expr::Attribute(expr.indirect(), rhs),
                     }
-                    .spanned(e.span()),
-                )
+                } else {
+                    match op {
+                        Postfix::Call(args) => Expr::MappedCall(expr.indirect(), args),
+                        Postfix::Subscript(args) => Expr::MappedSubscript(expr.indirect(), args),
+                        Postfix::RawAttribute(attr) => {
+                            Expr::MappedRawAttribute(expr.indirect(), attr)
+                        }
+                        Postfix::ScopedAttribute(rhs) => {
+                            Expr::MappedScopedAttribute(expr.indirect(), rhs.indirect())
+                        }
+                        Postfix::Attribute(rhs) => Expr::MappedAttribute(expr.indirect(), rhs),
+                    }
+                }
+                .spanned(e.span())
             },
         )
         .labelled("postfix")
@@ -929,7 +909,7 @@ where
         .then(symbol("&").ignore_then(expr.clone()).or_not())
         .map_with(|(lhs, rhs), e| {
             if let Some(rhs) = rhs {
-                SExpr(Expr::Decorated(lhs.indirect(), rhs.indirect()).spanned(e.span()))
+                Expr::Decorated(lhs.indirect(), rhs.indirect()).spanned(e.span())
             } else {
                 lhs
             }
@@ -949,7 +929,7 @@ where
         .repeated()
         .foldr_with(
             choice((decorator, checked.clone())),
-            |op: UnaryOp, rhs: SExpr, e| SExpr(Expr::Unary(op, rhs.indirect()).spanned(e.span())),
+            |op: UnaryOp, rhs: SExpr, e| Expr::Unary(op, rhs.indirect()).spanned(e.span()),
         )
         .labelled("unary-expression")
         .boxed(),
@@ -972,7 +952,7 @@ where
         if !right_assoc {
             arg.clone()
                 .foldl_with(op.then(arg).repeated(), |lhs, (op, rhs), e| {
-                    SExpr(Expr::Binary(op, lhs.indirect(), rhs.indirect()).spanned(e.span()))
+                    Expr::Binary(op, lhs.indirect(), rhs.indirect()).spanned(e.span())
                 })
                 .boxed()
         } else {
@@ -981,9 +961,7 @@ where
                     .then(op.then(bin.or(arg.clone())).or_not())
                     .map_with(|(lhs, matched), e| {
                         if let Some((op, rhs)) = matched {
-                            SExpr(
-                                Expr::Binary(op, lhs.indirect(), rhs.indirect()).spanned(e.span()),
-                            )
+                            Expr::Binary(op, lhs.indirect(), rhs.indirect()).spanned(e.span())
                         } else {
                             lhs
                         }
@@ -1085,14 +1063,12 @@ where
         if a.is_none() && b.is_none() {
             lhs
         } else {
-            SExpr(
-                Expr::Slice(
-                    Some(lhs.indirect()),
-                    a.flatten().map(|x| x.indirect()),
-                    b.flatten().map(|x| x.indirect()),
-                )
-                .spanned(e.span()),
+            Expr::Slice(
+                Some(lhs.indirect()),
+                a.flatten().map(|x| x.indirect()),
+                b.flatten().map(|x| x.indirect()),
             )
+            .spanned(e.span())
         }
     })
     .labelled("slice")
@@ -1133,19 +1109,15 @@ where
         .map_with(|(expr, matches_part), e| {
             if let Some((not, pattern)) = matches_part {
                 if not.is_some() {
-                    SExpr(
-                        Expr::Unary(
-                            UnaryOp::Not,
-                            SExpr(
-                                Expr::Matches(expr.indirect(), pattern.indirect())
-                                    .spanned(e.span()),
-                            )
+                    Expr::Unary(
+                        UnaryOp::Not,
+                        Expr::Matches(expr.indirect(), pattern.indirect())
+                            .spanned(e.span())
                             .indirect(),
-                        )
-                        .spanned(e.span()),
                     )
+                    .spanned(e.span())
                 } else {
-                    SExpr(Expr::Matches(expr.indirect(), pattern.indirect()).spanned(e.span()))
+                    Expr::Matches(expr.indirect(), pattern.indirect()).spanned(e.span())
                 }
             } else {
                 expr
@@ -1178,10 +1150,8 @@ where
         )
         .map_with(|(cond, if_cases), e| {
             if let Some((if_, else_)) = if_cases {
-                SExpr(
-                    Expr::If(cond.indirect(), if_.indirect(), else_.map(|x| x.indirect()))
-                        .spanned(e.span()),
-                )
+                Expr::If(cond.indirect(), if_.indirect(), else_.map(|x| x.indirect()))
+                    .spanned(e.span())
             } else {
                 cond
             }
@@ -1271,7 +1241,7 @@ where
         .then(just(START_BLOCK))
         .ignore_then(group((
             expr_or_inline_stmt_or_block.clone(),
-            except_block.map(|x| x.indirect()).repeated().collect(),
+            except_block.repeated().collect(),
             finally_block.or_not(),
         )))
         .map(|(body, excepts, finally)| {
@@ -1394,7 +1364,7 @@ where
             try_stmt.then_ignore(just(Token::Eol)),
         ))
         .labelled("statement")
-        .map_with(|x, e| SStmt(x.spanned(e.span())))
+        .map_with(|x, e| x.spanned(e.span()))
         .boxed(),
     );
 
@@ -1410,7 +1380,7 @@ where
             continue_stmt,
         ))
         .labelled("inline-statement")
-        .map_with(|x, e| SStmt(x.spanned(e.span())))
+        .map_with(|x, e| x.spanned(e.span()))
         .boxed(),
     );
 
