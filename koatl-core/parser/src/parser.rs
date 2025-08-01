@@ -582,7 +582,7 @@ where
     ))
     .try_map_with(
         |(first, rest, last_comma), e| -> Result<SExpr, Rich<'tokens, Token<'src>, Span>> {
-            let mut items = Vec::<ListItem<Indirect<SExpr>>>::new();
+            let mut items = Vec::<ListItem<STree>>::new();
 
             match first {
                 ListItem::Item(expr) if rest.is_empty() && last_comma.is_none() => {
@@ -801,8 +801,8 @@ where
     );
 
     enum Postfix<'a> {
-        Call(Vec<CallItem<'a, Indirect<SExpr<'a>>>>),
-        Subscript(Vec<ListItem<Indirect<SExpr<'a>>>>),
+        Call(Vec<CallItem<'a, STree<'a>>>),
+        Subscript(Vec<ListItem<STree<'a>>>),
         Attribute(SIdent<'a>),
         ScopedAttribute(SExpr<'a>),
         RawAttribute(SIdent<'a>),

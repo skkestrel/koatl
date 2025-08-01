@@ -119,105 +119,115 @@ pub enum DeclType {
 }
 
 #[derive(Debug, Clone)]
-pub enum Stmt<'a, TNode, TPattern> {
+pub enum Stmt<'a, TTree: Tree> {
     Module,
     Decl(Vec<SIdent<'a>>, DeclType),
-    Assign(TNode, TNode, Option<DeclType>),
-    Expr(TNode),
+    Assign(TTree::Expr, TTree::Expr, Option<DeclType>),
+    Expr(TTree::Expr),
 
-    Return(TNode),
-    While(TNode, TNode),
-    For(TPattern, TNode, TNode),
+    Return(TTree::Expr),
+    While(TTree::Expr, TTree::Expr),
+    For(TTree::Pattern, TTree::Expr, TTree::Expr),
     Import(ImportStmt<'a>),
-    Try(TNode, Vec<MatchCase<TNode, TPattern>>, Option<TNode>),
-    Assert(TNode, Option<TNode>),
-    Raise(Option<TNode>),
+    Try(TTree::Expr, Vec<MatchCase<TTree>>, Option<TTree::Expr>),
+    Assert(TTree::Expr, Option<TTree::Expr>),
+    Raise(Option<TTree::Expr>),
 
     Break,
     Continue,
 }
 
 #[derive(Debug, Clone)]
-pub struct FmtExpr<'a, TExpr> {
-    pub expr: TExpr,
+pub struct FmtExpr<'a, TTree: Tree> {
+    pub expr: TTree::Expr,
     pub fmt: Option<Ident<'a>>,
 }
 
 #[derive(Debug, Clone)]
-pub enum ListItem<TExpr> {
-    Item(TExpr),
-    Spread(TExpr),
+pub enum ListItem<TTree: Tree> {
+    Item(TTree::Expr),
+    Spread(TTree::Expr),
 }
 
 #[derive(Debug, Clone)]
-pub enum MappingItem<'a, TExpr> {
+pub enum MappingItem<'a, TTree: Tree> {
     Ident(SIdent<'a>),
-    Item(TExpr, TExpr),
-    Spread(TExpr),
+    Item(TTree::Expr, TTree::Expr),
+    Spread(TTree::Expr),
 }
 
 #[derive(Debug, Clone)]
-pub enum CallItem<'a, TExpr> {
-    Arg(TExpr),
-    Kwarg(SIdent<'a>, TExpr),
-    ArgSpread(TExpr),
-    KwargSpread(TExpr),
+pub enum CallItem<'a, TTree: Tree> {
+    Arg(TTree::Expr),
+    Kwarg(SIdent<'a>, TTree::Expr),
+    ArgSpread(TTree::Expr),
+    KwargSpread(TTree::Expr),
 }
 
 #[derive(Debug, Clone)]
-pub enum ArgDefItem<'a, TExpr, TPattern> {
-    Arg(TPattern, Option<TExpr>),
+pub enum ArgDefItem<'a, TTree: Tree> {
+    Arg(TTree::Pattern, Option<TTree::Expr>),
     ArgSpread(SIdent<'a>),
     KwargSpread(SIdent<'a>),
 }
 
 #[derive(Debug, Clone)]
-pub struct MatchCase<TExpr, TPattern> {
-    pub pattern: Option<TPattern>,
-    pub guard: Option<TExpr>,
-    pub body: TExpr,
+pub struct MatchCase<TTree: Tree> {
+    pub pattern: Option<TTree::Pattern>,
+    pub guard: Option<TTree::Expr>,
+    pub body: TTree::Expr,
+}
+
+pub trait Tree {
+    type Expr;
+    type Pattern;
+    type Stmt;
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr<'a, TExpr, TPattern> {
+pub enum Expr<'a, TTree: Tree> {
     Literal(SLiteral<'a>),
     Ident(SIdent<'a>),
     Placeholder,
-    Tuple(Vec<ListItem<TExpr>>),
-    List(Vec<ListItem<TExpr>>),
-    Mapping(Vec<MappingItem<'a, TExpr>>),
-    Slice(Option<TExpr>, Option<TExpr>, Option<TExpr>),
+    Tuple(Vec<ListItem<TTree>>),
+    List(Vec<ListItem<TTree>>),
+    Mapping(Vec<MappingItem<'a, TTree>>),
+    Slice(
+        Option<TTree::Expr>,
+        Option<TTree::Expr>,
+        Option<TTree::Expr>,
+    ),
 
-    Unary(UnaryOp, TExpr),
-    Binary(BinaryOp, TExpr, TExpr),
+    Unary(UnaryOp, TTree::Expr),
+    Binary(BinaryOp, TTree::Expr, TTree::Expr),
 
-    Await(TExpr),
-    Yield(TExpr),
-    YieldFrom(TExpr),
+    Await(TTree::Expr),
+    Yield(TTree::Expr),
+    YieldFrom(TTree::Expr),
 
-    If(TExpr, TExpr, Option<TExpr>),
-    Match(TExpr, Vec<MatchCase<TExpr, TPattern>>),
-    Matches(TExpr, TPattern),
-    Class(Vec<CallItem<'a, TExpr>>, TExpr),
+    If(TTree::Expr, TTree::Expr, Option<TTree::Expr>),
+    Match(TTree::Expr, Vec<MatchCase<TTree>>),
+    Matches(TTree::Expr, TTree::Pattern),
+    Class(Vec<CallItem<'a, TTree>>, TTree::Expr),
 
-    Call(TExpr, Vec<CallItem<'a, TExpr>>),
-    Subscript(TExpr, Vec<ListItem<TExpr>>),
-    RawAttribute(TExpr, SIdent<'a>),
-    ScopedAttribute(TExpr, TExpr),
-    Attribute(TExpr, SIdent<'a>),
+    Call(TTree::Expr, Vec<CallItem<'a, TTree>>),
+    Subscript(TTree::Expr, Vec<ListItem<TTree>>),
+    RawAttribute(TTree::Expr, SIdent<'a>),
+    ScopedAttribute(TTree::Expr, TTree::Expr),
+    Attribute(TTree::Expr, SIdent<'a>),
 
-    MappedCall(TExpr, Vec<CallItem<'a, TExpr>>),
-    MappedSubscript(TExpr, Vec<ListItem<TExpr>>),
-    MappedRawAttribute(TExpr, SIdent<'a>),
-    MappedScopedAttribute(TExpr, TExpr),
-    MappedAttribute(TExpr, SIdent<'a>),
+    MappedCall(TTree::Expr, Vec<CallItem<'a, TTree>>),
+    MappedSubscript(TTree::Expr, Vec<ListItem<TTree>>),
+    MappedRawAttribute(TTree::Expr, SIdent<'a>),
+    MappedScopedAttribute(TTree::Expr, TTree::Expr),
+    MappedAttribute(TTree::Expr, SIdent<'a>),
 
-    Checked(TExpr, Option<TPattern>),
+    Checked(TTree::Expr, Option<TTree::Pattern>),
 
-    Fn(Vec<ArgDefItem<'a, TExpr, TPattern>>, TExpr),
-    Fstr(Spanned<String>, Vec<(FmtExpr<'a, TExpr>, Spanned<String>)>),
+    Fn(Vec<ArgDefItem<'a, TTree>>, TTree::Expr),
+    Fstr(Spanned<String>, Vec<(FmtExpr<'a, TTree>, Spanned<String>)>),
 
-    Decorated(TExpr, TExpr),
+    Decorated(TTree::Expr, TTree::Expr),
 
     Block(Vec<SStmt<'a>>),
 }
@@ -225,37 +235,48 @@ pub enum Expr<'a, TExpr, TPattern> {
 // Patterns
 
 #[derive(Debug, Clone)]
-pub enum PatternSequenceItem<'a, TPattern> {
-    Item(TPattern),
+pub enum PatternSequenceItem<'a, TTree: Tree> {
+    Item(TTree::Pattern),
     Spread(Option<SIdent<'a>>),
 }
 
 #[derive(Debug, Clone)]
-pub enum PatternMappingItem<'a, TExpr, TPattern> {
+pub enum PatternMappingItem<'a, TTree: Tree> {
     Ident(SIdent<'a>),
-    Item(TExpr, TPattern),
+    Item(TTree::Expr, TTree::Pattern),
     Spread(Option<SIdent<'a>>),
 }
 
 #[derive(Debug, Clone)]
-pub enum PatternClassItem<'a, TPattern> {
-    Item(TPattern),
-    Kw(SIdent<'a>, TPattern),
+pub enum PatternClassItem<'a, TTree: Tree> {
+    Item(TTree::Pattern),
+    Kw(SIdent<'a>, TTree::Pattern),
 }
 
 #[derive(Debug, Clone)]
-pub enum Pattern<'a, TExpr, TPattern> {
+pub enum Pattern<'a, TTree: Tree> {
     Capture(Option<SIdent<'a>>),
-    Value(TExpr),
-    As(TPattern, SIdent<'a>),
-    Or(Vec<TPattern>),
+    Value(TTree::Expr),
+    As(TTree::Pattern, SIdent<'a>),
+    Or(Vec<TTree::Pattern>),
     Literal(SLiteral<'a>),
-    Sequence(Vec<PatternSequenceItem<'a, TPattern>>),
-    Mapping(Vec<PatternMappingItem<'a, TExpr, TPattern>>),
-    Class(TExpr, Vec<PatternClassItem<'a, TPattern>>),
+    Sequence(Vec<PatternSequenceItem<'a, TTree>>),
+    Mapping(Vec<PatternMappingItem<'a, TTree>>),
+    Class(TTree::Expr, Vec<PatternClassItem<'a, TTree>>),
 }
 
 // Spanned types
+
+#[derive(Debug, Clone)]
+pub struct STree<'src> {
+    phantom: std::marker::PhantomData<&'src ()>,
+}
+
+impl<'src> Tree for STree<'src> {
+    type Expr = Indirect<SExpr<'src>>;
+    type Pattern = Indirect<SPattern<'src>>;
+    type Stmt = Indirect<SStmt<'src>>;
+}
 
 pub type Span = SimpleSpan<usize, ()>;
 
@@ -275,7 +296,7 @@ impl<T> Spannable<T> for T {
     }
 }
 
-pub type SPatternInner<'a> = Pattern<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;
+pub type SPatternInner<'a> = Pattern<'a, STree<'a>>;
 
 #[derive(Debug, Clone)]
 pub struct SPattern<'a> {
@@ -289,7 +310,7 @@ impl<'a> SPatternInner<'a> {
     }
 }
 
-pub type SExprInner<'a> = Expr<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;
+pub type SExprInner<'a> = Expr<'a, STree<'a>>;
 
 #[derive(Debug, Clone)]
 pub struct SExpr<'a> {
@@ -303,7 +324,7 @@ impl<'a> SExprInner<'a> {
     }
 }
 
-pub type SStmtInner<'a> = Stmt<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;
+pub type SStmtInner<'a> = Stmt<'a, STree<'a>>;
 
 impl<'a> SStmtInner<'a> {
     pub fn spanned(self, span: Span) -> SStmt<'a> {
@@ -317,9 +338,9 @@ pub struct SStmt<'a> {
     pub span: Span,
 }
 
-pub type SListItem<'a> = ListItem<Indirect<SExpr<'a>>>;
-pub type SMappingItem<'a> = MappingItem<'a, Indirect<SExpr<'a>>>;
-pub type SMatchCase<'a> = MatchCase<Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;
-pub type SCallItem<'a> = CallItem<'a, Indirect<SExpr<'a>>>;
-pub type SArgDefItem<'a> = ArgDefItem<'a, Indirect<SExpr<'a>>, Indirect<SPattern<'a>>>;
-pub type SFmtExpr<'a> = FmtExpr<'a, Indirect<SExpr<'a>>>;
+pub type SListItem<'a> = ListItem<STree<'a>>;
+pub type SMappingItem<'a> = MappingItem<'a, STree<'a>>;
+pub type SMatchCase<'a> = MatchCase<STree<'a>>;
+pub type SCallItem<'a> = CallItem<'a, STree<'a>>;
+pub type SArgDefItem<'a> = ArgDefItem<'a, STree<'a>>;
+pub type SFmtExpr<'a> = FmtExpr<'a, STree<'a>>;
