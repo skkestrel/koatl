@@ -510,7 +510,7 @@ fn destructure_mapping<'src, 'ast>(
     for item in items.iter() {
         match item {
             MappingItem::Ident(ident) => {
-                let lhs = post_stmts.bind(ident.transform(ctx)?);
+                let lhs = post_stmts.bind(ident.transform_store(ctx)?);
 
                 let Expr::Ident(ident) = &ident.value else {
                     return Err(TfErrBuilder::default()
@@ -2186,7 +2186,10 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 vec![PyCallItem::Arg(pre.bind(expr.transform(ctx)?))],
             ),
             Expr::Literal(lit) => a.literal(lit.value.transform(ctx)?),
-            Expr::Ident(_) => a.ident(ctx.py_ident(self)?, access_ctx),
+            Expr::Ident(_) => {
+                let ident = ctx.py_ident(self);
+                a.ident(ident?, access_ctx)
+            }
             Expr::RawAttribute(..)
             | Expr::MappedRawAttribute(..)
             | Expr::Call(..)
@@ -2417,7 +2420,9 @@ pub fn transform_ast<'src, 'ast>(
     let mut exports = Vec::new();
 
     for decl in &resolve_state.root_scope.borrow().locals {
-        exports.push(decl.borrow().name.0.clone())
+        if decl.borrow().exported {
+            exports.push(decl.borrow().name.0.clone())
+        }
     }
 
     Ok(TransformOutput {
@@ -2426,7 +2431,7 @@ pub fn transform_ast<'src, 'ast>(
         module_star_exports: resolve_state
             .export_stars
             .iter()
-            .map(|x| x.clone().into())
-            .collect(),
+            .map(|x| x.value.0.clone())
+            .collect::<Vec<_>>(),
     })
 }

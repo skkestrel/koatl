@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fmt::Display;
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::ptr::{self};
@@ -103,8 +104,10 @@ pub struct Declaration<'src> {
     pub scope: Rc<RefCell<Scope<'src>>>,
     pub loc: Span,
     pub typ: Type,
-    pub modifier: DeclType,
     pub is_fn_arg: bool,
+
+    pub exported: bool,
+    pub const_: bool,
 }
 
 pub type DeclarationRef<'src> = Rc<RefCell<Declaration<'src>>>;
@@ -120,9 +123,24 @@ impl<'src> Declaration<'src> {
             scope,
             loc: name.span,
             typ: Type::Unprocessed,
-            modifier,
             is_fn_arg: false,
+
+            const_: matches!(modifier, DeclType::Const),
+            exported: matches!(modifier, DeclType::Export),
         }))
+    }
+}
+
+impl Display for Declaration<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Decl {{ {}{}{}: {:?} }}",
+            if self.exported { "export " } else { "" },
+            if self.const_ { "const " } else { "" },
+            self.name,
+            self.typ
+        )
     }
 }
 
@@ -140,6 +158,23 @@ pub struct Scope<'src> {
      * containing scope when processing the function body.
      */
     lifted_decls: Vec<DeclarationRef<'src>>,
+}
+
+impl Display for Scope<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Scope {{ locals: [{}], is_class_scope: {}, is_global_scope: {}, is_fn_scope: {} }}",
+            self.locals
+                .iter()
+                .map(|x| x.borrow().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.is_class_scope,
+            self.is_global_scope,
+            self.is_fn_scope
+        )
+    }
 }
 
 type ScopeRef<'src> = Rc<RefCell<Scope<'src>>>;
@@ -206,7 +241,7 @@ pub struct ResolveState<'src> {
     pub source: &'src str,
     pub allow_top_level_await: bool,
 
-    pub export_stars: Vec<String>,
+    pub export_stars: Vec<SIdent<'src>>,
 
     pub root_scope: Rc<RefCell<Scope<'src>>>,
     pub resolutions: HashMap<RefHash, DeclarationRef<'src>>,
@@ -282,9 +317,9 @@ impl<'src> ResolveState<'src> {
         }
 
         if !lhs {
-            let decl = Declaration::new(ident.clone(), scope.clone(), DeclType::Let);
-
             let global = &self.scope_ctx_stack[0];
+            let decl = Declaration::new(ident.clone(), global.clone(), DeclType::Let);
+
             global.borrow_mut().locals.push(decl.clone());
 
             return Ok(decl);
@@ -471,10 +506,15 @@ impl<'src> ResolveState<'src> {
     }
 }
 
-fn error_expr<'src>(span: Span) -> Indirect<SExpr<'src>> {
-    Expr::Ident(Ident("_".into()).spanned(span))
-        .spanned(span)
-        .indirect()
+fn error_ident<'src>(state: &mut ResolveState<'src>, span: Span) -> Indirect<SExpr<'src>> {
+    let ident = Ident("_".into()).spanned(span);
+    let expr = Expr::Ident(ident.clone()).spanned(span).indirect();
+
+    let decl = Declaration::new(ident, Scope::new(), DeclType::Let);
+
+    state.resolutions.insert(expr.as_ref().into(), decl);
+
+    expr
 }
 
 fn traverse_placeholder<'src>(state: &mut ResolveState<'src>, span: Span) -> Indirect<SExpr<'src>> {
@@ -597,7 +637,7 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
 
                 Pattern::Or(items)
             }
-            Pattern::Value(v) => Pattern::Value(v),
+            Pattern::Value(v) => Pattern::Value(v.traverse(state)),
             Pattern::Literal(v) => Pattern::Literal(v),
             Pattern::Sequence(items) => {
                 let items = items
@@ -784,7 +824,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     Ok(decl) => decl,
                     Err(errs) => {
                         state.errors.extend(errs);
-                        return error_expr(span);
+                        return error_ident(state, span);
                     }
                 };
 
@@ -981,12 +1021,13 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 let scope = Scope::new();
                 scope.borrow_mut().is_class_scope = true;
 
-                let body = state.scoped(scope, |state| body.traverse(state)).value;
+                let body = state
+                    .scoped(scope, |state| body.traverse_expecting_scope(state))
+                    .value;
 
                 Expr::Class(bases, body)
             }
             Expr::Fn(arg_def_items, body) => {
-                let mut all_captures = vec![];
                 let mut decls = vec![];
 
                 let scope = Scope::new();
@@ -1002,7 +1043,6 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                             for capture in meta.captures {
                                 let cap = capture.spanned(pattern.span);
-                                all_captures.push(cap.clone());
                                 arg_decls.push(Declaration::new(cap, scope.clone(), DeclType::Let));
                             }
 
@@ -1019,13 +1059,11 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                             ArgDefItem::Arg(pattern, default.map(|x| x.traverse(state)))
                         }
                         ArgDefItem::ArgSpread(arg) => {
-                            all_captures.push(arg.clone());
                             decls.push(Declaration::new(arg.clone(), scope.clone(), DeclType::Let));
 
                             ArgDefItem::ArgSpread(arg)
                         }
                         ArgDefItem::KwargSpread(arg) => {
-                            all_captures.push(arg.clone());
                             decls.push(Declaration::new(arg.clone(), scope.clone(), DeclType::Let));
 
                             ArgDefItem::KwargSpread(arg)
@@ -1033,19 +1071,27 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     })
                     .collect::<Vec<_>>();
 
-                for (i, cap) in all_captures.iter().enumerate() {
-                    if let Some(found) = all_captures[..i].iter().find(|x| x.value == cap.value) {
+                let mut fn_info = FnInfo::new();
+                for (i, decl) in decls.iter().enumerate() {
+                    if let Some(found) = decls[..i]
+                        .iter()
+                        .find(|x| x.borrow().name == decl.borrow().name)
+                    {
                         state.errors.extend(
                             TfErrBuilder::default()
-                                .message("Duplicate capture in function arguments")
-                                .context("First captured here", found.span)
-                                .span(cap.span)
+                                .message("Duplicate declaration in function arguments")
+                                .context("First declared here", found.borrow().loc)
+                                .span(decl.borrow().loc)
                                 .build_errs(),
                         );
                     }
+
+                    fn_info
+                        .arg_names
+                        .insert(decl.borrow().name.clone(), decl.clone());
                 }
 
-                state.fn_ctx_stack.push(FnInfo::new());
+                state.fn_ctx_stack.push(fn_info);
 
                 let n_scopes = state.scope_ctx_stack.len();
 
@@ -1207,14 +1253,19 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 fn traverse_assign_lhs<'src>(
     state: &mut ResolveState<'src>,
     lhs: Indirect<SExpr<'src>>,
+    typ: Option<DeclType>,
 ) -> Indirect<SExpr<'src>> {
     match lhs.value {
         Expr::Ident(ident) => {
+            if let Some(decl) = typ {
+                state.declare(ident.clone(), decl);
+            }
+
             let decl = match state.resolve(&ident, true) {
                 Ok(decl) => decl,
                 Err(errs) => {
                     state.errors.extend(errs);
-                    return error_expr(lhs.span);
+                    return error_ident(state, lhs.span);
                 }
             };
 
@@ -1228,11 +1279,11 @@ fn traverse_assign_lhs<'src>(
                 .into_iter()
                 .map(|item| match item {
                     ListItem::Item(inner) => {
-                        let inner = traverse_assign_lhs(state, inner);
+                        let inner = traverse_assign_lhs(state, inner, typ);
                         ListItem::Item(inner)
                     }
                     ListItem::Spread(inner) => {
-                        let inner = traverse_assign_lhs(state, inner);
+                        let inner = traverse_assign_lhs(state, inner, typ);
                         ListItem::Spread(inner)
                     }
                 })
@@ -1244,11 +1295,11 @@ fn traverse_assign_lhs<'src>(
                 .into_iter()
                 .map(|item| match item {
                     ListItem::Item(inner) => {
-                        let inner = traverse_assign_lhs(state, inner);
+                        let inner = traverse_assign_lhs(state, inner, typ);
                         ListItem::Item(inner)
                     }
                     ListItem::Spread(inner) => {
-                        let inner = traverse_assign_lhs(state, inner);
+                        let inner = traverse_assign_lhs(state, inner, typ);
                         ListItem::Spread(inner)
                     }
                 })
@@ -1261,19 +1312,19 @@ fn traverse_assign_lhs<'src>(
                 .map(|item| match item {
                     MappingItem::Item(key, value) => MappingItem::Item(
                         key.traverse_guarded(state),
-                        traverse_assign_lhs(state, value),
+                        traverse_assign_lhs(state, value, typ),
                     ),
                     MappingItem::Spread(inner) => {
-                        MappingItem::Spread(traverse_assign_lhs(state, inner))
+                        MappingItem::Spread(traverse_assign_lhs(state, inner, typ))
                     }
                     MappingItem::Ident(inner) => {
-                        MappingItem::Ident(traverse_assign_lhs(state, inner))
+                        MappingItem::Ident(traverse_assign_lhs(state, inner, typ))
                     }
                 })
                 .collect::<Vec<_>>();
             Expr::Mapping(items).spanned(lhs.span).indirect()
         }
-        _ => lhs,
+        _ => lhs.traverse(state),
     }
 }
 
@@ -1295,7 +1346,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
             }
             Stmt::Assign(lhs, rhs, typ) => {
                 // LHS will create lifted decls
-                let lhs = traverse_assign_lhs(state, lhs);
+                let lhs = traverse_assign_lhs(state, lhs, typ);
 
                 let rhs = rhs.traverse_guarded(state);
 
@@ -1379,7 +1430,9 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 
                         let full_module = ".".repeat(import_stmt.level) + &base_module;
 
-                        state.export_stars.push(full_module);
+                        state
+                            .export_stars
+                            .push(Ident(full_module.into()).spanned(span));
                     }
                     ImportList::Leaves(imports) => {
                         for (ident, as_name) in imports {
