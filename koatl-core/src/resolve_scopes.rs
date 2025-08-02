@@ -259,7 +259,6 @@ impl<'src> ResolveState<'src> {
         if lhs {
             if scope.borrow().is_class_scope || scope.borrow().is_global_scope {
                 let decl = Declaration::new(ident.clone(), scope.clone(), DeclType::Let);
-
                 scope.borrow_mut().locals.push(decl.clone());
 
                 return Ok(decl);
@@ -379,11 +378,14 @@ impl<'src> ResolveState<'src> {
     }
 
     fn declare(&mut self, name: SIdent<'src>, modifier: DeclType) -> DeclarationRef<'src> {
-        let scope = &mut self.scope_ctx_stack.last().unwrap().borrow_mut();
+        let (global, class) = {
+            let scope = &mut self.scope_ctx_stack.last().unwrap().borrow_mut();
+            (scope.is_global_scope, scope.is_class_scope)
+        };
 
         match modifier {
             DeclType::Global => {
-                if scope.is_global_scope || scope.is_class_scope {
+                if global || class {
                     self.errors.extend(simple_err(
                         "Global declarations are not allowed at the module or class level",
                         name.span,
@@ -391,7 +393,7 @@ impl<'src> ResolveState<'src> {
                 }
             }
             DeclType::Export => {
-                if !scope.is_global_scope {
+                if !global {
                     self.errors.extend(simple_err(
                         "Exports are only allowed at the module level",
                         name.span,
@@ -399,7 +401,7 @@ impl<'src> ResolveState<'src> {
                 }
             }
             DeclType::Let | DeclType::Const => {
-                if scope.is_class_scope || scope.is_global_scope {
+                if class || global {
                     if let Some(found) = self.scope_ctx_stack.find_decl(&name) {
                         self.errors.extend(
                             TlErrBuilder::new()
@@ -413,13 +415,11 @@ impl<'src> ResolveState<'src> {
             }
         };
 
-        let decl = Declaration::new(
-            name.clone(),
-            self.scope_ctx_stack.last().unwrap().clone(),
-            modifier,
-        );
+        let scope = self.scope_ctx_stack.last().unwrap();
 
-        scope.locals.push(decl.clone());
+        let decl = Declaration::new(name.clone(), scope.clone(), modifier);
+
+        scope.borrow_mut().locals.push(decl.clone());
 
         decl
     }
@@ -896,8 +896,6 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                                 };
 
                                 let then = then.traverse(state);
-
-                                // TODO: then scope must be never
 
                                 state
                                     .scope_ctx_stack
