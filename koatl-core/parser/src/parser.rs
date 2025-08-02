@@ -476,7 +476,7 @@ where
 }
 
 pub fn parser<'tokens, 'src: 'tokens, TInput>()
--> impl Parser<'tokens, TInput, Vec<SStmt<'src>>, TExtra<'tokens, 'src>> + Clone
+-> impl Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone
 where
     TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
 {
@@ -492,15 +492,16 @@ where
 
     let stmts = stmt
         .clone()
+        .map(|x| x.indirect())
         .repeated()
-        .collect::<Vec<SStmt>>()
+        .collect::<Vec<Indirect<SStmt>>>()
         .labelled("statement-list")
         .boxed();
 
     let block = stmts
         .clone()
         .delimited_by(symbol("BEGIN_BLOCK"), symbol("END_BLOCK"))
-        .map(Expr::Block)
+        .map(SExprInner::Block)
         .spanned_expr()
         .boxed();
 
@@ -512,7 +513,7 @@ where
             .clone()
             .map_with(|x, e| match x.value {
                 Stmt::Expr(x) => x.extract(),
-                _ => Expr::Block(vec![x]).spanned(e.span()),
+                _ => Expr::Block(vec![x.indirect()]).spanned(e.span()),
             })
             .boxed(),
     ))
@@ -1384,16 +1385,13 @@ where
         .boxed(),
     );
 
-    stmts.labelled("program")
+    block.labelled("program")
 }
 
 pub fn parse_tokens<'tokens, 'src: 'tokens>(
     src: &'src str,
     tokens: &'tokens TokenList<'src>,
-) -> (
-    Option<Vec<SStmt<'src>>>,
-    Vec<Rich<'tokens, Token<'src>, Span>>,
-) {
+) -> (Option<SExpr<'src>>, Vec<Rich<'tokens, Token<'src>, Span>>) {
     parser()
         .parse(
             tokens

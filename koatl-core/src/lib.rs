@@ -1,7 +1,9 @@
+mod desugar;
 pub mod linecol;
 pub mod parser;
 pub mod py;
 pub mod transform;
+mod types;
 
 use ::parser::ast::SStmt;
 use parser::ast::Span;

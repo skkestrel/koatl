@@ -188,7 +188,6 @@ pub trait Tree {
 pub enum Expr<'a, TTree: Tree> {
     Literal(SLiteral<'a>),
     Ident(SIdent<'a>),
-    Placeholder,
     Tuple(Vec<ListItem<TTree>>),
     List(Vec<ListItem<TTree>>),
     Mapping(Vec<MappingItem<'a, TTree>>),
@@ -224,12 +223,14 @@ pub enum Expr<'a, TTree: Tree> {
 
     Checked(TTree::Expr, Option<TTree::Pattern>),
 
+    Block(Vec<TTree::Stmt>),
+
     Fn(Vec<ArgDefItem<'a, TTree>>, TTree::Expr),
     Fstr(Spanned<String>, Vec<(FmtExpr<'a, TTree>, Spanned<String>)>),
 
+    // these are removed during desugaring
     Decorated(TTree::Expr, TTree::Expr),
-
-    Block(Vec<SStmt<'a>>),
+    Placeholder,
 }
 
 // Patterns

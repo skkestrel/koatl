@@ -937,13 +937,24 @@ where
             return Ok(TokenList(vec![]));
         }
 
-        let mut tokens = self.parse_block(0, NewBlockType::BeginInput)?;
+        let mut tokens = TokenList(vec![]);
         tokens
-            .value
+            .0
+            .push(Token::Symbol("BEGIN_BLOCK").spanned(self.span_since(&self.cursor())));
+
+        tokens
+            .0
+            .extend(self.parse_block(0, NewBlockType::BeginInput)?.value);
+
+        tokens
             .0
             .push(Token::Eol.spanned(self.span_since(&self.cursor())));
 
-        Ok(tokens.value)
+        tokens
+            .0
+            .push(Token::Symbol("END_BLOCK").spanned(self.span_since(&self.cursor())));
+
+        Ok(tokens)
     }
 }
 
