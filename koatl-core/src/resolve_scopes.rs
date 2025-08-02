@@ -201,7 +201,7 @@ pub struct ResolveState<'src> {
     pub functions: HashMap<RefHash, FnInfo<'src>>,
     pub patterns: HashMap<RefHash, PatternInfo<'src>>,
 
-    pub errors: TlErrs,
+    errors: TlErrs,
 
     placeholder_ctx_stack: Vec<PlaceholderCtx<'src>>,
     fn_ctx_stack: Vec<FnInfo<'src>>,
@@ -1411,7 +1411,7 @@ pub fn resolve_names<'src>(
     source: &'src str,
     expr: impl IntoIndirect<SExpr<'src>>,
     allow_await: bool,
-) -> (ResolveState<'src>, Indirect<SExpr<'src>>) {
+) -> (ResolveState<'src>, TlErrs, Indirect<SExpr<'src>>) {
     let mut state = ResolveState::new(source);
     state.allow_top_level_await = allow_await;
     state.root_scope = Scope::new();
@@ -1435,5 +1435,7 @@ pub fn resolve_names<'src>(
         panic!("Placeholder context stack is not empty after resolving names");
     }
 
-    (state, expr)
+    let errors = state.errors.clone();
+
+    (state, errors, expr)
 }

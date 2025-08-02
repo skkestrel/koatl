@@ -1,3 +1,4 @@
+mod inference;
 pub mod parser;
 pub mod py;
 mod resolve_scopes;
@@ -65,17 +66,26 @@ pub fn transpile_to_py_ast<'src>(
 
     let mut errs = TlErrs::new();
 
-    let (resolve_state, tl_ast) = resolve_scopes::resolve_names(src, tl_ast, options.allow_await);
+    let (resolve_state, errors, tl_ast) =
+        resolve_scopes::resolve_names(src, tl_ast, options.allow_await);
 
-    let output = match transform_ast(&src, &tl_ast, &resolve_state) {
-        Ok(output) => Some(output),
+    errs.extend(errors);
+
+    let inference = match inference::infer(&src, &tl_ast, &resolve_state) {
+        Ok(inference) => inference,
         Err(e) => {
             errs.extend(e);
-            None
+            return Err(errs);
         }
     };
 
-    errs.extend(resolve_state.errors);
+    let output = match transform_ast(&src, &tl_ast, &resolve_state, &inference) {
+        Ok(output) => Some(output),
+        Err(e) => {
+            errs.extend(e);
+            return Err(errs);
+        }
+    };
 
     if errs.0.len() > 0 {
         return Err(errs);

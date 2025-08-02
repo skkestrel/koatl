@@ -101,7 +101,7 @@ pub struct TlErr {
 
 pub type TlResult<T> = Result<T, TlErrs>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TlErrs(pub Vec<TlErr>);
 
 impl TlErrs {

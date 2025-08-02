@@ -5,8 +5,10 @@ use std::{
 };
 
 use crate::{
+    inference::InferenceCtx,
     py::{ast::*, util::PyAstBuilder},
     resolve_scopes::{Declaration, DeclarationRef, FnInfo, PatternInfo, ResolveState},
+    types::Type,
     util::{LineColCache, RcKey, RefHash, TlErrBuilder, TlErrs, TlResult},
 };
 use once_cell::sync::Lazy;
@@ -53,13 +55,19 @@ struct TlCtx<'src, 'ast> {
     ident_counts: HashMap<Ident<'src>, usize>,
     py_decls: HashMap<RcKey<RefCell<Declaration<'src>>>, PyDecl<'src>>,
 
+    types: &'ast HashMap<RefHash, Type>,
+
     functions: &'ast HashMap<RefHash, FnInfo<'src>>,
     patterns: &'ast HashMap<RefHash, PatternInfo<'src>>,
     resolutions: &'ast HashMap<RefHash, DeclarationRef<'src>>,
 }
 
 impl<'src, 'ast> TlCtx<'src, 'ast> {
-    fn new(source: &'src str, resolve_state: &'ast ResolveState<'src>) -> TlResult<Self> {
+    fn new(
+        source: &'src str,
+        resolve_state: &'ast ResolveState<'src>,
+        inference: &'ast InferenceCtx<'src, 'ast>,
+    ) -> TlResult<Self> {
         Ok(TlCtx {
             source,
             export_stars: Vec::new(),
@@ -67,6 +75,8 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
 
             ident_counts: HashMap::new(),
             py_decls: HashMap::new(),
+
+            types: &inference.types,
 
             functions: &resolve_state.functions,
             patterns: &resolve_state.patterns,
@@ -712,24 +722,19 @@ fn transform_if_matches_not_never_expr<'src, 'ast>(
 
     let span = then_block.span;
 
-    let err = || {
-        simple_err(
-            "Internal: then block of 'if ... matches not ...' with named captures must have type Never (raise, return, continue, break)",
+    let typ = ctx
+        .types
+        .get(&then_block.into())
+        .ok_or_else(|| simple_err("Internal: No type for then block", span))?;
+
+    if *typ != Type::Bottom {
+        return Err(simple_err(
+            "then block of 'if ... matches not ...' with named captures must have type Never (raise, return, continue, break)",
             span,
-        )
-    };
+        ));
+    }
 
-    let Expr::Block(then_block) = &then_block.value else {
-        return Err(err());
-    };
-
-    let then_block = then_block.transform(ctx)?;
-
-    let PyBlockExpr::Never = then_block.value else {
-        return Err(err());
-    };
-
-    let on_no_match = then_block.pre;
+    let on_no_match = then_block.transform(ctx)?.drop_expr(ctx);
 
     let pattern_span = pattern_neg.span;
     let pattern = pre.bind(pattern_neg.transform(ctx, pattern_meta)?);
@@ -2332,8 +2337,9 @@ pub fn transform_ast<'src, 'ast>(
     source: &'src str,
     block: &'ast SExpr<'src>,
     resolve_state: &'ast ResolveState<'src>,
+    inference: &'ast InferenceCtx<'src, 'ast>,
 ) -> TlResult<TransformOutput<'src>> {
-    let mut ctx = TlCtx::new(source, resolve_state)?;
+    let mut ctx = TlCtx::new(source, resolve_state, inference)?;
 
     let mut py_block = PyBlock::new();
     let expr = py_block.bind(block.transform(&mut ctx)?);
