@@ -1,18 +1,20 @@
 use std::{
     borrow::Cow,
-    cell::RefCell,
     collections::{HashMap, HashSet},
 };
 
 use crate::{
     inference::InferenceCtx,
     py::{ast::*, util::PyAstBuilder},
-    resolve_scopes::{Declaration, DeclarationRef, FnInfo, PatternInfo, ResolveState},
+    resolve_scopes::{
+        Declaration, DeclarationKey, FnInfo, PatternInfo, ResolveState, Scope, ScopeKey,
+    },
     types::Type,
-    util::{LineColCache, RcKey, RefHash, TlErrBuilder, TlErrs, TlResult},
+    util::{LineColCache, RefHash, TlErrBuilder, TlErrs, TlResult},
 };
 use once_cell::sync::Lazy;
 use parser::ast::*;
+use slotmap::SlotMap;
 
 static PY_KWS: &[&str] = &[
     "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else", "except",
@@ -53,13 +55,16 @@ struct TlCtx<'src, 'ast> {
     line_cache: LineColCache,
 
     ident_counts: HashMap<Ident<'src>, usize>,
-    py_decls: HashMap<RcKey<RefCell<Declaration<'src>>>, PyDecl<'src>>,
+    py_decls: HashMap<DeclarationKey, PyDecl<'src>>,
+
+    functions: &'ast HashMap<RefHash, FnInfo>,
+    patterns: &'ast HashMap<RefHash, PatternInfo>,
+    resolutions: &'ast HashMap<RefHash, DeclarationKey>,
+
+    scopes: &'ast SlotMap<ScopeKey, Scope>,
+    declarations: &'ast SlotMap<DeclarationKey, Declaration<'src>>,
 
     types: &'ast HashMap<RefHash, Type>,
-
-    functions: &'ast HashMap<RefHash, FnInfo<'src>>,
-    patterns: &'ast HashMap<RefHash, PatternInfo<'src>>,
-    resolutions: &'ast HashMap<RefHash, DeclarationRef<'src>>,
 }
 
 impl<'src, 'ast> TlCtx<'src, 'ast> {
@@ -76,11 +81,14 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
             ident_counts: HashMap::new(),
             py_decls: HashMap::new(),
 
-            types: &inference.types,
-
             functions: &resolve_state.functions,
             patterns: &resolve_state.patterns,
             resolutions: &resolve_state.resolutions,
+
+            scopes: &resolve_state.scopes,
+            declarations: &resolve_state.declarations,
+
+            types: &inference.types,
         })
     }
 
@@ -93,7 +101,7 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
         format!("_{}_l{}c{}", typ, line, col).into()
     }
 
-    fn fn_info(&self, expr: &SExpr<'src>) -> TlResult<&'ast FnInfo<'src>> {
+    fn fn_info(&self, expr: &SExpr<'src>) -> TlResult<&'ast FnInfo> {
         let Expr::Fn(..) = &expr.value else {
             return Err(simple_err("Internal: expected an Expr::Fn", expr.span));
         };
@@ -103,24 +111,23 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
             .ok_or_else(|| simple_err("Internal: Unresolved function", expr.span))
     }
 
-    fn pattern_info(&self, pattern: &SPattern<'src>) -> TlResult<&'ast PatternInfo<'src>> {
+    fn pattern_info(&self, pattern: &SPattern<'src>) -> TlResult<&'ast PatternInfo> {
         self.patterns
             .get(&pattern.into())
             .ok_or_else(|| simple_err("Internal: Unresolved pattern", pattern.span))
     }
 
-    fn decl_py_ident(&mut self, decl: &DeclarationRef<'src>) -> TlResult<PyIdent<'src>> {
-        let ident = &decl.borrow().name;
-        let decl_borrowed = decl.borrow();
-        let scope = decl_borrowed.scope.borrow();
+    fn decl_py_ident(&mut self, decl_key: DeclarationKey) -> TlResult<PyIdent<'src>> {
+        let decl = &self.declarations[decl_key];
+        let scope = &self.scopes[decl.scope];
 
-        if scope.is_class_scope || scope.is_global_scope || decl_borrowed.is_fn_arg {
-            return Ok(ident.escape());
+        if scope.is_class || scope.is_global || decl.is_fn_arg {
+            return Ok(decl.name.escape());
         }
 
-        let entry = self.py_decls.entry(decl.clone().into()).or_insert_with(|| {
-            let base_ident = ident.escape();
-            let count = self.ident_counts.entry(ident.clone()).or_default();
+        let entry = self.py_decls.entry(decl_key).or_insert_with(|| {
+            let base_ident = decl.name.escape();
+            let count = self.ident_counts.entry(decl.name.clone()).or_default();
             *count += 1;
 
             let ident = format!("let_{}_{}", base_ident, count);
@@ -143,7 +150,7 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
             .get(&expr.into())
             .ok_or_else(|| simple_err("Internal: Unresolved identifier", expr.span))?;
 
-        self.decl_py_ident(decl)
+        self.decl_py_ident(*decl)
     }
 }
 
@@ -709,7 +716,7 @@ fn transform_if_matches_not_never_expr<'src, 'ast>(
     ctx: &mut TlCtx<'src, 'ast>,
     subject: &'ast SExpr<'src>,
     pattern_neg: &'ast SPattern<'src>,
-    pattern_meta: &'ast PatternInfo<'src>,
+    pattern_meta: &'ast PatternInfo,
     then_block: &'ast SExpr<'src>,
     else_block: Option<&'ast SExpr<'src>>,
     span: &Span,
@@ -820,7 +827,7 @@ trait SPatternExt<'src, 'ast> {
     fn transform(
         &'ast self,
         ctx: &mut TlCtx<'src, 'ast>,
-        info: &PatternInfo<'src>,
+        info: &PatternInfo,
     ) -> TlResult<WithPre<'src, SPyPattern<'src>>>;
 }
 
@@ -828,7 +835,7 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
     fn transform(
         &'ast self,
         ctx: &mut TlCtx<'src, 'ast>,
-        info: &PatternInfo<'src>,
+        info: &PatternInfo,
     ) -> TlResult<WithPre<'src, SPyPattern<'src>>> {
         // TODO avoid python syntaxerror by verifying that all branches in Or bind the same name
         // also check for no patterns after default pattern
@@ -841,7 +848,7 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
         fn capture_slot<'src, 'ast>(
             ctx: &mut TlCtx<'src, 'ast>,
             ident: &SIdent<'src>,
-            info: &PatternInfo<'src>,
+            info: &PatternInfo,
         ) -> TlResult<Option<PyIdent<'src>>> {
             if ident.value.0 == "_" {
                 Ok(None)
@@ -849,17 +856,17 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
                 let found = info
                     .decls
                     .iter()
-                    .find(|d| d.borrow().name == ident.value)
+                    .find(|d| ctx.declarations[**d].name == ident.value)
                     .ok_or_else(|| simple_err("Internal: unresolved capture slot", ident.span))?;
 
-                Ok(Some(ctx.decl_py_ident(found)?))
+                Ok(Some(ctx.decl_py_ident(*found)?))
             }
         }
 
         fn maybe_capture_slot<'src, 'ast>(
             ctx: &mut TlCtx<'src, 'ast>,
             ident: &Option<SIdent<'src>>,
-            info: &PatternInfo<'src>,
+            info: &PatternInfo,
         ) -> TlResult<Option<PyIdent<'src>>> {
             if let Some(ident) = ident {
                 capture_slot(ctx, ident, info)
@@ -1012,7 +1019,7 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
 fn create_throwing_matcher<'src, 'ast>(
     ctx: &mut TlCtx<'src, 'ast>,
     pattern: &'ast SPattern<'src>,
-    pattern_meta: &'ast PatternInfo<'src>,
+    pattern_meta: &'ast PatternInfo,
 ) -> TlResult<(PyBlock<'src>, PyIdent<'src>)> {
     if let Pattern::Capture(Some(_)) = &pattern.value {
         if pattern_meta.decls.len() != 1 {
@@ -1023,7 +1030,7 @@ fn create_throwing_matcher<'src, 'ast>(
         }
 
         let decl = pattern_meta.decls.iter().next().unwrap();
-        return Ok((PyBlock::new(), ctx.decl_py_ident(decl)?));
+        return Ok((PyBlock::new(), ctx.decl_py_ident(*decl)?));
     }
 
     let cursor = ctx.create_aux_var("matcher", pattern.span.start);
@@ -1062,7 +1069,7 @@ fn create_binary_matcher<'src, 'ast>(
     ctx: &mut TlCtx<'src, 'ast>,
     subject: SPyExpr<'src>,
     pattern: &'ast SPattern<'src>,
-    pattern_meta: &'ast PatternInfo<'src>,
+    pattern_meta: &'ast PatternInfo,
     on_success: PyBlock<'src>,
     on_fail: PyBlock<'src>,
 ) -> TlResult<PyBlock<'src>> {
@@ -1251,7 +1258,7 @@ struct PyArgList<'src> {
 fn make_arglist<'src, 'ast>(
     ctx: &mut TlCtx<'src, 'ast>,
     args: &'ast [SArgDefItem<'src>],
-    info: &FnInfo<'src>,
+    info: &FnInfo,
 ) -> TlResult<PyArgList<'src>> {
     let mut pre = PyBlock::new();
     let mut post = PyBlock::new();
@@ -1275,16 +1282,18 @@ fn make_arglist<'src, 'ast>(
             ArgDefItem::ArgSpread(name) => {
                 let decl = info
                     .arg_names
-                    .get(&name.value)
+                    .iter()
+                    .find(|key| ctx.declarations[**key].name == name.value)
                     .ok_or_else(|| simple_err("Internal: missing arg name", name.span))?;
-                PyArgDefItem::ArgSpread(ctx.decl_py_ident(decl)?)
+                PyArgDefItem::ArgSpread(ctx.decl_py_ident(*decl)?)
             }
             ArgDefItem::KwargSpread(name) => {
                 let decl = info
                     .arg_names
-                    .get(&name.value)
+                    .iter()
+                    .find(|key| ctx.declarations[**key].name == name.value)
                     .ok_or_else(|| simple_err("Internal: missing arg name", name.span))?;
-                PyArgDefItem::KwargSpread(ctx.decl_py_ident(decl)?)
+                PyArgDefItem::KwargSpread(ctx.decl_py_ident(*decl)?)
             }
         };
         args_vec.push(arg);
@@ -1374,10 +1383,10 @@ fn prepare_py_fn<'src, 'ast>(
             let mut globals = vec![];
 
             for capture in fn_info.captures.iter() {
-                if capture.borrow().scope.borrow().is_global_scope {
-                    globals.push(ctx.decl_py_ident(&capture.0)?);
+                if ctx.scopes[ctx.declarations[*capture].scope].is_global {
+                    globals.push(ctx.decl_py_ident(*capture)?);
                 } else {
-                    nonlocals.push(ctx.decl_py_ident(&capture.0)?);
+                    nonlocals.push(ctx.decl_py_ident(*capture)?);
                 }
             }
 
@@ -2347,9 +2356,11 @@ pub fn transform_ast<'src, 'ast>(
 
     let mut exports = Vec::new();
 
-    for decl in &resolve_state.root_scope.borrow().locals {
-        if decl.borrow().exported {
-            exports.push(decl.borrow().name.0.clone())
+    for decl in &resolve_state.scopes[resolve_state.root_scope].locals {
+        let decl = &resolve_state.declarations[*decl];
+
+        if decl.is_exported {
+            exports.push(decl.name.escape())
         }
     }
 

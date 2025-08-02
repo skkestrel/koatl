@@ -1,192 +1,30 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Display;
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+
+use slotmap::SlotMap;
+use slotmap::new_key_type;
 
 use crate::types::Type;
-use crate::util::{RcKey, RefHash, TlErrBuilder, TlErrs, TlResult};
+use crate::util::{RefHash, TlErrBuilder, TlErrs, TlResult};
 use parser::ast::*;
 
-fn simple_err(message: &str, span: Span) -> TlErrs {
-    TlErrBuilder::new().message(message).span(span).build()
-}
+new_key_type! { pub struct ScopeKey;}
+new_key_type! { pub struct DeclarationKey;}
 
-#[allow(dead_code)]
-struct PlaceholderCtx<'src> {
-    activated: bool,
-    decl: DeclarationRef<'src>,
-    span: Span,
-}
-
-impl<'src> PlaceholderCtx<'src> {
-    fn new(decl: DeclarationRef<'src>, span: Span) -> Self {
-        Self {
-            activated: false,
-            decl,
-            span,
-        }
+impl ScopeKey {
+    pub fn bind<'res>(self, state: &'res mut ResolveState<'_>) -> &'res mut Scope {
+        &mut state.scopes[self]
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct FnInfo<'src> {
-    pub is_do: bool,
-    pub is_async: bool,
-    pub is_generator: bool,
-    pub is_placeholder: bool,
-
-    pub arg_names: HashMap<Ident<'src>, DeclarationRef<'src>>,
-    pub captures: HashSet<RcKey<RefCell<Declaration<'src>>>>,
-}
-
-impl FnInfo<'_> {
-    pub fn new() -> Self {
-        Self {
-            is_do: false,
-            is_async: false,
-            is_generator: false,
-            is_placeholder: false,
-            arg_names: HashMap::new(),
-            captures: HashSet::new(),
-        }
+impl DeclarationKey {
+    pub fn bind<'src, 'res>(
+        self,
+        state: &'res mut ResolveState<'src>,
+    ) -> &'res mut Declaration<'src> {
+        &mut state.declarations[self]
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct Declaration<'src> {
-    pub name: Ident<'src>,
-    pub scope: Rc<RefCell<Scope<'src>>>,
-    pub loc: Span,
-    pub typ: Type,
-    pub is_fn_arg: bool,
-
-    pub exported: bool,
-    pub const_: bool,
-}
-
-pub type DeclarationRef<'src> = Rc<RefCell<Declaration<'src>>>;
-
-impl<'src> Declaration<'src> {
-    pub fn new(
-        name: SIdent<'src>,
-        scope: Rc<RefCell<Scope<'src>>>,
-        modifier: DeclType,
-    ) -> DeclarationRef<'src> {
-        Rc::new(RefCell::new(Declaration {
-            name: name.value,
-            scope,
-            loc: name.span,
-            typ: Type::Unprocessed,
-            is_fn_arg: false,
-
-            const_: matches!(modifier, DeclType::Const),
-            exported: matches!(modifier, DeclType::Export),
-        }))
-    }
-}
-
-impl Display for Declaration<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Decl {{ {}{}{}: {:?} }}",
-            if self.exported { "export " } else { "" },
-            if self.const_ { "const " } else { "" },
-            self.name,
-            self.typ
-        )
-    }
-}
-
-#[derive(Debug)]
-pub struct Scope<'src> {
-    pub locals: Vec<DeclarationRef<'src>>,
-
-    pub is_class_scope: bool,
-    pub is_global_scope: bool,
-    pub is_fn_scope: bool,
-
-    /**
-     * This enables special treatment for defining
-     * recursive functions; lifted_decls are added to the
-     * containing scope when processing the function body.
-     */
-    lifted_decls: Vec<DeclarationRef<'src>>,
-}
-
-impl Display for Scope<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Scope {{ locals: [{}], is_class_scope: {}, is_global_scope: {}, is_fn_scope: {} }}",
-            self.locals
-                .iter()
-                .map(|x| x.borrow().to_string())
-                .collect::<Vec<_>>()
-                .join(", "),
-            self.is_class_scope,
-            self.is_global_scope,
-            self.is_fn_scope
-        )
-    }
-}
-
-type ScopeRef<'src> = Rc<RefCell<Scope<'src>>>;
-
-impl<'src> Scope<'src> {
-    fn new() -> ScopeRef<'src> {
-        Rc::new(RefCell::new(Self {
-            locals: Vec::new(),
-            lifted_decls: Vec::new(),
-            is_fn_scope: false,
-            is_class_scope: false,
-            is_global_scope: false,
-        }))
-    }
-}
-
-#[allow(dead_code)]
-struct FindResult<'src> {
-    decl: DeclarationRef<'src>,
-    local: bool,
-    fn_local: bool,
-}
-
-trait ScopeStackExt<'src> {
-    fn find_decl(&self, ident: &SIdent<'src>) -> Option<FindResult<'src>>;
-}
-
-impl<'src> ScopeStackExt<'src> for Vec<Rc<RefCell<Scope<'src>>>> {
-    fn find_decl(&self, ident: &SIdent<'src>) -> Option<FindResult<'src>> {
-        let mut fn_local = true;
-        let mut local = true;
-        for scope in self.iter().rev().map(|s| s.borrow()) {
-            if let Some(decl) = scope
-                .locals
-                .iter()
-                .rev()
-                .find(|d| d.borrow().name == ident.value)
-            {
-                return Some(FindResult {
-                    decl: decl.clone(),
-                    local,
-                    fn_local,
-                });
-            }
-
-            if scope.is_fn_scope {
-                fn_local = false;
-            }
-
-            local = false;
-        }
-
-        None
-    }
-}
-
-pub struct PatternInfo<'src> {
-    pub default: bool,
-    pub decls: Vec<DeclarationRef<'src>>,
 }
 
 #[allow(dead_code)]
@@ -196,56 +34,88 @@ pub struct ResolveState<'src> {
 
     pub export_stars: Vec<SIdent<'src>>,
 
-    pub root_scope: Rc<RefCell<Scope<'src>>>,
-    pub resolutions: HashMap<RefHash, DeclarationRef<'src>>,
-    pub functions: HashMap<RefHash, FnInfo<'src>>,
-    pub patterns: HashMap<RefHash, PatternInfo<'src>>,
+    pub resolutions: HashMap<RefHash, DeclarationKey>,
+    pub functions: HashMap<RefHash, FnInfo>,
+    pub patterns: HashMap<RefHash, PatternInfo>,
+
+    pub declarations: SlotMap<DeclarationKey, Declaration<'src>>,
+    pub scopes: SlotMap<ScopeKey, Scope>,
+
+    pub root_scope: ScopeKey,
+    pub err_scope: ScopeKey,
 
     errors: TlErrs,
 
-    placeholder_ctx_stack: Vec<PlaceholderCtx<'src>>,
-    fn_ctx_stack: Vec<FnInfo<'src>>,
-    scope_ctx_stack: Vec<Rc<RefCell<Scope<'src>>>>,
+    placeholder_stack: Vec<PlaceholderGuard>,
+    fn_stack: Vec<FnInfo>,
+    scope_stack: Vec<ScopeKey>,
+}
 
-    scope_id_counter: usize,
+fn top_scope<'src, 'state>(
+    scope_stack: &'state Vec<ScopeKey>,
+    scopes: &'state mut SlotMap<ScopeKey, Scope>,
+) -> &'state mut Scope {
+    &mut scopes[*scope_stack.last().unwrap()]
+}
+
+fn top_scope_and_key<'src, 'state>(
+    scope_stack: &'state Vec<ScopeKey>,
+    scopes: &'state mut SlotMap<ScopeKey, Scope>,
+) -> (&'state mut Scope, ScopeKey) {
+    let key = *scope_stack.last().unwrap();
+    (&mut scopes[key], key)
 }
 
 #[allow(dead_code)]
-struct ScopedOutput<'src, T> {
-    pub value: T,
-    pub scope: Rc<RefCell<Scope<'src>>>,
-}
-
 impl<'src> ResolveState<'src> {
     fn new(source: &'src str) -> Self {
+        let mut root_scope = Scope::new();
+        root_scope.is_global = true;
+
+        let err_scope = Scope::new();
+
+        let mut scopes = SlotMap::with_key();
+        let root_scope_key = scopes.insert(root_scope);
+        let err_scope_key = scopes.insert(err_scope);
+
         ResolveState {
             allow_top_level_await: false,
+            export_stars: Vec::new(),
             source,
 
-            export_stars: Vec::new(),
-
-            root_scope: Scope::new(),
             resolutions: HashMap::new(),
             functions: HashMap::new(),
             patterns: HashMap::new(),
 
+            declarations: SlotMap::with_key(),
+            scopes,
+
+            root_scope: root_scope_key,
+            err_scope: err_scope_key,
+
             errors: TlErrs::new(),
 
-            scope_id_counter: 0,
-
-            placeholder_ctx_stack: Vec::new(),
-            fn_ctx_stack: Vec::new(),
-            scope_ctx_stack: Vec::new(),
+            placeholder_stack: Vec::new(),
+            fn_stack: Vec::new(),
+            scope_stack: Vec::new(),
         }
     }
 
-    fn resolve(&mut self, ident: &SIdent<'src>, lhs: bool) -> TlResult<DeclarationRef<'src>> {
-        if let Some(found) = self.scope_ctx_stack.find_decl(ident) {
+    fn top_scope(&mut self) -> &mut Scope {
+        top_scope(&self.scope_stack, &mut self.scopes)
+    }
+
+    fn top_scope_and_key(&mut self) -> (&mut Scope, ScopeKey) {
+        top_scope_and_key(&self.scope_stack, &mut self.scopes)
+    }
+
+    fn resolve(&mut self, ident: &SIdent<'src>, lhs: bool) -> TlResult<DeclarationKey> {
+        if let Some(found) = self.scope_stack.find_decl(self, ident) {
             if found.fn_local {
                 return Ok(found.decl);
             }
 
-            let Some(fn_ctx) = self.fn_ctx_stack.last_mut() else {
+            let Some(fn_ctx) = self.fn_stack.last_mut() else {
                 return Err(simple_err("Internal error: no function context", ident.span).into());
             };
 
@@ -254,22 +124,26 @@ impl<'src> ResolveState<'src> {
             return Ok(found.decl);
         }
 
-        let scope = self.scope_ctx_stack.last().unwrap();
+        let (scope, scope_key) = top_scope_and_key(&self.scope_stack, &mut self.scopes);
 
         if lhs {
-            if scope.borrow().is_class_scope || scope.borrow().is_global_scope {
-                let decl = Declaration::new(ident.clone(), scope.clone(), DeclType::Let);
-                scope.borrow_mut().locals.push(decl.clone());
+            if scope.is_class || scope.is_global {
+                let decl =
+                    self.declarations
+                        .insert_declaration(ident.clone(), scope_key, DeclType::Let);
+
+                scope.locals.push(decl.clone());
 
                 return Ok(decl);
             }
         }
 
         if !lhs {
-            let global = &self.scope_ctx_stack[0];
-            let decl = Declaration::new(ident.clone(), global.clone(), DeclType::Let);
+            let decl =
+                self.declarations
+                    .insert_declaration(ident.clone(), self.root_scope, DeclType::Let);
 
-            global.borrow_mut().locals.push(decl.clone());
+            self.scopes[self.root_scope].locals.push(decl.clone());
 
             return Ok(decl);
         }
@@ -280,22 +154,27 @@ impl<'src> ResolveState<'src> {
         ));
     }
 
-    fn scoped<F, O>(&mut self, scope: Rc<RefCell<Scope<'src>>>, f: F) -> ScopedOutput<'src, O>
+    fn scoped<F, O>(&mut self, scope_key: ScopeKey, f: F) -> ScopedOutput<O>
     where
         F: FnOnce(&mut ResolveState<'src>) -> O,
     {
-        self.scope_id_counter += 1;
-        self.scope_ctx_stack.push(scope);
-        let result = f(self);
-        let scope = self.scope_ctx_stack.pop().unwrap();
+        self.scope_stack.push(scope_key);
 
-        if !scope.borrow().lifted_decls.is_empty() {
+        let result = f(self);
+
+        let new_key = self.scope_stack.pop();
+
+        if scope_key != new_key.unwrap() {
+            panic!("Internal error: scope stack mismatch");
+        }
+
+        if !self.scopes[scope_key].lifted_decls.is_empty() {
             panic!("Internal error: lifted_decls should be empty at the end of scope processing");
         }
 
         ScopedOutput {
             value: result,
-            scope,
+            scope_key,
         }
     }
 
@@ -303,23 +182,32 @@ impl<'src> ResolveState<'src> {
     where
         F: FnOnce(&mut ResolveState<'src>) -> Indirect<SExpr<'src>>,
     {
-        let scope = Scope::new();
-        scope.borrow_mut().is_fn_scope = true;
+        let mut temp_scope = Scope::new();
+        temp_scope.is_fn = true;
 
-        let ph_decl = Declaration::new(
+        let temp_scope_key = self.scopes.insert(temp_scope);
+
+        let ph_decl = self.declarations.insert_declaration(
             Ident("x".into()).spanned(span),
-            scope.clone(),
+            temp_scope_key,
             DeclType::Let,
         );
 
-        self.placeholder_ctx_stack
-            .push(PlaceholderCtx::new(ph_decl, span));
-        self.fn_ctx_stack.push(FnInfo::new());
+        // Don't set it as a function argument, since placeholder should never shadow
+        // a real variable called "x".
+        // (Setting is_fn_arg will cause the python transpiler to use the *exact* name)
+
+        // self.declarations[ph_decl].is_fn_arg = true;
+
+        self.placeholder_stack
+            .push(PlaceholderGuard::new(ph_decl, span));
+
+        self.fn_stack.push(FnInfo::new());
 
         let result = f(self);
 
-        let mut ph_fn_ctx = self.fn_ctx_stack.pop().unwrap();
-        let placeholder_ctx = self.placeholder_ctx_stack.pop().unwrap();
+        let mut ph_fn_ctx = self.fn_stack.pop().unwrap();
+        let placeholder_ctx = self.placeholder_stack.pop().unwrap();
 
         if placeholder_ctx.activated {
             if ph_fn_ctx.is_async || ph_fn_ctx.is_generator || ph_fn_ctx.is_do {
@@ -331,11 +219,11 @@ impl<'src> ResolveState<'src> {
 
             ph_fn_ctx.is_placeholder = true;
 
-            ph_fn_ctx
-                .arg_names
-                .insert(Ident("x".into()), placeholder_ctx.decl.clone());
+            ph_fn_ctx.arg_names.push(placeholder_ctx.arg_decl);
 
-            scope.borrow_mut().locals.push(placeholder_ctx.decl.clone());
+            self.scopes[temp_scope_key]
+                .locals
+                .push(placeholder_ctx.arg_decl);
 
             let placeholder_pattern = SPatternInner::Capture(Some(Ident("x".into()).spanned(span)))
                 .spanned(span)
@@ -345,7 +233,7 @@ impl<'src> ResolveState<'src> {
                 placeholder_pattern.as_ref().into(),
                 PatternInfo {
                     default: true,
-                    decls: vec![placeholder_ctx.decl.clone()],
+                    decls: vec![placeholder_ctx.arg_decl.clone()],
                 },
             );
 
@@ -358,6 +246,8 @@ impl<'src> ResolveState<'src> {
             return fn_node;
         } else {
             // placeholder not activated, so forward the function properties to the nearest
+            self.scopes.remove(temp_scope_key);
+            self.declarations.remove(ph_decl);
 
             if ph_fn_ctx.is_async {
                 self.set_async(span);
@@ -369,7 +259,7 @@ impl<'src> ResolveState<'src> {
                 self.set_generator(span);
             }
 
-            if let Some(cur_fn_ctx) = self.fn_ctx_stack.last_mut() {
+            if let Some(cur_fn_ctx) = self.fn_stack.last_mut() {
                 cur_fn_ctx.captures.extend(ph_fn_ctx.captures);
             }
 
@@ -377,10 +267,10 @@ impl<'src> ResolveState<'src> {
         }
     }
 
-    fn declare(&mut self, name: SIdent<'src>, modifier: DeclType) -> DeclarationRef<'src> {
-        let (global, class) = {
-            let scope = &mut self.scope_ctx_stack.last().unwrap().borrow_mut();
-            (scope.is_global_scope, scope.is_class_scope)
+    fn declare_in_top_scope(&mut self, name: SIdent<'src>, modifier: DeclType) -> DeclarationKey {
+        let (class, global) = {
+            let scope = self.top_scope();
+            (scope.is_class, scope.is_global)
         };
 
         match modifier {
@@ -402,12 +292,15 @@ impl<'src> ResolveState<'src> {
             }
             DeclType::Let | DeclType::Const => {
                 if class || global {
-                    if let Some(found) = self.scope_ctx_stack.find_decl(&name) {
+                    if let Some(found) = self.scope_stack.find_decl(self, &name) {
                         self.errors.extend(
                             TlErrBuilder::new()
                                 .message("Cannot shadow declarations in a class or global scope")
                                 .span(name.span)
-                                .context("Previous declaration here", found.decl.borrow().loc)
+                                .context(
+                                    "Previous declaration here",
+                                    self.declarations[found.decl].loc,
+                                )
                                 .build(),
                         );
                     }
@@ -415,17 +308,19 @@ impl<'src> ResolveState<'src> {
             }
         };
 
-        let scope = self.scope_ctx_stack.last().unwrap();
+        let key = *self.scope_stack.last().unwrap();
 
-        let decl = Declaration::new(name.clone(), scope.clone(), modifier);
+        let decl = self
+            .declarations
+            .insert_declaration(name.clone(), key, modifier);
 
-        scope.borrow_mut().locals.push(decl.clone());
+        self.scopes[key].locals.push(decl);
 
         decl
     }
 
     fn set_async(&mut self, span: Span) -> () {
-        if let Some(fn_ctx) = self.fn_ctx_stack.last_mut() {
+        if let Some(fn_ctx) = self.fn_stack.last_mut() {
             fn_ctx.is_async = true;
         } else if !self.allow_top_level_await {
             self.errors.extend(simple_err(
@@ -436,7 +331,7 @@ impl<'src> ResolveState<'src> {
     }
 
     fn set_do(&mut self, span: Span) -> () {
-        if let Some(fn_ctx) = self.fn_ctx_stack.last_mut() {
+        if let Some(fn_ctx) = self.fn_stack.last_mut() {
             fn_ctx.is_do = true;
         } else {
             self.errors.extend(simple_err(
@@ -447,7 +342,7 @@ impl<'src> ResolveState<'src> {
     }
 
     fn set_generator(&mut self, span: Span) -> () {
-        if let Some(fn_ctx) = self.fn_ctx_stack.last_mut() {
+        if let Some(fn_ctx) = self.fn_stack.last_mut() {
             fn_ctx.is_generator = true;
         } else {
             self.errors.extend(simple_err(
@@ -458,11 +353,215 @@ impl<'src> ResolveState<'src> {
     }
 }
 
+fn simple_err(message: &str, span: Span) -> TlErrs {
+    TlErrBuilder::new().message(message).span(span).build()
+}
+
+#[allow(dead_code)]
+struct PlaceholderGuard {
+    activated: bool,
+    span: Span,
+    arg_decl: DeclarationKey,
+}
+
+impl PlaceholderGuard {
+    fn new(decl: DeclarationKey, span: Span) -> Self {
+        Self {
+            activated: false,
+            arg_decl: decl,
+            span,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FnInfo {
+    pub is_do: bool,
+    pub is_async: bool,
+    pub is_generator: bool,
+    pub is_placeholder: bool,
+
+    pub arg_names: Vec<DeclarationKey>,
+    pub captures: HashSet<DeclarationKey>,
+}
+
+impl FnInfo {
+    pub fn new() -> Self {
+        Self {
+            is_do: false,
+            is_async: false,
+            is_generator: false,
+            is_placeholder: false,
+            arg_names: Vec::new(),
+            captures: HashSet::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Declaration<'src> {
+    pub name: Ident<'src>,
+    pub scope: ScopeKey,
+    pub loc: Span,
+    pub typ: Type,
+
+    pub is_fn_arg: bool,
+    pub is_exported: bool,
+    pub is_const: bool,
+}
+
+trait DeclSlotMapExt<'src> {
+    fn insert_declaration(
+        &mut self,
+        name: SIdent<'src>,
+        scope: ScopeKey,
+        modifier: DeclType,
+    ) -> DeclarationKey;
+}
+
+impl<'src> DeclSlotMapExt<'src> for SlotMap<DeclarationKey, Declaration<'src>> {
+    fn insert_declaration(
+        &mut self,
+        name: SIdent<'src>,
+        scope: ScopeKey,
+        modifier: DeclType,
+    ) -> DeclarationKey {
+        let decl = Declaration {
+            name: name.value,
+            scope,
+            loc: name.span,
+            typ: Type::Unprocessed,
+            is_fn_arg: false,
+
+            is_const: matches!(modifier, DeclType::Const),
+            is_exported: matches!(modifier, DeclType::Export),
+        };
+
+        self.insert(decl)
+    }
+}
+
+impl Display for Declaration<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Decl \"{}{}{}: {:?}\"",
+            if self.is_exported { "export " } else { "" },
+            if self.is_const { "const " } else { "" },
+            self.name,
+            self.typ
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct Scope {
+    pub locals: Vec<DeclarationKey>,
+
+    pub is_class: bool,
+    pub is_global: bool,
+    pub is_fn: bool,
+
+    /**
+     * This enables special treatment for defining
+     * recursive functions; lifted_decls are added to the
+     * containing scope when processing the function body.
+     */
+    lifted_decls: Vec<DeclarationKey>,
+}
+
+impl Display for Scope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Scope {{ {} locals, is_class: {}, is_global: {}, is_fn: {} }}",
+            self.locals.len(),
+            self.is_class,
+            self.is_global,
+            self.is_fn
+        )
+    }
+}
+
+impl Scope {
+    fn new() -> Scope {
+        Self {
+            locals: Vec::new(),
+            lifted_decls: Vec::new(),
+
+            is_fn: false,
+            is_class: false,
+            is_global: false,
+        }
+    }
+}
+
+#[allow(dead_code)]
+struct FindResult {
+    decl: DeclarationKey,
+    scope_local: bool,
+    fn_local: bool,
+}
+
+trait ScopeStackExt {
+    fn find_decl<'src>(
+        &self,
+        state: &ResolveState<'src>,
+        ident: &SIdent<'src>,
+    ) -> Option<FindResult>;
+}
+
+impl ScopeStackExt for Vec<ScopeKey> {
+    fn find_decl<'src>(
+        &self,
+        state: &ResolveState<'src>,
+        ident: &SIdent<'src>,
+    ) -> Option<FindResult> {
+        let mut fn_local = true;
+        let mut scope_local = true;
+        for scope in self.iter().rev().map(|s| &state.scopes[*s]) {
+            if let Some(decl) = scope
+                .locals
+                .iter()
+                .rev()
+                .find(|d| state.declarations[**d].name == ident.value)
+            {
+                return Some(FindResult {
+                    decl: *decl,
+                    scope_local,
+                    fn_local,
+                });
+            }
+
+            if scope.is_fn {
+                fn_local = false;
+            }
+
+            scope_local = false;
+        }
+
+        None
+    }
+}
+
+pub struct PatternInfo {
+    pub default: bool,
+    pub decls: Vec<DeclarationKey>,
+}
+
+#[allow(dead_code)]
+struct ScopedOutput<T> {
+    pub value: T,
+    pub scope_key: ScopeKey,
+}
+
 fn error_ident<'src>(state: &mut ResolveState<'src>, span: Span) -> Indirect<SExpr<'src>> {
     let ident = Ident("_".into()).spanned(span);
     let expr = Expr::Ident(ident.clone()).spanned(span).indirect();
 
-    let decl = Declaration::new(ident, Scope::new(), DeclType::Let);
+    let decl = state
+        .declarations
+        .insert_declaration(ident.clone(), state.err_scope, DeclType::Let);
 
     state.resolutions.insert(expr.as_ref().into(), decl);
 
@@ -470,14 +569,14 @@ fn error_ident<'src>(state: &mut ResolveState<'src>, span: Span) -> Indirect<SEx
 }
 
 fn traverse_placeholder<'src>(state: &mut ResolveState<'src>, span: Span) -> Indirect<SExpr<'src>> {
-    if let Some(placeholder_ctx) = state.placeholder_ctx_stack.last_mut() {
+    if let Some(placeholder_ctx) = state.placeholder_stack.last_mut() {
         placeholder_ctx.activated = true;
 
         let ident = Ident("x".into()).spanned(span);
         let expr = Expr::Ident(ident).spanned(span).indirect();
         state
             .resolutions
-            .insert(expr.as_ref().into(), placeholder_ctx.decl.clone());
+            .insert(expr.as_ref().into(), placeholder_ctx.arg_decl.clone());
 
         return expr;
     }
@@ -693,8 +792,9 @@ fn traverse_call_items<'src>(
 fn pattern_scoped<'src>(
     state: &mut ResolveState<'src>,
     pattern: Indirect<SPattern<'src>>,
-) -> (Indirect<SPattern<'src>>, ScopeRef<'src>, PatternMeta<'src>) {
+) -> (Indirect<SPattern<'src>>, ScopeKey, PatternMeta<'src>) {
     let scope = Scope::new();
+    let scope_key = state.scopes.insert(scope);
 
     let (pattern, meta) = pattern.traverse(state);
 
@@ -702,9 +802,9 @@ fn pattern_scoped<'src>(
         .captures
         .iter()
         .map(|x| {
-            Declaration::new(
+            state.declarations.insert_declaration(
                 x.clone().spanned(pattern.span),
-                scope.clone(),
+                scope_key,
                 DeclType::Let,
             )
         })
@@ -718,9 +818,9 @@ fn pattern_scoped<'src>(
         },
     );
 
-    scope.borrow_mut().locals.extend(decls.clone());
+    state.scopes[scope_key].locals.extend(decls.clone());
 
-    (pattern, scope, meta)
+    (pattern, scope_key, meta)
 }
 
 trait SExprExt<'src> {
@@ -842,8 +942,9 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     }
                     new_stmts
                 } else {
+                    let scope = state.scopes.insert(Scope::new());
                     state
-                        .scoped(Scope::new(), |state| {
+                        .scoped(scope, |state| {
                             let mut new_stmts = Vec::new();
                             for stmt in stmts {
                                 let stmt = stmt.traverse(state);
@@ -897,13 +998,9 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                                 let then = then.traverse(state);
 
-                                state
-                                    .scope_ctx_stack
-                                    .last_mut()
-                                    .unwrap()
-                                    .borrow_mut()
-                                    .locals
-                                    .extend(else_scope.borrow().locals.iter().map(|x| x.clone()));
+                                let else_locals = state.scopes[else_scope].locals.clone();
+
+                                state.top_scope().locals.extend(else_locals);
 
                                 break 'block SExprInner::If(
                                     SExprInner::Unary(
@@ -939,13 +1036,15 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                             let (pattern, scope, _meta) = pattern_scoped(state, pattern);
                             (Some(pattern), scope)
                         } else {
-                            (None, Scope::new())
+                            (None, state.scopes.insert(Scope::new()))
                         };
 
                         SMatchCase {
                             pattern,
                             guard: case.guard.map(|g| g.traverse(state)),
-                            body: state.scoped(scope, |state| case.body.traverse(state)).value,
+                            body: state
+                                .scoped(scope, |state| case.body.traverse_expecting_scope(state))
+                                .value,
                         }
                     })
                     .collect::<Vec<_>>();
@@ -955,8 +1054,9 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
             Expr::Class(bases, body) => {
                 let bases = traverse_call_items(state, bases);
 
-                let scope = Scope::new();
-                scope.borrow_mut().is_class_scope = true;
+                let mut scope = Scope::new();
+                scope.is_class = true;
+                let scope = state.scopes.insert(scope);
 
                 let body = state
                     .scoped(scope, |state| body.traverse_expecting_scope(state))
@@ -967,8 +1067,9 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
             Expr::Fn(arg_def_items, body) => {
                 let mut decls = vec![];
 
-                let scope = Scope::new();
-                scope.borrow_mut().is_fn_scope = true;
+                let mut scope = Scope::new();
+                scope.is_fn = true;
+                let scope = state.scopes.insert(scope);
 
                 let items = arg_def_items
                     .into_iter()
@@ -980,8 +1081,14 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                             for capture in meta.captures {
                                 let cap = capture.spanned(pattern.span);
-                                let decl = Declaration::new(cap, scope.clone(), DeclType::Let);
-                                decl.borrow_mut().is_fn_arg = true;
+
+                                let decl = state.declarations.insert_declaration(
+                                    cap,
+                                    scope,
+                                    DeclType::Let,
+                                );
+                                state.declarations[decl].is_fn_arg = true;
+
                                 arg_decls.push(decl);
                             }
 
@@ -998,15 +1105,23 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                             ArgDefItem::Arg(pattern, default.map(|x| x.traverse(state)))
                         }
                         ArgDefItem::ArgSpread(arg) => {
-                            let decl = Declaration::new(arg.clone(), scope.clone(), DeclType::Let);
-                            decl.borrow_mut().is_fn_arg = true;
+                            let decl = state.declarations.insert_declaration(
+                                arg.clone(),
+                                scope,
+                                DeclType::Let,
+                            );
+                            state.declarations[decl].is_fn_arg = true;
                             decls.push(decl);
 
                             ArgDefItem::ArgSpread(arg)
                         }
                         ArgDefItem::KwargSpread(arg) => {
-                            let decl = Declaration::new(arg.clone(), scope.clone(), DeclType::Let);
-                            decl.borrow_mut().is_fn_arg = true;
+                            let decl = state.declarations.insert_declaration(
+                                arg.clone(),
+                                scope,
+                                DeclType::Let,
+                            );
+                            state.declarations[decl].is_fn_arg = true;
                             decls.push(decl);
 
                             ArgDefItem::KwargSpread(arg)
@@ -1018,40 +1133,42 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 for (i, decl) in decls.iter().enumerate() {
                     if let Some(found) = decls[..i]
                         .iter()
-                        .find(|x| x.borrow().name == decl.borrow().name)
+                        .find(|x| state.declarations[**x].name == state.declarations[*decl].name)
                     {
                         state.errors.extend(
                             TlErrBuilder::new()
                                 .message("Duplicate declaration in function arguments")
-                                .context("First declared here", found.borrow().loc)
-                                .span(decl.borrow().loc)
+                                .context("First declared here", state.declarations[*found].loc)
+                                .span(state.declarations[*decl].loc)
                                 .build(),
                         );
                     }
 
-                    fn_info
-                        .arg_names
-                        .insert(decl.borrow().name.clone(), decl.clone());
+                    fn_info.arg_names.push(*decl);
                 }
 
-                state.fn_ctx_stack.push(fn_info);
+                state.scopes[scope].locals.extend(decls);
 
-                let n_scopes = state.scope_ctx_stack.len();
+                state.fn_stack.push(fn_info);
+
+                let n_scopes = state.scope_stack.len();
 
                 let (n_fndef_lifted, n_classdef_lifted) = {
                     // lift decls
-                    let fndef_scope = &mut state.scope_ctx_stack.last().unwrap().borrow_mut();
+                    let fndef_scope = state.top_scope();
                     let n_fndef_lifted = fndef_scope.lifted_decls.len();
 
-                    let drained = fndef_scope.lifted_decls.drain(..).collect::<Vec<_>>();
-                    fndef_scope.locals.extend(drained);
+                    fndef_scope
+                        .locals
+                        .extend(fndef_scope.lifted_decls.drain(..));
 
                     let n_classdef_lifted = if n_scopes >= 2 {
-                        let classdef_scope = &mut state.scope_ctx_stack[n_scopes - 2].borrow_mut();
+                        let classdef_scope = &mut state.scopes[state.scope_stack[n_scopes - 2]];
                         let n = classdef_scope.lifted_decls.len();
 
-                        let drained = classdef_scope.lifted_decls.drain(..).collect::<Vec<_>>();
-                        classdef_scope.locals.extend(drained);
+                        classdef_scope
+                            .locals
+                            .extend(classdef_scope.lifted_decls.drain(..));
 
                         n
                     } else {
@@ -1061,34 +1178,28 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     (n_fndef_lifted, n_classdef_lifted)
                 };
 
-                scope.borrow_mut().locals.extend(decls);
-
                 let body = state.scoped(scope, |state| body.traverse(state)).value;
 
                 {
                     // put back
-                    let fndef_scope = &mut state.scope_ctx_stack.last().unwrap().borrow_mut();
+                    let fndef_scope = state.top_scope();
                     let nlocals = fndef_scope.locals.len();
 
-                    let drained = fndef_scope
-                        .locals
-                        .drain(nlocals - n_fndef_lifted..)
-                        .collect::<Vec<_>>();
-                    fndef_scope.lifted_decls.extend(drained);
+                    fndef_scope
+                        .lifted_decls
+                        .extend(fndef_scope.locals.drain(nlocals - n_fndef_lifted..));
 
                     if n_classdef_lifted > 0 {
-                        let classdef_scope = &mut state.scope_ctx_stack[n_scopes - 2].borrow_mut();
+                        let classdef_scope = &mut state.scopes[state.scope_stack[n_scopes - 2]];
                         let nlocals = classdef_scope.locals.len();
 
-                        let drained = classdef_scope
-                            .locals
-                            .drain(nlocals - n_classdef_lifted..)
-                            .collect::<Vec<_>>();
-                        classdef_scope.lifted_decls.extend(drained);
+                        classdef_scope
+                            .lifted_decls
+                            .extend(classdef_scope.locals.drain(nlocals - n_classdef_lifted..));
                     }
                 }
 
-                let fn_ctx = state.fn_ctx_stack.pop().unwrap();
+                let fn_ctx = state.fn_stack.pop().unwrap();
                 let expr = Expr::Fn(items, body).spanned(span).indirect();
 
                 state.functions.insert(expr.as_ref().into(), fn_ctx);
@@ -1201,7 +1312,7 @@ fn traverse_assign_lhs<'src>(
     match lhs.value {
         Expr::Ident(ident) => {
             if let Some(decl) = typ {
-                state.declare(ident.clone(), decl);
+                state.declare_in_top_scope(ident.clone(), decl);
             }
 
             let decl = match state.resolve(&ident, true) {
@@ -1282,7 +1393,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
         let stmt = match self.value {
             Stmt::Decl(idents, typ) => {
                 for ident in idents.iter() {
-                    state.declare(ident.clone(), typ);
+                    state.declare_in_top_scope(ident.clone(), typ);
                 }
 
                 Stmt::Decl(idents, typ)
@@ -1294,8 +1405,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                 let rhs = rhs.traverse_guarded(state);
 
                 // commit lifted
-                let scope =
-                    &mut state.scope_ctx_stack.last_mut().unwrap().borrow_mut() as &mut Scope;
+                let scope = state.top_scope();
                 scope.locals.extend(scope.lifted_decls.drain(..));
 
                 Stmt::Assign(lhs, rhs, typ)
@@ -1323,7 +1433,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                             let (pattern, scope, _meta) = pattern_scoped(state, pattern);
                             (Some(pattern), scope)
                         } else {
-                            (None, Scope::new())
+                            (None, state.scopes.insert(Scope::new()))
                         };
 
                         let body = state
@@ -1347,11 +1457,11 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
             ),
             Stmt::Raise(expr) => Stmt::Raise(expr.map(|x| x.traverse_guarded(state))),
             Stmt::Import(import_stmt) => {
-                let scope_ref = state.scope_ctx_stack.last_mut().unwrap();
-                let scope = &mut scope_ref.borrow_mut();
+                let scope_key = *state.scope_stack.last().unwrap();
+                let scope = &mut state.scopes[scope_key];
 
                 if import_stmt.reexport {
-                    if !scope.is_global_scope {
+                    if !scope.is_global {
                         state.errors.extend(simple_err(
                             "Re-exporting imports is only allowed in the global scope",
                             span,
@@ -1379,9 +1489,9 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                     }
                     ImportList::Leaves(imports) => {
                         for (ident, as_name) in imports {
-                            let decl = Declaration::new(
+                            let decl = state.declarations.insert_declaration(
                                 as_name.clone().unwrap_or(ident.clone()),
-                                scope_ref.clone(),
+                                scope_key,
                                 if import_stmt.reexport {
                                     DeclType::Export
                                 } else {
@@ -1412,8 +1522,6 @@ pub fn resolve_names<'src>(
 ) -> (ResolveState<'src>, TlErrs, Indirect<SExpr<'src>>) {
     let mut state = ResolveState::new(source);
     state.allow_top_level_await = allow_await;
-    state.root_scope = Scope::new();
-    state.root_scope.borrow_mut().is_global_scope = true;
 
     let expr = state
         .scoped(state.root_scope.clone(), |state| {
@@ -1421,15 +1529,15 @@ pub fn resolve_names<'src>(
         })
         .value;
 
-    if !state.fn_ctx_stack.is_empty() {
+    if !state.fn_stack.is_empty() {
         panic!("Function context stack is not empty after resolving names");
     }
 
-    if !state.scope_ctx_stack.is_empty() {
+    if !state.scope_stack.is_empty() {
         panic!("Scope context stack is not empty after resolving names");
     }
 
-    if !state.placeholder_ctx_stack.is_empty() {
+    if !state.placeholder_stack.is_empty() {
         panic!("Placeholder context stack is not empty after resolving names");
     }
 

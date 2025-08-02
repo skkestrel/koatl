@@ -1,8 +1,4 @@
-use std::{
-    hash::{Hash, Hasher},
-    ops::Deref,
-    rc::Rc,
-};
+use std::hash::Hash;
 
 use parser::ast::Span;
 
@@ -47,38 +43,6 @@ impl<T> From<&T> for RefHash {
         }
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct RcKey<T>(pub Rc<T>);
-
-impl<T> Deref for RcKey<T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        self.0.deref()
-    }
-}
-
-impl<T> From<Rc<T>> for RcKey<T> {
-    fn from(value: Rc<T>) -> Self {
-        RcKey(value)
-    }
-}
-
-impl<T> Hash for RcKey<T> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        (self.0.as_ref() as *const T).hash(state);
-    }
-}
-
-impl<T> PartialEq for RcKey<T> {
-    fn eq(&self, other: &Self) -> bool {
-        // Compare by pointer address.
-        std::ptr::eq(self.0.as_ref(), other.0.as_ref())
-    }
-}
-
-impl<T> Eq for RcKey<T> {}
 
 #[derive(Debug, Clone, Default)]
 pub enum TlErrKind {
