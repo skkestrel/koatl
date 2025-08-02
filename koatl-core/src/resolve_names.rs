@@ -83,45 +83,45 @@ impl FnInfo<'_> {
 }
 
 trait FnCtxStackExt {
-    fn set_async(&mut self, allow_top_level_await: bool, span: &Span) -> TfResult<()>;
-    fn set_generator(&mut self, span: &Span) -> TfResult<()>;
-    fn set_do(&mut self, span: &Span) -> TfResult<()>;
+    fn set_async(&mut self, allow_top_level_await: bool, span: Span) -> TfResult<()>;
+    fn set_generator(&mut self, span: Span) -> TfResult<()>;
+    fn set_do(&mut self, span: Span) -> TfResult<()>;
 }
 
 impl<'src> FnCtxStackExt for Vec<FnInfo<'src>> {
-    fn set_async(&mut self, allow_top_level_await: bool, span: &Span) -> TfResult<()> {
+    fn set_async(&mut self, allow_top_level_await: bool, span: Span) -> TfResult<()> {
         if let Some(fn_ctx) = self.last_mut() {
             fn_ctx.is_async = true;
         } else if !allow_top_level_await {
             return Err(TfErrBuilder::default()
                 .message("Await is only allowed in a function context")
-                .span(*span)
+                .span(span)
                 .build_errs());
         }
 
         Ok(())
     }
 
-    fn set_do(&mut self, span: &Span) -> TfResult<()> {
+    fn set_do(&mut self, span: Span) -> TfResult<()> {
         if let Some(fn_ctx) = self.last_mut() {
             fn_ctx.is_do = true;
         } else {
             return Err(TfErrBuilder::default()
                 .message("Bind operator is only allowed in a function context")
-                .span(*span)
+                .span(span)
                 .build_errs());
         }
 
         Ok(())
     }
 
-    fn set_generator(&mut self, span: &Span) -> TfResult<()> {
+    fn set_generator(&mut self, span: Span) -> TfResult<()> {
         if let Some(fn_ctx) = self.last_mut() {
             fn_ctx.is_generator = true;
         } else {
             return Err(TfErrBuilder::default()
                 .message("Generator is only allowed in a function context")
-                .span(*span)
+                .span(span)
                 .build_errs());
         }
 
@@ -1140,10 +1140,27 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 b.map(|e| e.traverse(state)).transpose()?,
                 c.map(|e| e.traverse(state)).transpose()?,
             ),
-            Expr::Unary(unary_op, expr) => Expr::Unary(unary_op, expr.traverse(state)?),
-            Expr::Await(x) => Expr::Await(x.traverse(state)?),
-            Expr::Yield(x) => Expr::Yield(x.traverse(state)?),
-            Expr::YieldFrom(x) => Expr::YieldFrom(x.traverse(state)?),
+            Expr::Unary(unary_op, expr) => {
+                if let UnaryOp::Bind = unary_op {
+                    state.fn_ctx_stack.set_do(span);
+                }
+
+                Expr::Unary(unary_op, expr.traverse(state)?)
+            }
+            Expr::Await(x) => {
+                state
+                    .fn_ctx_stack
+                    .set_async(state.allow_top_level_await, span);
+                Expr::Await(x.traverse(state)?)
+            }
+            Expr::Yield(x) => {
+                state.fn_ctx_stack.set_generator(span);
+                Expr::Yield(x.traverse(state)?)
+            }
+            Expr::YieldFrom(x) => {
+                state.fn_ctx_stack.set_generator(span);
+                Expr::YieldFrom(x.traverse(state)?)
+            }
         };
 
         Ok(t.spanned(span).indirect())
