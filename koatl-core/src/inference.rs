@@ -166,10 +166,36 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
             }
             Expr::Match(subject, cases) => {
                 subject.traverse(ctx);
+
+                let mut is_bottom: bool = true;
+                let mut default_case: bool = false;
+
                 for case in cases {
-                    case.body.traverse(ctx);
+                    let body_typ = case.body.traverse(ctx);
+                    if body_typ != Type::Bottom {
+                        is_bottom = false;
+                    }
+
+                    if let Some(pattern) = case.pattern.as_ref() {
+                        let meta = ctx
+                            .resolve_state
+                            .patterns
+                            .get(&pattern.as_ref().into())
+                            .unwrap();
+
+                        if meta.default {
+                            default_case = true;
+                        }
+                    } else {
+                        default_case = true;
+                    }
                 }
-                Type::Any
+
+                if is_bottom && default_case {
+                    Type::Bottom
+                } else {
+                    Type::Any
+                }
             }
             Expr::Matches(subject, _pattern) => {
                 subject.traverse(ctx);
