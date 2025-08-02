@@ -186,8 +186,8 @@ impl AstBuilder {
         Expr::Fstr(prefix, parts).spanned(self.span)
     }
 
-    pub fn block_expr<'src>(&self, block: Vec<SStmt<'src>>) -> SExpr<'src> {
-        Expr::Block(block).spanned(self.span)
+    pub fn block_expr<'src>(&self, block: Vec<impl IntoIndirect<SStmt<'src>>>) -> SExpr<'src> {
+        Expr::Block(block.into_iter().map(|x| x.indirect()).collect()).spanned(self.span)
     }
 
     // Literal builders

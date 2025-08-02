@@ -616,7 +616,7 @@ trait BlockExt<'src> {
     fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlockExprWithPre<'src>>;
 }
 
-impl<'src> BlockExt<'src> for [SStmt<'src>] {
+impl<'src> BlockExt<'src> for [Indirect<SStmt<'src>>] {
     fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<PyBlockExprWithPre<'src>> {
         if self.is_empty() {
             return Ok(WithPre {
@@ -3449,7 +3449,7 @@ pub struct TransformOutput<'src> {
 
 pub fn transform_ast<'src, 'ast>(
     source: &'src str,
-    block: &'ast [SStmt<'src>],
+    block: &'ast SExpr<'src>,
     allow_await: bool,
 ) -> TfResult<TransformOutput<'src>> {
     let mut ctx = TfCtx::new(source)?;
@@ -3465,11 +3465,6 @@ pub fn transform_ast<'src, 'ast>(
         return Err(TfErrBuilder::default()
             .message("Internal error: Scope stack is not empty after transformation")
             .build_errs());
-    }
-
-    if let PyBlockExpr::Expr(value) = block {
-        let span = value.tl_span;
-        py_block.push((PyStmt::Expr(value), span).into());
     }
 
     Ok(TransformOutput {

@@ -2,7 +2,7 @@
 pub enum Type {
     Any,
     NoType,
-    Unknown,
+    Unprocessed,
     Top,
     Bottom,
 }

@@ -150,8 +150,8 @@ pub enum ListItem<TTree: Tree> {
 }
 
 #[derive(Debug, Clone)]
-pub enum MappingItem<'a, TTree: Tree> {
-    Ident(SIdent<'a>),
+pub enum MappingItem<TTree: Tree> {
+    Ident(TTree::Expr),
     Item(TTree::Expr, TTree::Expr),
     Spread(TTree::Expr),
 }
@@ -190,7 +190,7 @@ pub enum Expr<'a, TTree: Tree> {
     Ident(SIdent<'a>),
     Tuple(Vec<ListItem<TTree>>),
     List(Vec<ListItem<TTree>>),
-    Mapping(Vec<MappingItem<'a, TTree>>),
+    Mapping(Vec<MappingItem<TTree>>),
     Slice(
         Option<TTree::Expr>,
         Option<TTree::Expr>,
@@ -340,7 +340,7 @@ pub struct SStmt<'a> {
 }
 
 pub type SListItem<'a> = ListItem<STree<'a>>;
-pub type SMappingItem<'a> = MappingItem<'a, STree<'a>>;
+pub type SMappingItem<'a> = MappingItem<STree<'a>>;
 pub type SMatchCase<'a> = MatchCase<STree<'a>>;
 pub type SCallItem<'a> = CallItem<'a, STree<'a>>;
 pub type SArgDefItem<'a> = ArgDefItem<'a, STree<'a>>;

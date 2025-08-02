@@ -1,11 +1,11 @@
-mod desugar;
-pub mod linecol;
+mod linecol;
 pub mod parser;
 pub mod py;
+mod resolve_names;
 pub mod transform;
 mod types;
 
-use ::parser::ast::SStmt;
+use ::parser::ast::SExpr;
 use parser::ast::Span;
 use parser::{TokenList, parse_tokens, tokenize};
 
@@ -214,7 +214,7 @@ pub fn format_errs(errs: &[TlErr], filename: &str, src: &str) -> Vec<u8> {
     writer
 }
 
-pub fn parse_tl<'src>(src: &'src str) -> TlResult<Vec<SStmt<'src>>> {
+pub fn parse_tl<'src>(src: &'src str) -> TlResult<SExpr<'src>> {
     let mut errs = vec![];
 
     let (tokens, token_errs) = tokenize(&src);
@@ -249,7 +249,7 @@ pub fn parse_tl<'src>(src: &'src str) -> TlResult<Vec<SStmt<'src>>> {
         }
     }));
 
-    let tl_ast: Vec<SStmt<'src>> = tl_ast.ok_or_else(|| errs)?;
+    let tl_ast = tl_ast.ok_or_else(|| errs)?;
     // println!("AST: {ast:?}");
 
     Ok(tl_ast)

@@ -626,7 +626,7 @@ where
             .then_ignore(symbol(":"))
             .then(expr.clone())
             .map(|(key, value)| MappingItem::Item(key.indirect(), value.indirect())),
-            ident.clone().map(MappingItem::Ident),
+            ident_expr.clone().map(|x| MappingItem::Ident(x.indirect())),
         )),
         symbol(","),
     )
