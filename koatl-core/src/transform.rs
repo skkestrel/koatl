@@ -8,7 +8,7 @@ use crate::{
     linecol::LineColCache,
     py::{ast::*, util::PyAstBuilder},
     resolve_names::{
-        Declaration, DeclarationRef, FnInfo, PatternInfo, RcKey, RefHash, ResolveState,
+        Declaration, DeclarationRef, FnInfo, PatternInfo, RcKey, RefHash, ResolveState, Scope,
     },
 };
 use once_cell::sync::Lazy;
@@ -161,8 +161,10 @@ impl<'src, 'ast> TfCtx<'src, 'ast> {
 
     fn decl_py_ident(&mut self, decl: &DeclarationRef<'src>) -> TfResult<PyIdent<'src>> {
         let ident = &decl.borrow().name;
+        let decl_borrowed = decl.borrow();
+        let scope = decl_borrowed.scope.borrow();
 
-        if decl.borrow().scope.borrow().is_global_scope {
+        if scope.is_class_scope || scope.is_global_scope || decl_borrowed.is_fn_arg {
             return Ok(ident.escape());
         }
 
@@ -1937,6 +1939,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     cond.value
                 } else {
                     // TODO check if inside a function
+
                     // if fn_ctx.is_async {
                     //     // TODO revisit this!
                     //     return Err(TfErrBuilder::default()

@@ -369,11 +369,11 @@ impl<'src> ResolveState<'src> {
 
         let result = f(self);
 
-        let mut fn_ctx = self.fn_ctx_stack.pop().unwrap();
+        let mut ph_fn_ctx = self.fn_ctx_stack.pop().unwrap();
         let placeholder_ctx = self.placeholder_ctx_stack.pop().unwrap();
 
         if placeholder_ctx.activated {
-            if fn_ctx.is_async || fn_ctx.is_generator || fn_ctx.is_do {
+            if ph_fn_ctx.is_async || ph_fn_ctx.is_generator || ph_fn_ctx.is_do {
                 self.errors.extend(
                     TfErrBuilder::default()
                         .message("Await, bind, and yield are not allowed in placeholder functions")
@@ -382,9 +382,9 @@ impl<'src> ResolveState<'src> {
                 );
             }
 
-            fn_ctx.is_placeholder = true;
+            ph_fn_ctx.is_placeholder = true;
 
-            fn_ctx
+            ph_fn_ctx
                 .arg_names
                 .insert(Ident("x".into()), placeholder_ctx.decl.clone());
 
@@ -406,10 +406,26 @@ impl<'src> ResolveState<'src> {
                 .spanned(span)
                 .indirect();
 
-            self.functions.insert(fn_node.as_ref().into(), fn_ctx);
+            self.functions.insert(fn_node.as_ref().into(), ph_fn_ctx);
 
             return fn_node;
         } else {
+            // placeholder not activated, so forward the function properties to the nearest
+
+            if ph_fn_ctx.is_async {
+                self.set_async(span);
+            }
+            if ph_fn_ctx.is_do {
+                self.set_do(span);
+            }
+            if ph_fn_ctx.is_generator {
+                self.set_generator(span);
+            }
+
+            if let Some(cur_fn_ctx) = self.fn_ctx_stack.last_mut() {
+                cur_fn_ctx.captures.extend(ph_fn_ctx.captures);
+            }
+
             return result;
         }
     }
@@ -1043,7 +1059,9 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                             for capture in meta.captures {
                                 let cap = capture.spanned(pattern.span);
-                                arg_decls.push(Declaration::new(cap, scope.clone(), DeclType::Let));
+                                let decl = Declaration::new(cap, scope.clone(), DeclType::Let);
+                                decl.borrow_mut().is_fn_arg = true;
+                                arg_decls.push(decl);
                             }
 
                             state.patterns.insert(
@@ -1059,12 +1077,16 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                             ArgDefItem::Arg(pattern, default.map(|x| x.traverse(state)))
                         }
                         ArgDefItem::ArgSpread(arg) => {
-                            decls.push(Declaration::new(arg.clone(), scope.clone(), DeclType::Let));
+                            let decl = Declaration::new(arg.clone(), scope.clone(), DeclType::Let);
+                            decl.borrow_mut().is_fn_arg = true;
+                            decls.push(decl);
 
                             ArgDefItem::ArgSpread(arg)
                         }
                         ArgDefItem::KwargSpread(arg) => {
-                            decls.push(Declaration::new(arg.clone(), scope.clone(), DeclType::Let));
+                            let decl = Declaration::new(arg.clone(), scope.clone(), DeclType::Let);
+                            decl.borrow_mut().is_fn_arg = true;
+                            decls.push(decl);
 
                             ArgDefItem::KwargSpread(arg)
                         }
@@ -1430,9 +1452,11 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 
                         let full_module = ".".repeat(import_stmt.level) + &base_module;
 
-                        state
-                            .export_stars
-                            .push(Ident(full_module.into()).spanned(span));
+                        if import_stmt.reexport {
+                            state
+                                .export_stars
+                                .push(Ident(full_module.into()).spanned(span));
+                        }
                     }
                     ImportList::Leaves(imports) => {
                         for (ident, as_name) in imports {
