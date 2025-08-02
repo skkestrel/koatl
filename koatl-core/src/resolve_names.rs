@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
-use std::ptr;
+use std::ptr::{self, fn_addr_eq};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::transform::TfErrs;
@@ -111,12 +111,12 @@ impl<'src> Declaration<'src> {
 }
 
 #[derive(Debug)]
-struct Scope<'src> {
-    locals: Vec<DeclarationRef<'src>>,
+pub struct Scope<'src> {
+    pub locals: Vec<DeclarationRef<'src>>,
 
-    is_class_scope: bool,
-    is_global_scope: bool,
-    is_fn_scope: bool,
+    pub is_class_scope: bool,
+    pub is_global_scope: bool,
+    pub is_fn_scope: bool,
 
     /**
      * This enables special treatment for defining
@@ -124,14 +124,6 @@ struct Scope<'src> {
      * containing scope when processing the function body.
      */
     lifted_decls: Vec<DeclarationRef<'src>>,
-
-    /**
-     * this is a really messed up hack to handle Python's
-     * weird class scoping rules -
-     * method bodies TWO scopes lower
-     * are able to see the class definition
-     */
-    lifted_class_decls: Vec<DeclarationRef<'src>>,
 }
 
 type ScopeRef<'src> = Rc<RefCell<Scope<'src>>>;
@@ -141,7 +133,6 @@ impl<'src> Scope<'src> {
         Rc::new(RefCell::new(Self {
             locals: Vec::new(),
             lifted_decls: Vec::new(),
-            lifted_class_decls: Vec::new(),
             is_fn_scope: false,
             is_class_scope: false,
             is_global_scope: false,
@@ -194,17 +185,19 @@ struct PatternInfo<'src> {
 }
 
 #[allow(dead_code)]
-struct ResolveState<'src> {
-    source: &'src str,
-    allow_top_level_await: bool,
+pub struct ResolveState<'src> {
+    pub source: &'src str,
+    pub allow_top_level_await: bool,
 
-    root_scope: Rc<RefCell<Scope<'src>>>,
-    types: HashMap<BoxHash, Type>,
-    resolutions: HashMap<BoxHash, DeclarationRef<'src>>,
-    functions: HashMap<BoxHash, FnInfo<'src>>,
-    patterns: HashMap<BoxHash, PatternInfo<'src>>,
+    pub export_stars: Vec<String>,
 
-    errors: TfErrs,
+    pub root_scope: Rc<RefCell<Scope<'src>>>,
+    pub types: HashMap<BoxHash, Type>,
+    pub resolutions: HashMap<BoxHash, DeclarationRef<'src>>,
+    pub functions: HashMap<BoxHash, FnInfo<'src>>,
+    pub patterns: HashMap<BoxHash, PatternInfo<'src>>,
+
+    pub errors: TfErrs,
 
     placeholder_ctx_stack: Vec<PlaceholderCtx<'src>>,
     fn_ctx_stack: Vec<FnInfo<'src>>,
@@ -223,6 +216,8 @@ impl<'src> ResolveState<'src> {
         ResolveState {
             allow_top_level_await: false,
             source,
+
+            export_stars: Vec::new(),
 
             root_scope: Scope::new(),
             types: HashMap::new(),
@@ -256,30 +251,6 @@ impl<'src> ResolveState<'src> {
             fn_ctx.captures.insert(found.decl.clone().into());
 
             return Ok(found.decl);
-        }
-
-        if self.scope_ctx_stack.len() >= 2 {
-            let decl_scope = self.scope_ctx_stack[self.scope_ctx_stack.len() - 2].clone();
-            if let Some(found) = decl_scope
-                .borrow()
-                .lifted_decls
-                .iter()
-                .find(|d| d.borrow().name == ident.value)
-            {
-                return Ok(found.clone());
-            }
-        }
-
-        if self.scope_ctx_stack.len() >= 3 {
-            let decl_scope = self.scope_ctx_stack[self.scope_ctx_stack.len() - 3].clone();
-            if let Some(found) = decl_scope
-                .borrow()
-                .lifted_class_decls
-                .iter()
-                .find(|d| d.borrow().name == ident.value)
-            {
-                return Ok(found.clone());
-            }
         }
 
         let scope = self.scope_ctx_stack.last().unwrap();
@@ -317,10 +288,15 @@ impl<'src> ResolveState<'src> {
         self.scope_ctx_stack.push(scope);
         let result = f(self);
         let scope = self.scope_ctx_stack.pop().unwrap();
-        scope.borrow_mut().lifted_class_decls.clear();
-        scope.borrow_mut().lifted_decls.clear();
 
-        result.map(|value| ScopedOutput { value, scope })
+        if !scope.borrow().lifted_decls.is_empty() {
+            panic!("Internal error: lifted_decls should be empty at the end of scope processing");
+        }
+
+        ScopedOutput {
+            value: result,
+            scope,
+        }
     }
 
     fn placeholder_guarded<F>(&mut self, span: Span, f: F) -> Indirect<SExpr<'src>>
@@ -730,7 +706,7 @@ fn pattern_scoped<'src>(
             )
         }));
 
-    ((pattern, scope, meta))
+    (pattern, scope, meta)
 }
 
 trait SExprExt<'src> {
@@ -1022,30 +998,71 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 state.fn_ctx_stack.push(FnInfo::new());
 
-                let scope = Rc::new(RefCell::new(Scope {
-                    is_fn_scope: true,
-                    is_class_scope: false,
-                    is_global_scope: false,
-                    locals: vec![],
-                    lifted_decls: Vec::new(),
-                    lifted_class_decls: Vec::new(),
-                }));
+                let scope = Scope::new();
+                scope.borrow_mut().is_fn_scope = true;
 
-                let decls = all_captures.iter().map(|x| {
-                    Rc::new(RefCell::new(Declaration {
-                        name: x.value.clone(),
-                        scope: scope.clone(),
-                        loc: x.span,
-                        typ: Type::Unprocessed,
-                        modifier: DeclType::Let,
-                    }))
-                });
+                let decls = all_captures
+                    .iter()
+                    .map(|x| Declaration::new(x.clone(), scope.clone(), DeclType::Let));
+
+                let n_scopes = state.scope_ctx_stack.len();
+
+                let (n_fndef_lifted, n_classdef_lifted) = {
+                    // lift decls
+                    let fndef_scope = &mut state.scope_ctx_stack.last().unwrap().borrow_mut();
+                    let n_fndef_lifted = fndef_scope.lifted_decls.len();
+
+                    let drained = fndef_scope.lifted_decls.drain(..).collect::<Vec<_>>();
+                    fndef_scope.locals.extend(drained);
+
+                    let n_classdef_lifted = if n_scopes >= 2 {
+                        let classdef_scope = &mut state.scope_ctx_stack[n_scopes - 2].borrow_mut();
+                        let n = classdef_scope.lifted_decls.len();
+
+                        let drained = classdef_scope.lifted_decls.drain(..).collect::<Vec<_>>();
+                        classdef_scope.locals.extend(drained);
+
+                        n
+                    } else {
+                        0
+                    };
+
+                    (n_fndef_lifted, n_classdef_lifted)
+                };
 
                 scope.borrow_mut().locals.extend(decls);
 
                 let body = state.scoped(scope, |state| body.traverse(state)).value;
 
-                Expr::Fn(items, body)
+                {
+                    // put back
+                    let fndef_scope = &mut state.scope_ctx_stack.last().unwrap().borrow_mut();
+                    let nlocals = fndef_scope.locals.len();
+
+                    let drained = fndef_scope
+                        .locals
+                        .drain(nlocals - n_fndef_lifted..)
+                        .collect::<Vec<_>>();
+                    fndef_scope.lifted_decls.extend(drained);
+
+                    if n_classdef_lifted > 0 {
+                        let classdef_scope = &mut state.scope_ctx_stack[n_scopes - 2].borrow_mut();
+                        let nlocals = classdef_scope.locals.len();
+
+                        let drained = classdef_scope
+                            .locals
+                            .drain(nlocals - n_classdef_lifted..)
+                            .collect::<Vec<_>>();
+                        classdef_scope.lifted_decls.extend(drained);
+                    }
+                }
+
+                let fn_ctx = state.fn_ctx_stack.pop().unwrap();
+                let expr = Expr::Fn(items, body).spanned(span).indirect();
+
+                state.functions.insert(BoxHash::new(&expr), fn_ctx);
+
+                return expr;
             }
             Expr::Fstr(spanned, items) => Expr::Fstr(
                 spanned,
@@ -1233,11 +1250,19 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 
                 Stmt::Decl(idents, typ)
             }
-            Stmt::Assign(lhs, rhs, typ) => Stmt::Assign(
-                traverse_assign_lhs(state, lhs),
-                rhs.traverse_guarded(state),
-                typ,
-            ),
+            Stmt::Assign(lhs, rhs, typ) => {
+                // LHS will create lifted decls
+                let lhs = traverse_assign_lhs(state, lhs);
+
+                let rhs = rhs.traverse_guarded(state);
+
+                // commit lifted
+                let scope =
+                    &mut state.scope_ctx_stack.last_mut().unwrap().borrow_mut() as &mut Scope;
+                scope.locals.extend(scope.lifted_decls.drain(..));
+
+                Stmt::Assign(lhs, rhs, typ)
+            }
             Stmt::Expr(expr) => Stmt::Expr(expr.traverse_guarded(state)),
             Stmt::Return(expr) => Stmt::Return(expr.traverse_guarded(state)),
             Stmt::While(cond, body) => {
@@ -1284,7 +1309,54 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                 b.map(|x| x.traverse_guarded(state)),
             ),
             Stmt::Raise(expr) => Stmt::Raise(expr.map(|x| x.traverse_guarded(state))),
-            Stmt::Import(import_stmt) => Stmt::Import(import_stmt),
+            Stmt::Import(import_stmt) => {
+                let scope_ref = state.scope_ctx_stack.last_mut().unwrap();
+                let scope = &mut scope_ref.borrow_mut();
+
+                if import_stmt.reexport {
+                    if !scope.is_global_scope {
+                        state.errors.extend(
+                            TfErrBuilder::default()
+                                .message("Re-exporting imports is only allowed in the global scope")
+                                .span(span)
+                                .build_errs(),
+                        );
+                    }
+                }
+
+                match &import_stmt.imports {
+                    ImportList::Star => {
+                        // TODO
+                        let base_module = import_stmt
+                            .trunk
+                            .iter()
+                            .map(|ident| ident.value.0.as_ref())
+                            .collect::<Vec<_>>()
+                            .join(".");
+
+                        let full_module = ".".repeat(import_stmt.level) + &base_module;
+
+                        state.export_stars.push(full_module);
+                    }
+                    ImportList::Leaves(imports) => {
+                        for (ident, as_name) in imports {
+                            let decl = Declaration::new(
+                                as_name.clone().unwrap_or(ident.clone()),
+                                scope_ref.clone(),
+                                if import_stmt.reexport {
+                                    DeclType::Export
+                                } else {
+                                    DeclType::Let
+                                },
+                            );
+
+                            scope.locals.push(decl);
+                        }
+                    }
+                }
+
+                Stmt::Import(import_stmt)
+            }
             Stmt::Break => Stmt::Break,
             Stmt::Module => Stmt::Module,
             Stmt::Continue => Stmt::Continue,

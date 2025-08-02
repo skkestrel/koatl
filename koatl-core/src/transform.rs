@@ -3,6 +3,7 @@ use std::{borrow::Cow, collections::HashSet};
 use crate::{
     linecol::LineColCache,
     py::{ast::*, util::PyAstBuilder},
+    resolve_names::ResolveState,
 };
 use once_cell::sync::Lazy;
 use parser::ast::*;
@@ -320,7 +321,7 @@ struct TfCtx<'src> {
 }
 
 impl<'src> TfCtx<'src> {
-    fn new(source: &'src str) -> TfResult<Self> {
+    fn new(source: &'src str, resolve_state: &ResolveState<'src>) -> TfResult<Self> {
         Ok(TfCtx {
             source,
             export_stars: Vec::new(),
@@ -3171,18 +3172,27 @@ pub struct TransformOutput<'src> {
 pub fn transform_ast<'src, 'ast>(
     source: &'src str,
     block: &'ast SExpr<'src>,
-    resolve_state: &ResolveState<'src>,
+    resolve_state: &'ast ResolveState<'src>,
 ) -> TfResult<TransformOutput<'src>> {
-    let mut ctx = TfCtx::new(source)?;
+    let mut ctx = TfCtx::new(source, resolve_state)?;
 
     let mut py_block = PyBlock::new();
-    let block = py_block.bind(block.transform(&mut ctx)?);
+    let expr = py_block.bind(block.transform(&mut ctx)?);
+    py_block.0.push((PyStmt::Expr(expr), block.span).into());
 
     let mut exports = Vec::new();
 
+    for decl in &resolve_state.root_scope.borrow().locals {
+        exports.push(decl.borrow().name.0.clone())
+    }
+
     Ok(TransformOutput {
         py_block,
-        exports: ctx.exports,
-        module_star_exports: ctx.export_stars,
+        exports,
+        module_star_exports: resolve_state
+            .export_stars
+            .iter()
+            .map(|x| x.clone().into())
+            .collect(),
     })
 }
