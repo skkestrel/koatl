@@ -118,8 +118,8 @@ struct TfCtx<'src, 'ast> {
     resolutions: &'ast HashMap<RefHash, DeclarationRef<'src>>,
 }
 
-impl<'src, 'res> TfCtx<'src, 'res> {
-    fn new(source: &'src str, resolve_state: &'res ResolveState<'src>) -> TfResult<Self> {
+impl<'src, 'ast> TfCtx<'src, 'ast> {
+    fn new(source: &'src str, resolve_state: &'ast ResolveState<'src>) -> TfResult<Self> {
         Ok(TfCtx {
             source,
             export_stars: Vec::new(),
@@ -143,7 +143,7 @@ impl<'src, 'res> TfCtx<'src, 'res> {
         format!("_{}_l{}c{}", typ, line, col).into()
     }
 
-    fn fn_info(&self, expr: &SExpr<'src>) -> TfResult<&'res FnInfo<'src>> {
+    fn fn_info(&self, expr: &SExpr<'src>) -> TfResult<&'ast FnInfo<'src>> {
         let Expr::Fn(..) = &expr.value else {
             return Err(simple_err("Internal: expected an Expr::Fn", expr.span));
         };
@@ -153,7 +153,7 @@ impl<'src, 'res> TfCtx<'src, 'res> {
             .ok_or_else(|| simple_err("Internal: Unresolved function", expr.span))
     }
 
-    fn pattern_info(&self, pattern: &SPattern<'src>) -> TfResult<&'res PatternInfo<'src>> {
+    fn pattern_info(&self, pattern: &SPattern<'src>) -> TfResult<&'ast PatternInfo<'src>> {
         self.patterns
             .get(&pattern.into())
             .ok_or_else(|| simple_err("Internal: Unresolved pattern", pattern.span))
@@ -258,9 +258,9 @@ trait BlockExt<'src> {
 }
 
 impl<'src> BlockExt<'src> for [Indirect<SStmt<'src>>] {
-    fn transform<'ast, 'res>(
+    fn transform<'ast>(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'res>,
+        ctx: &mut TfCtx<'src, 'ast>,
     ) -> TfResult<PyBlockExprWithPre<'src>> {
         if self.is_empty() {
             return Ok(WithPre {
@@ -321,8 +321,8 @@ impl<'src> BlockExt<'src> for [Indirect<SStmt<'src>>] {
     }
 }
 
-fn destructure_list<'src, 'res, 'ast>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn destructure_list<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     target: &'ast SExpr<'src>,
     items: &'ast [SListItem<'src>],
     modifier: Option<DeclType>,
@@ -374,8 +374,8 @@ fn destructure_list<'src, 'res, 'ast>(
     })
 }
 
-fn destructure_tuple<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn destructure_tuple<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     target: &'ast SExpr<'src>,
     items: &'ast [SListItem<'src>],
     modifier: Option<DeclType>,
@@ -481,8 +481,8 @@ fn destructure_tuple<'src, 'ast, 'res>(
     })
 }
 
-fn destructure_mapping<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn destructure_mapping<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     target: &'ast SExpr<'src>,
     items: &'ast [SMappingItem<'src>],
     modifier: Option<DeclType>,
@@ -576,8 +576,8 @@ struct DestructureBindings<'a> {
     post: PyBlock<'a>,
 }
 
-fn destructure<'src, 'res, 'ast>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn destructure<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     target: &'ast SExpr<'src>,
     modifier: Option<DeclType>,
 ) -> TfResult<DestructureBindings<'src>> {
@@ -609,10 +609,21 @@ fn destructure<'src, 'res, 'ast>(
                     // we need to replace an extension with a regular attribute
                     // when assigning to it
 
-                    let new_target =
-                        Expr::RawAttribute(lhs.clone(), ext.clone()).spanned(target.span);
+                    let mut pre = PyBlock::new();
+                    let lhs = pre.bind(lhs.transform(ctx)?);
 
-                    new_target.transform_store(ctx)?
+                    SPyExprWithPre {
+                        pre,
+                        value: (
+                            PyExpr::Attribute(
+                                Box::new(lhs),
+                                ext.clone().value.escape(),
+                                PyAccessCtx::Store,
+                            ),
+                            target.span,
+                        )
+                            .into(),
+                    }
                 }
                 _ => {
                     panic!();
@@ -658,8 +669,8 @@ fn simple_err(msg: impl Into<String>, span: Span) -> TfErrs {
         .build_errs()
 }
 
-fn transform_assignment<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn transform_assignment<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     lhs: &'ast SExpr<'src>,
     rhs: &'ast SExpr<'src>,
     modifier: Option<DeclType>,
@@ -751,8 +762,8 @@ fn transform_assignment<'src, 'ast, 'res>(
     Ok(stmts)
 }
 
-fn transform_if_matches_not_never_expr<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn transform_if_matches_not_never_expr<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     subject: &'ast SExpr<'src>,
     pattern_neg: &'ast SPattern<'src>,
     pattern_meta: &'ast PatternInfo<'src>,
@@ -822,8 +833,8 @@ fn transform_if_matches_not_never_expr<'src, 'ast, 'res>(
     })
 }
 
-fn transform_if_expr<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn transform_if_expr<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     cond: &'ast SExpr<'src>,
     then_block: &'ast SExpr<'src>,
     else_block: Option<&'ast SExpr<'src>>,
@@ -870,18 +881,18 @@ fn transform_if_expr<'src, 'ast, 'res>(
     })
 }
 
-trait SPatternExt<'src> {
-    fn transform<'ast, 'res>(
+trait SPatternExt<'src, 'ast> {
+    fn transform(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'res>,
+        ctx: &mut TfCtx<'src, 'ast>,
         info: &PatternInfo<'src>,
     ) -> TfResult<WithPre<'src, SPyPattern<'src>>>;
 }
 
-impl<'src> SPatternExt<'src> for SPattern<'src> {
-    fn transform<'ast, 'res>(
+impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
+    fn transform(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'res>,
+        ctx: &mut TfCtx<'src, 'ast>,
         info: &PatternInfo<'src>,
     ) -> TfResult<WithPre<'src, SPyPattern<'src>>> {
         // TODO avoid python syntaxerror by verifying that all branches in Or bind the same name
@@ -892,8 +903,8 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
         let pattern = &self.value;
         let span = self.span;
 
-        fn capture_slot<'src, 'res>(
-            ctx: &mut TfCtx<'src, 'res>,
+        fn capture_slot<'src, 'ast>(
+            ctx: &mut TfCtx<'src, 'ast>,
             ident: &SIdent<'src>,
             info: &PatternInfo<'src>,
         ) -> TfResult<Option<PyIdent<'src>>> {
@@ -910,8 +921,8 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
             }
         }
 
-        fn maybe_capture_slot<'src, 'res>(
-            ctx: &mut TfCtx<'src, 'res>,
+        fn maybe_capture_slot<'src, 'ast>(
+            ctx: &mut TfCtx<'src, 'ast>,
             ident: &Option<SIdent<'src>>,
             info: &PatternInfo<'src>,
         ) -> TfResult<Option<PyIdent<'src>>> {
@@ -1066,8 +1077,8 @@ impl<'src> SPatternExt<'src> for SPattern<'src> {
 /**
  * Creates a matcher that throws an error if the pattern does not match.
  */
-fn create_throwing_matcher<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn create_throwing_matcher<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     pattern: &'ast SPattern<'src>,
     pattern_meta: &'ast PatternInfo<'src>,
 ) -> TfResult<(PyBlock<'src>, PyIdent<'src>)> {
@@ -1115,8 +1126,8 @@ fn create_throwing_matcher<'src, 'ast, 'res>(
 /**
  * Creates a basic match expression that either matches or doesn't.
  */
-fn create_binary_matcher<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn create_binary_matcher<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     subject: SPyExpr<'src>,
     pattern: &'ast SPattern<'src>,
     pattern_meta: &'ast PatternInfo<'src>,
@@ -1153,10 +1164,10 @@ enum MatchSubject<'src, 'ast> {
     Tl(&'ast SExpr<'src>),
 }
 
-fn transform_match_expr<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn transform_match_expr<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     subject: MatchSubject<'src, 'ast>,
-    cases: &[SMatchCase<'src>],
+    cases: &'ast [SMatchCase<'src>],
     fill_default_case: bool,
     span: &Span,
 ) -> TfResult<(SPyExprWithPre<'src>, bool)> {
@@ -1243,8 +1254,8 @@ fn transform_match_expr<'src, 'ast, 'res>(
     ))
 }
 
-fn make_class_def<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn make_class_def<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     name: Cow<'src, str>,
     bases: &'ast [SCallItem<'src>],
     body: &'ast SExpr<'src>,
@@ -1305,8 +1316,8 @@ struct PyArgList<'src> {
     items: Vec<PyArgDefItem<'src>>,
 }
 
-fn make_arglist<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn make_arglist<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     args: &'ast [SArgDefItem<'src>],
     info: &FnInfo<'src>,
 ) -> TfResult<PyArgList<'src>> {
@@ -1376,8 +1387,8 @@ enum FnDef<'src, 'ast> {
 /**
  * This function uses lifted_decls to store future declarations to make recursion work.
  */
-fn prepare_py_fn<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn prepare_py_fn<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     def: FnDef<'src, 'ast>,
     span: &Span,
 ) -> TfResult<WithPre<'src, PartialPyFnDef<'src>>> {
@@ -1461,8 +1472,8 @@ fn prepare_py_fn<'src, 'ast, 'res>(
     })
 }
 
-fn make_fn_exp<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn make_fn_exp<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     def: FnDef<'src, 'ast>,
     span: &Span,
 ) -> TfResult<SPyExprWithPre<'src>> {
@@ -1517,8 +1528,8 @@ fn make_fn_exp<'src, 'ast, 'res>(
     })
 }
 
-fn make_fn_def<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn make_fn_def<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     name: Cow<'src, str>,
     def: FnDef<'src, 'ast>,
     mut decorators: PyDecorators<'src>,
@@ -1551,8 +1562,8 @@ fn make_fn_def<'src, 'ast, 'res>(
     Ok(pre)
 }
 
-fn transform_call_items<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn transform_call_items<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     args: &'ast [SCallItem<'src>],
     span: &Span,
 ) -> TfResult<WithPre<'src, Vec<PyCallItem<'src>>>> {
@@ -1604,8 +1615,8 @@ fn transform_call_items<'src, 'ast, 'res>(
     })
 }
 
-fn transform_subscript_items<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn transform_subscript_items<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     indices: &'ast [SListItem<'src>],
     span: &Span,
 ) -> TfResult<WithPre<'src, SPyExpr<'src>>> {
@@ -1649,8 +1660,8 @@ fn transform_subscript_items<'src, 'ast, 'res>(
     })
 }
 
-fn transform_postfix_expr<'src, 'ast, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn transform_postfix_expr<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     expr: &'ast SExpr<'src>,
     access_ctx: PyAccessCtx,
 ) -> TfResult<SPyExprWithPre<'src>> {
@@ -1757,10 +1768,10 @@ fn transform_postfix_expr<'src, 'ast, 'res>(
     Ok(SPyExprWithPre { value: node, pre })
 }
 
-fn matching_except_handler<'src, 'res>(
-    ctx: &mut TfCtx<'src, 'res>,
+fn matching_except_handler<'src, 'ast>(
+    ctx: &mut TfCtx<'src, 'ast>,
     var_name: PyIdent<'src>,
-    handlers: &[SMatchCase<'src>],
+    handlers: &'ast [SMatchCase<'src>],
     span: &Span,
 ) -> TfResult<PyExceptHandler<'src>> {
     let a = PyAstBuilder::new(*span);
@@ -1799,16 +1810,16 @@ fn matching_except_handler<'src, 'res>(
 }
 
 trait ListItemsExt<'src> {
-    fn transform<'ast, 'res>(
+    fn transform<'ast>(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'res>,
+        ctx: &mut TfCtx<'src, 'ast>,
     ) -> TfResult<WithPre<'src, Vec<PyListItem<'src>>>>;
 }
 
 impl<'src> ListItemsExt<'src> for Vec<SListItem<'src>> {
-    fn transform<'ast, 'res>(
+    fn transform<'ast>(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'res>,
+        ctx: &mut TfCtx<'src, 'ast>,
     ) -> TfResult<WithPre<'src, Vec<PyListItem<'src>>>> {
         let mut pre = PyBlock::new();
         let mut items = vec![];
@@ -1847,11 +1858,11 @@ impl<'src> LiteralExt<'src> for Literal<'src> {
 }
 
 trait SStmtExt<'src> {
-    fn transform<'ast, 'res>(&'ast self, ctx: &mut TfCtx<'src, 'res>) -> TfResult<PyBlock<'src>>;
+    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<PyBlock<'src>>;
 }
 
 impl<'src> SStmtExt<'src> for SStmt<'src> {
-    fn transform<'ast, 'res>(&'ast self, ctx: &mut TfCtx<'src, 'res>) -> TfResult<PyBlock<'src>> {
+    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<PyBlock<'src>> {
         let mut pre = PyBlock::new();
         let stmt = &self.value;
         let span = self.span;
@@ -2021,8 +2032,8 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
     }
 }
 
-trait SExprExt<'src, 'res, 'ast> {
-    fn transform(&'ast self, ctx: &mut TfCtx<'src, 'res>) -> TfResult<SPyExprWithPre<'src>>;
+trait SExprExt<'src, 'ast> {
+    fn transform(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<SPyExprWithPre<'src>>;
 
     /**
      * Transforms
@@ -2033,23 +2044,23 @@ trait SExprExt<'src, 'res, 'ast> {
      *
      * to avoid evaluating expr multiple times
      */
-    fn transform_lifted(&self, ctx: &mut TfCtx<'src, 'res>) -> TfResult<SPyExprWithPre<'src>>;
+    fn transform_lifted(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<SPyExprWithPre<'src>>;
 
-    fn transform_store(&self, ctx: &mut TfCtx<'src, 'res>) -> TfResult<SPyExprWithPre<'src>>;
+    fn transform_store(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<SPyExprWithPre<'src>>;
 
     fn transform_full(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'res>,
+        ctx: &mut TfCtx<'src, 'ast>,
         py_ctx: PyAccessCtx,
     ) -> TfResult<SPyExprWithPre<'src>>;
 }
 
-impl<'src, 'res, 'ast> SExprExt<'src, 'res, 'ast> for SExpr<'src> {
-    fn transform(&'ast self, ctx: &mut TfCtx<'src, 'res>) -> TfResult<SPyExprWithPre<'src>> {
+impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
+    fn transform(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<SPyExprWithPre<'src>> {
         self.transform_full(ctx, PyAccessCtx::Load)
     }
 
-    fn transform_lifted(&self, ctx: &mut TfCtx<'src, 'res>) -> TfResult<SPyExprWithPre<'src>> {
+    fn transform_lifted(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<SPyExprWithPre<'src>> {
         let mut pre = PyBlock::new();
         let value = pre.bind(self.transform(ctx)?);
         let a = PyAstBuilder::new(self.span);
@@ -2068,13 +2079,13 @@ impl<'src, 'res, 'ast> SExprExt<'src, 'res, 'ast> for SExpr<'src> {
         Ok(SPyExprWithPre { value: expr, pre })
     }
 
-    fn transform_store(&self, ctx: &mut TfCtx<'src, 'res>) -> TfResult<SPyExprWithPre<'src>> {
+    fn transform_store(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<SPyExprWithPre<'src>> {
         self.transform_full(ctx, PyAccessCtx::Store)
     }
 
     fn transform_full(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'res>,
+        ctx: &mut TfCtx<'src, 'ast>,
         access_ctx: PyAccessCtx,
     ) -> TfResult<SPyExprWithPre<'src>> {
         let expr = &self.value;
@@ -2392,10 +2403,10 @@ pub struct TransformOutput<'src> {
     pub module_star_exports: Vec<PyIdent<'src>>,
 }
 
-pub fn transform_ast<'src, 'ast, 'res>(
+pub fn transform_ast<'src, 'ast>(
     source: &'src str,
     block: &'ast SExpr<'src>,
-    resolve_state: &'res ResolveState<'src>,
+    resolve_state: &'ast ResolveState<'src>,
 ) -> TfResult<TransformOutput<'src>> {
     let mut ctx = TfCtx::new(source, resolve_state)?;
 
