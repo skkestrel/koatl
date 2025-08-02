@@ -78,22 +78,40 @@ pub fn transpile_to_py_ast<'src>(
 ) -> TlResult<PyBlock<'src>> {
     let tl_ast = parse_tl(src)?;
 
-    let (resolve_state, tl_ast) = resolve_names::resolve_names(src, tl_ast);
+    let mut errs = vec![];
 
-    let output = transform_ast(&src, &tl_ast, &resolve_state).map_err(|e| {
-        resolve_state
-            .errors
-            .0
+    let (resolve_state, tl_ast) = resolve_names::resolve_names(src, tl_ast, options.allow_await);
+
+    let output = match transform_ast(&src, &tl_ast, &resolve_state) {
+        Ok(output) => Some(output),
+        Err(e) => {
+            errs.extend(e.0);
+            None
+        }
+    };
+
+    errs.extend(resolve_state.errors.0);
+
+    if errs.len() > 0 {
+        return Err(errs
             .into_iter()
-            .chain(e.0.into_iter())
             .map(|e| TlErr {
                 kind: TlErrKind::Transform,
                 message: e.message,
                 span: e.span,
                 contexts: e.contexts,
             })
-            .collect::<Vec<_>>()
-    })?;
+            .collect());
+    }
+
+    let Some(output) = output else {
+        return Err(vec![TlErr {
+            kind: TlErrKind::Transform,
+            message: "Failed to transform AST".to_string(),
+            span: None,
+            contexts: vec![],
+        }]);
+    };
 
     let mut py_ast = output.py_block;
 

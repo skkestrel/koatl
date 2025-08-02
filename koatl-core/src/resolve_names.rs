@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
-use std::ptr::{self, fn_addr_eq};
+use std::ops::Deref;
+use std::ptr::{self};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::transform::TfErrs;
@@ -11,16 +12,28 @@ use crate::{
 use parser::ast::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct BoxHash(usize);
+pub struct RefHash {
+    id: usize,
+}
 
-impl BoxHash {
-    fn new<T>(value: &Box<T>) -> Self {
-        return BoxHash((value.as_ref() as *const T) as usize);
+impl<T> From<&T> for RefHash {
+    fn from(value: &T) -> Self {
+        RefHash {
+            id: (value as *const T) as usize,
+        }
     }
 }
 
 #[derive(Debug, Clone)]
-struct RcKey<T>(Rc<T>);
+pub struct RcKey<T>(pub Rc<T>);
+
+impl<T> Deref for RcKey<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        self.0.deref()
+    }
+}
 
 impl<T> From<Rc<T>> for RcKey<T> {
     fn from(value: Rc<T>) -> Self {
@@ -90,6 +103,7 @@ pub struct Declaration<'src> {
     pub loc: Span,
     pub typ: Type,
     pub modifier: DeclType,
+    pub is_fn_arg: bool,
 }
 
 pub type DeclarationRef<'src> = Rc<RefCell<Declaration<'src>>>;
@@ -106,6 +120,7 @@ impl<'src> Declaration<'src> {
             loc: name.span,
             typ: Type::Unprocessed,
             modifier,
+            is_fn_arg: false,
         }))
     }
 }
@@ -179,7 +194,7 @@ impl<'src> ScopeStackExt<'src> for Vec<Rc<RefCell<Scope<'src>>>> {
     }
 }
 
-struct PatternInfo<'src> {
+pub struct PatternInfo<'src> {
     pub default: bool,
     pub decls: Vec<DeclarationRef<'src>>,
 }
@@ -192,10 +207,10 @@ pub struct ResolveState<'src> {
     pub export_stars: Vec<String>,
 
     pub root_scope: Rc<RefCell<Scope<'src>>>,
-    pub types: HashMap<BoxHash, Type>,
-    pub resolutions: HashMap<BoxHash, DeclarationRef<'src>>,
-    pub functions: HashMap<BoxHash, FnInfo<'src>>,
-    pub patterns: HashMap<BoxHash, PatternInfo<'src>>,
+    pub types: HashMap<RefHash, Type>,
+    pub resolutions: HashMap<RefHash, DeclarationRef<'src>>,
+    pub functions: HashMap<RefHash, FnInfo<'src>>,
+    pub patterns: HashMap<RefHash, PatternInfo<'src>>,
 
     pub errors: TfErrs,
 
@@ -351,7 +366,7 @@ impl<'src> ResolveState<'src> {
             .spanned(span)
             .indirect();
 
-            self.functions.insert(BoxHash::new(&fn_node), fn_ctx);
+            self.functions.insert((&fn_node).into(), fn_ctx);
 
             return fn_node;
         } else {
@@ -400,13 +415,11 @@ impl<'src> ResolveState<'src> {
             }
         };
 
-        let decl = Rc::new(RefCell::new(Declaration {
-            name: name.value,
-            scope: self.scope_ctx_stack.last().unwrap().clone(),
-            loc: name.span,
-            typ: Type::Unprocessed,
+        let decl = Declaration::new(
+            name.clone(),
+            self.scope_ctx_stack.last().unwrap().clone(),
             modifier,
-        }));
+        );
 
         scope.locals.push(decl.clone());
 
@@ -467,7 +480,7 @@ fn traverse_placeholder<'src>(state: &mut ResolveState<'src>, span: Span) -> Ind
         let expr = Expr::Ident(ident).spanned(span).indirect();
         state
             .resolutions
-            .insert(BoxHash::new(&expr), placeholder_ctx.decl.clone());
+            .insert((&expr).into(), placeholder_ctx.decl.clone());
 
         return expr;
     }
@@ -760,39 +773,42 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 };
 
                 let expr = Expr::Ident(ident).spanned(span).indirect();
-                state.resolutions.insert(BoxHash::new(&expr), decl.clone());
+                state.resolutions.insert((&expr).into(), decl.clone());
 
                 return expr;
             }
             Expr::Checked(expr, pattern) => {
-                let pattern =
-                    if let Some(pattern) = pattern {
-                        let (pattern, meta) = pattern.traverse(state);
+                let pattern = if let Some(pattern) = pattern {
+                    let (pattern, meta) = pattern.traverse(state);
 
-                        if !meta.captures.is_empty() {
-                            state.errors.extend(TfErrBuilder::default()
-                            .message(
-                                "Non-'_' capture patterns are not allowed in 'try'-expressions",
-                            )
-                            .span(pattern.span)
-                            .build_errs());
-                        }
+                    if !meta.captures.is_empty() {
+                        state.errors.extend(
+                            TfErrBuilder::default()
+                                .message(concat!(
+                                    "Non-'_' captures in a 'matches' are only ",
+                                    "allowed in 'if ... matches ...', ",
+                                    "or 'if ... matches not ...' constructions."
+                                ))
+                                .span(pattern.span)
+                                .build_errs(),
+                        );
+                    }
 
-                        if meta.default {
-                            None
-                        } else {
-                            state.patterns.insert(
-                                BoxHash::new(&pattern),
-                                PatternInfo {
-                                    default: false,
-                                    decls: vec![],
-                                },
-                            );
-                            Some(pattern)
-                        }
-                    } else {
+                    if meta.default {
                         None
-                    };
+                    } else {
+                        state.patterns.insert(
+                            (&pattern).into(),
+                            PatternInfo {
+                                default: false,
+                                decls: vec![],
+                            },
+                        );
+                        Some(pattern)
+                    }
+                } else {
+                    None
+                };
 
                 Expr::Checked(expr.traverse_guarded(state), pattern)
             }
@@ -1060,7 +1076,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 let fn_ctx = state.fn_ctx_stack.pop().unwrap();
                 let expr = Expr::Fn(items, body).spanned(span).indirect();
 
-                state.functions.insert(BoxHash::new(&expr), fn_ctx);
+                state.functions.insert((&expr).into(), fn_ctx);
 
                 return expr;
             }
@@ -1177,7 +1193,7 @@ fn traverse_assign_lhs<'src>(
             };
 
             let expr = Expr::Ident(ident).spanned(lhs.span).indirect();
-            state.resolutions.insert(BoxHash::new(&expr), decl.clone());
+            state.resolutions.insert((&expr).into(), decl.clone());
             expr
         }
         Expr::Tuple(items) => {
@@ -1369,8 +1385,10 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 pub fn resolve_names<'src>(
     source: &'src str,
     expr: impl IntoIndirect<SExpr<'src>>,
+    allow_await: bool,
 ) -> (ResolveState<'src>, Indirect<SExpr<'src>>) {
     let mut state = ResolveState::new(source);
+    state.allow_top_level_await = allow_await;
     state.root_scope = Scope::new();
     state.root_scope.borrow_mut().is_global_scope = true;
 
