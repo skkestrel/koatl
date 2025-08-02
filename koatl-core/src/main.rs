@@ -6,7 +6,7 @@ use std::{
 };
 
 use ariadne::{Color, Label, Report, ReportKind, sources};
-use koatl_core::{TlErrKind, TranspileOptions, transpile_to_source};
+use koatl_core::{TranspileOptions, transpile_to_source, util::TlErrKind};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cmd = std::env::args().nth(1).ok_or("Missing command argument")?;
@@ -36,13 +36,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Err(errs) => {
-            errs.into_iter().for_each(|e| {
+            errs.0.into_iter().for_each(|e| {
                 let range = e.span.map(|e| e.into_range()).unwrap_or(0..0);
                 let err_prefix = match e.kind {
                     TlErrKind::Tokenize => "Tokenization Error: ",
                     TlErrKind::Parse => "Parser Error: ",
                     TlErrKind::Transform => "Transformation Error: ",
                     TlErrKind::Emit => "Emission Error: ",
+                    TlErrKind::Unknown => "Unknown Error: ",
                 };
 
                 Report::build(ReportKind::Error, (filename.clone(), range.clone()))

@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     py::{ast::*, util::PyAstBuilder},
-    resolve_names::{Declaration, DeclarationRef, FnInfo, PatternInfo, ResolveState},
+    resolve_scopes::{Declaration, DeclarationRef, FnInfo, PatternInfo, ResolveState},
     util::{LineColCache, RcKey, RefHash, TlErrBuilder, TlErrs, TlResult},
 };
 use once_cell::sync::Lazy;

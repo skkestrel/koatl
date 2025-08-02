@@ -1,6 +1,6 @@
 pub mod parser;
 pub mod py;
-mod resolve_names;
+mod resolve_scopes;
 pub mod transform;
 mod types;
 pub mod util;
@@ -65,7 +65,7 @@ pub fn transpile_to_py_ast<'src>(
 
     let mut errs = TlErrs::new();
 
-    let (resolve_state, tl_ast) = resolve_names::resolve_names(src, tl_ast, options.allow_await);
+    let (resolve_state, tl_ast) = resolve_scopes::resolve_names(src, tl_ast, options.allow_await);
 
     let output = match transform_ast(&src, &tl_ast, &resolve_state) {
         Ok(output) => Some(output),
