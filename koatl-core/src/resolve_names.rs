@@ -56,6 +56,7 @@ impl<T> PartialEq for RcKey<T> {
 
 impl<T> Eq for RcKey<T> {}
 
+#[allow(dead_code)]
 struct PlaceholderCtx<'src> {
     activated: bool,
     decl: DeclarationRef<'src>,
@@ -155,6 +156,7 @@ impl<'src> Scope<'src> {
     }
 }
 
+#[allow(dead_code)]
 struct FindResult<'src> {
     decl: DeclarationRef<'src>,
     local: bool,
@@ -207,7 +209,6 @@ pub struct ResolveState<'src> {
     pub export_stars: Vec<String>,
 
     pub root_scope: Rc<RefCell<Scope<'src>>>,
-    pub types: HashMap<RefHash, Type>,
     pub resolutions: HashMap<RefHash, DeclarationRef<'src>>,
     pub functions: HashMap<RefHash, FnInfo<'src>>,
     pub patterns: HashMap<RefHash, PatternInfo<'src>>,
@@ -221,6 +222,7 @@ pub struct ResolveState<'src> {
     scope_id_counter: usize,
 }
 
+#[allow(dead_code)]
 struct ScopedOutput<'src, T> {
     pub value: T,
     pub scope: Rc<RefCell<Scope<'src>>>,
@@ -235,7 +237,6 @@ impl<'src> ResolveState<'src> {
             export_stars: Vec::new(),
 
             root_scope: Scope::new(),
-            types: HashMap::new(),
             resolutions: HashMap::new(),
             functions: HashMap::new(),
             patterns: HashMap::new(),
@@ -354,19 +355,23 @@ impl<'src> ResolveState<'src> {
 
             scope.borrow_mut().locals.push(placeholder_ctx.decl.clone());
 
-            let fn_node = SExprInner::Fn(
-                vec![SArgDefItem::Arg(
-                    SPatternInner::Capture(Some(Ident("x".into()).spanned(span)))
-                        .spanned(span)
-                        .indirect(),
-                    None,
-                )],
-                result,
-            )
-            .spanned(span)
-            .indirect();
+            let placeholder_pattern = SPatternInner::Capture(Some(Ident("x".into()).spanned(span)))
+                .spanned(span)
+                .indirect();
 
-            self.functions.insert((&fn_node).into(), fn_ctx);
+            self.patterns.insert(
+                placeholder_pattern.as_ref().into(),
+                PatternInfo {
+                    default: true,
+                    decls: vec![placeholder_ctx.decl.clone()],
+                },
+            );
+
+            let fn_node = SExprInner::Fn(vec![SArgDefItem::Arg(placeholder_pattern, None)], result)
+                .spanned(span)
+                .indirect();
+
+            self.functions.insert(fn_node.as_ref().into(), fn_ctx);
 
             return fn_node;
         } else {
@@ -467,7 +472,7 @@ impl<'src> ResolveState<'src> {
 }
 
 fn error_expr<'src>(span: Span) -> Indirect<SExpr<'src>> {
-    Expr::Literal(Literal::None.spanned(span))
+    Expr::Ident(Ident("_".into()).spanned(span))
         .spanned(span)
         .indirect()
 }
@@ -480,7 +485,7 @@ fn traverse_placeholder<'src>(state: &mut ResolveState<'src>, span: Span) -> Ind
         let expr = Expr::Ident(ident).spanned(span).indirect();
         state
             .resolutions
-            .insert((&expr).into(), placeholder_ctx.decl.clone());
+            .insert(expr.as_ref().into(), placeholder_ctx.decl.clone());
 
         return expr;
     }
@@ -708,16 +713,27 @@ fn pattern_scoped<'src>(
 
     let (pattern, meta) = pattern.traverse(state);
 
-    scope
-        .borrow_mut()
-        .locals
-        .extend(meta.captures.iter().map(|x| {
+    let decls = meta
+        .captures
+        .iter()
+        .map(|x| {
             Declaration::new(
                 x.clone().spanned(pattern.span),
                 scope.clone(),
                 DeclType::Let,
             )
-        }));
+        })
+        .collect::<Vec<_>>();
+
+    state.patterns.insert(
+        pattern.as_ref().into(),
+        PatternInfo {
+            default: meta.default,
+            decls: decls.clone(),
+        },
+    );
+
+    scope.borrow_mut().locals.extend(decls.clone());
 
     (pattern, scope, meta)
 }
@@ -773,7 +789,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 };
 
                 let expr = Expr::Ident(ident).spanned(span).indirect();
-                state.resolutions.insert((&expr).into(), decl.clone());
+                state.resolutions.insert(expr.as_ref().into(), decl.clone());
 
                 return expr;
             }
@@ -798,9 +814,9 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                         None
                     } else {
                         state.patterns.insert(
-                            (&pattern).into(),
+                            pattern.as_ref().into(),
                             PatternInfo {
-                                default: false,
+                                default: meta.default,
                                 decls: vec![],
                             },
                         );
@@ -826,6 +842,15 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                         .span(pattern.span)
                         .build_errs());
                 }
+
+                state.patterns.insert(
+                    pattern.as_ref().into(),
+                    PatternInfo {
+                        default: meta.default,
+                        decls: vec![],
+                    },
+                );
+
                 Expr::Matches(x.traverse(state), pattern)
             }
             Expr::Placeholder => return traverse_placeholder(state, span),
@@ -962,6 +987,10 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
             }
             Expr::Fn(arg_def_items, body) => {
                 let mut all_captures = vec![];
+                let mut decls = vec![];
+
+                let scope = Scope::new();
+                scope.borrow_mut().is_fn_scope = true;
 
                 let items = arg_def_items
                     .into_iter()
@@ -969,18 +998,36 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                         ArgDefItem::Arg(arg, default) => {
                             let (pattern, meta) = arg.traverse(state);
 
+                            let mut arg_decls = vec![];
+
                             for capture in meta.captures {
-                                all_captures.push(capture.spanned(pattern.span));
+                                let cap = capture.spanned(pattern.span);
+                                all_captures.push(cap.clone());
+                                arg_decls.push(Declaration::new(cap, scope.clone(), DeclType::Let));
                             }
+
+                            state.patterns.insert(
+                                pattern.as_ref().into(),
+                                PatternInfo {
+                                    default: meta.default,
+                                    decls: arg_decls.iter().map(|x| x.clone()).collect(),
+                                },
+                            );
+
+                            decls.extend(arg_decls);
 
                             ArgDefItem::Arg(pattern, default.map(|x| x.traverse(state)))
                         }
                         ArgDefItem::ArgSpread(arg) => {
                             all_captures.push(arg.clone());
+                            decls.push(Declaration::new(arg.clone(), scope.clone(), DeclType::Let));
+
                             ArgDefItem::ArgSpread(arg)
                         }
                         ArgDefItem::KwargSpread(arg) => {
                             all_captures.push(arg.clone());
+                            decls.push(Declaration::new(arg.clone(), scope.clone(), DeclType::Let));
+
                             ArgDefItem::KwargSpread(arg)
                         }
                     })
@@ -999,13 +1046,6 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 }
 
                 state.fn_ctx_stack.push(FnInfo::new());
-
-                let scope = Scope::new();
-                scope.borrow_mut().is_fn_scope = true;
-
-                let decls = all_captures
-                    .iter()
-                    .map(|x| Declaration::new(x.clone(), scope.clone(), DeclType::Let));
 
                 let n_scopes = state.scope_ctx_stack.len();
 
@@ -1062,7 +1102,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 let fn_ctx = state.fn_ctx_stack.pop().unwrap();
                 let expr = Expr::Fn(items, body).spanned(span).indirect();
 
-                state.functions.insert((&expr).into(), fn_ctx);
+                state.functions.insert(expr.as_ref().into(), fn_ctx);
 
                 return expr;
             }
@@ -1179,7 +1219,8 @@ fn traverse_assign_lhs<'src>(
             };
 
             let expr = Expr::Ident(ident).spanned(lhs.span).indirect();
-            state.resolutions.insert((&expr).into(), decl.clone());
+
+            state.resolutions.insert(expr.as_ref().into(), decl.clone());
             expr
         }
         Expr::Tuple(items) => {
@@ -1380,7 +1421,7 @@ pub fn resolve_names<'src>(
 
     let expr = state
         .scoped(state.root_scope.clone(), |state| {
-            expr.indirect().traverse(state)
+            expr.indirect().traverse_expecting_scope(state)
         })
         .value;
 
