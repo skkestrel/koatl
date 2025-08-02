@@ -1,4 +1,4 @@
-mod linecol;
+pub mod linecol;
 pub mod parser;
 pub mod py;
 mod resolve_names;

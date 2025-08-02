@@ -863,13 +863,11 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                         let (pattern, then_scope, _meta) = pattern_scoped(state, pattern);
 
-                        let then = state.scoped(then_scope, |state| then.traverse(state)).value;
+                        let then = state
+                            .scoped(then_scope, |state| then.traverse_expecting_scope(state))
+                            .value;
 
-                        let else_ = else_.map(|else_| {
-                            state
-                                .scoped(Scope::new(), |state| else_.traverse(state))
-                                .value
-                        });
+                        let else_ = else_.map(|else_| else_.traverse(state));
 
                         break 'block SExprInner::If(
                             Expr::Matches(expr.traverse(state), pattern)
@@ -893,9 +891,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                                     unreachable!();
                                 };
 
-                                let then = state
-                                    .scoped(Scope::new(), |state| then.traverse(state))
-                                    .value;
+                                let then = then.traverse(state);
 
                                 // TODO: then scope must be never
 
@@ -917,11 +913,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                                     .spanned(cond_span)
                                     .indirect(),
                                     then,
-                                    state
-                                        .scoped(Scope::new(), |state| {
-                                            else_.map(|x| x.traverse(state))
-                                        })
-                                        .value,
+                                    else_.map(|x| x.traverse(state)),
                                 );
                             }
                         }
@@ -932,14 +924,8 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 Expr::If(
                     cond.traverse(state),
-                    state
-                        .scoped(Scope::new(), |state| then.traverse(state))
-                        .value,
-                    else_.map(|else_| {
-                        state
-                            .scoped(Scope::new(), |state| else_.traverse(state))
-                            .value
-                    }),
+                    then.traverse(state),
+                    else_.map(|else_| else_.traverse(state)),
                 )
             }
             Expr::Match(subject, cases) => {
