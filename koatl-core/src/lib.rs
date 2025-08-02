@@ -1,9 +1,9 @@
-pub mod linecol;
 pub mod parser;
 pub mod py;
 mod resolve_names;
 pub mod transform;
 mod types;
+pub mod util;
 
 use ::parser::ast::SExpr;
 use parser::ast::Span;
@@ -13,23 +13,8 @@ use crate::py::ast::{PyAccessCtx, PyImportAlias, PyListItem, PyLiteral};
 use crate::py::util::PyAstBuilder;
 use crate::py::{ast::PyBlock, emit::EmitCtx};
 use crate::transform::transform_ast;
+use crate::util::{TlErr, TlErrKind, TlErrs, TlResult};
 use ariadne::{Color, Label, Report, ReportKind, sources};
-
-pub enum TlErrKind {
-    Tokenize,
-    Parse,
-    Transform,
-    Emit,
-}
-
-pub struct TlErr {
-    pub kind: TlErrKind,
-    pub message: String,
-    pub span: Option<Span>,
-    pub contexts: Vec<(String, Span)>,
-}
-
-pub type TlResult<T> = Result<T, Vec<TlErr>>;
 
 pub struct TranspileOptions {
     pub inject_prelude: bool,
@@ -78,39 +63,31 @@ pub fn transpile_to_py_ast<'src>(
 ) -> TlResult<PyBlock<'src>> {
     let tl_ast = parse_tl(src)?;
 
-    let mut errs = vec![];
+    let mut errs = TlErrs::new();
 
     let (resolve_state, tl_ast) = resolve_names::resolve_names(src, tl_ast, options.allow_await);
 
     let output = match transform_ast(&src, &tl_ast, &resolve_state) {
         Ok(output) => Some(output),
         Err(e) => {
-            errs.extend(e.0);
+            errs.extend(e);
             None
         }
     };
 
-    errs.extend(resolve_state.errors.0);
+    errs.extend(resolve_state.errors);
 
-    if errs.len() > 0 {
-        return Err(errs
-            .into_iter()
-            .map(|e| TlErr {
-                kind: TlErrKind::Transform,
-                message: e.message,
-                span: e.span,
-                contexts: e.contexts,
-            })
-            .collect());
+    if errs.0.len() > 0 {
+        return Err(errs);
     }
 
     let Some(output) = output else {
-        return Err(vec![TlErr {
-            kind: TlErrKind::Transform,
+        return Err(TlErrs(vec![TlErr {
+            kind: TlErrKind::Unknown,
             message: "Failed to transform AST".to_string(),
             span: None,
             contexts: vec![],
-        }]);
+        }]));
     };
 
     let mut py_ast = output.py_block;
@@ -204,11 +181,11 @@ pub fn transpile_to_source(src: &str, options: TranspileOptions) -> TlResult<Emi
     Ok(ctx)
 }
 
-pub fn format_errs(errs: &[TlErr], filename: &str, src: &str) -> Vec<u8> {
+pub fn format_errs(errs: &TlErrs, filename: &str, src: &str) -> Vec<u8> {
     let filename = filename.to_string();
     let mut writer = Vec::<u8>::new();
 
-    for e in errs {
+    for e in &errs.0 {
         let range = e.span.map(|e| e.into_range()).unwrap_or(0..0);
 
         Report::build(ReportKind::Error, (filename.clone(), range.clone()))
@@ -239,20 +216,23 @@ pub fn format_errs(errs: &[TlErr], filename: &str, src: &str) -> Vec<u8> {
 }
 
 pub fn parse_tl<'src>(src: &'src str) -> TlResult<SExpr<'src>> {
-    let mut errs = vec![];
+    let mut errs = TlErrs::new();
 
     let (tokens, token_errs) = tokenize(&src);
-    errs.extend(token_errs.into_iter().map(|e| {
-        TlErr {
-            kind: TlErrKind::Tokenize,
-            message: e.reason().to_string(),
-            span: Some(*e.span()),
-            contexts: e
-                .contexts()
-                .map(|(label, span)| (label.to_string(), *span))
-                .collect(),
-        }
-    }));
+    errs.extend(TlErrs(
+        token_errs
+            .into_iter()
+            .map(|e| TlErr {
+                kind: TlErrKind::Tokenize,
+                message: e.reason().to_string(),
+                span: Some(*e.span()),
+                contexts: e
+                    .contexts()
+                    .map(|(label, span)| (label.to_string(), *span))
+                    .collect(),
+            })
+            .collect(),
+    ));
 
     let tokens: TokenList<'src> = match tokens {
         Some(tokens) => tokens,
@@ -261,17 +241,20 @@ pub fn parse_tl<'src>(src: &'src str) -> TlResult<SExpr<'src>> {
     // println!("tokens: {tokens}");
 
     let (tl_ast, parser_errs) = parse_tokens(&src, &tokens);
-    errs.extend(parser_errs.into_iter().map(|e| {
-        TlErr {
-            kind: TlErrKind::Parse,
-            message: e.reason().to_string(),
-            span: Some(*e.span()),
-            contexts: e
-                .contexts()
-                .map(|(label, span)| (label.to_string(), *span))
-                .collect(),
-        }
-    }));
+    errs.extend(TlErrs(
+        parser_errs
+            .into_iter()
+            .map(|e| TlErr {
+                kind: TlErrKind::Parse,
+                message: e.reason().to_string(),
+                span: Some(*e.span()),
+                contexts: e
+                    .contexts()
+                    .map(|(label, span)| (label.to_string(), *span))
+                    .collect(),
+            })
+            .collect(),
+    ));
 
     let tl_ast = tl_ast.ok_or_else(|| errs)?;
     // println!("AST: {ast:?}");

@@ -4,7 +4,7 @@ use once_cell::sync::Lazy;
 use std::{collections::HashMap, sync::Mutex};
 
 use koatl_core::{
-    format_errs, linecol::LineColCache, transpile_to_py_ast, transpile_to_source, TranspileOptions,
+    format_errs, transpile_to_py_ast, transpile_to_source, util::LineColCache, TranspileOptions,
 };
 use pyo3::{
     prelude::*,

@@ -1,61 +1,14 @@
 use std::collections::HashSet;
 use std::fmt::Display;
-use std::hash::{Hash, Hasher};
-use std::ops::Deref;
-use std::ptr::{self};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::transform::TfErrs;
-use crate::{
-    transform::{TfErrBuilder, TfResult},
-    types::Type,
-};
+use crate::types::Type;
+use crate::util::{RcKey, RefHash, TlErrBuilder, TlErrs, TlResult};
 use parser::ast::*;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RefHash {
-    id: usize,
+fn simple_err(message: &str, span: Span) -> TlErrs {
+    TlErrBuilder::new().message(message).span(span).build()
 }
-
-impl<T> From<&T> for RefHash {
-    fn from(value: &T) -> Self {
-        RefHash {
-            id: (value as *const T) as usize,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct RcKey<T>(pub Rc<T>);
-
-impl<T> Deref for RcKey<T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        self.0.deref()
-    }
-}
-
-impl<T> From<Rc<T>> for RcKey<T> {
-    fn from(value: Rc<T>) -> Self {
-        RcKey(value)
-    }
-}
-
-impl<T> Hash for RcKey<T> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        (self.0.as_ref() as *const T).hash(state);
-    }
-}
-
-impl<T> PartialEq for RcKey<T> {
-    fn eq(&self, other: &Self) -> bool {
-        // Compare by pointer address.
-        ptr::eq(self.0.as_ref(), other.0.as_ref())
-    }
-}
-
-impl<T> Eq for RcKey<T> {}
 
 #[allow(dead_code)]
 struct PlaceholderCtx<'src> {
@@ -248,7 +201,7 @@ pub struct ResolveState<'src> {
     pub functions: HashMap<RefHash, FnInfo<'src>>,
     pub patterns: HashMap<RefHash, PatternInfo<'src>>,
 
-    pub errors: TfErrs,
+    pub errors: TlErrs,
 
     placeholder_ctx_stack: Vec<PlaceholderCtx<'src>>,
     fn_ctx_stack: Vec<FnInfo<'src>>,
@@ -276,7 +229,7 @@ impl<'src> ResolveState<'src> {
             functions: HashMap::new(),
             patterns: HashMap::new(),
 
-            errors: TfErrs::new(),
+            errors: TlErrs::new(),
 
             scope_id_counter: 0,
 
@@ -286,17 +239,14 @@ impl<'src> ResolveState<'src> {
         }
     }
 
-    fn resolve(&mut self, ident: &SIdent<'src>, lhs: bool) -> TfResult<DeclarationRef<'src>> {
+    fn resolve(&mut self, ident: &SIdent<'src>, lhs: bool) -> TlResult<DeclarationRef<'src>> {
         if let Some(found) = self.scope_ctx_stack.find_decl(ident) {
             if found.fn_local {
                 return Ok(found.decl);
             }
 
             let Some(fn_ctx) = self.fn_ctx_stack.last_mut() else {
-                return Err(TfErrBuilder::default()
-                    .message("Internal error: no function context")
-                    .span(ident.span)
-                    .build_errs());
+                return Err(simple_err("Internal error: no function context", ident.span).into());
             };
 
             fn_ctx.captures.insert(found.decl.clone().into());
@@ -325,10 +275,10 @@ impl<'src> ResolveState<'src> {
             return Ok(decl);
         }
 
-        return Err(TfErrBuilder::default()
-            .message("Undeclared identifier; either declare with 'let' or mark as 'global'.")
-            .span(ident.span)
-            .build_errs());
+        return Err(simple_err(
+            "Undeclared identifier; either declare with 'let' or mark as 'global'.",
+            ident.span,
+        ));
     }
 
     fn scoped<F, O>(&mut self, scope: Rc<RefCell<Scope<'src>>>, f: F) -> ScopedOutput<'src, O>
@@ -374,12 +324,10 @@ impl<'src> ResolveState<'src> {
 
         if placeholder_ctx.activated {
             if ph_fn_ctx.is_async || ph_fn_ctx.is_generator || ph_fn_ctx.is_do {
-                self.errors.extend(
-                    TfErrBuilder::default()
-                        .message("Await, bind, and yield are not allowed in placeholder functions")
-                        .span(span)
-                        .build_errs(),
-                );
+                self.errors.extend(simple_err(
+                    "Await, bind, and yield are not allowed in placeholder functions",
+                    placeholder_ctx.span,
+                ));
             }
 
             ph_fn_ctx.is_placeholder = true;
@@ -436,35 +384,29 @@ impl<'src> ResolveState<'src> {
         match modifier {
             DeclType::Global => {
                 if scope.is_global_scope || scope.is_class_scope {
-                    self.errors.extend(
-                        TfErrBuilder::default()
-                            .message(
-                                "Global declarations are not allowed at the module or class level",
-                            )
-                            .span(name.span)
-                            .build_errs(),
-                    );
+                    self.errors.extend(simple_err(
+                        "Global declarations are not allowed at the module or class level",
+                        name.span,
+                    ));
                 }
             }
             DeclType::Export => {
                 if !scope.is_global_scope {
-                    self.errors.extend(
-                        TfErrBuilder::default()
-                            .message("Exports are only allowed at the module level")
-                            .span(name.span)
-                            .build_errs(),
-                    );
+                    self.errors.extend(simple_err(
+                        "Exports are only allowed at the module level",
+                        name.span,
+                    ));
                 }
             }
             DeclType::Let | DeclType::Const => {
                 if scope.is_class_scope || scope.is_global_scope {
                     if let Some(found) = self.scope_ctx_stack.find_decl(&name) {
                         self.errors.extend(
-                            TfErrBuilder::default()
+                            TlErrBuilder::new()
                                 .message("Cannot shadow declarations in a class or global scope")
                                 .span(name.span)
-                                .context("Declared here", found.decl.borrow().loc)
-                                .build_errs(),
+                                .context("Previous declaration here", found.decl.borrow().loc)
+                                .build(),
                         );
                     }
                 }
@@ -486,12 +428,10 @@ impl<'src> ResolveState<'src> {
         if let Some(fn_ctx) = self.fn_ctx_stack.last_mut() {
             fn_ctx.is_async = true;
         } else if !self.allow_top_level_await {
-            self.errors.extend(
-                TfErrBuilder::default()
-                    .message("Await is only allowed in a function context")
-                    .span(span)
-                    .build_errs(),
-            );
+            self.errors.extend(simple_err(
+                "Await is only allowed in a function context",
+                span,
+            ));
         }
     }
 
@@ -499,12 +439,10 @@ impl<'src> ResolveState<'src> {
         if let Some(fn_ctx) = self.fn_ctx_stack.last_mut() {
             fn_ctx.is_do = true;
         } else {
-            self.errors.extend(
-                TfErrBuilder::default()
-                    .message("Bind operator is only allowed in a function context")
-                    .span(span)
-                    .build_errs(),
-            );
+            self.errors.extend(simple_err(
+                "Bind operator is only allowed in a function context",
+                span,
+            ));
         }
     }
 
@@ -512,12 +450,10 @@ impl<'src> ResolveState<'src> {
         if let Some(fn_ctx) = self.fn_ctx_stack.last_mut() {
             fn_ctx.is_generator = true;
         } else {
-            self.errors.extend(
-                TfErrBuilder::default()
-                    .message("Generator is only allowed in a function context")
-                    .span(span)
-                    .build_errs(),
-            );
+            self.errors.extend(simple_err(
+                "Yield is only allowed in a function context",
+                span,
+            ));
         }
     }
 }
@@ -579,12 +515,10 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
                     .as_ref()
                     .is_some_and(|x| char::is_uppercase(x.value.0.chars().nth(0).unwrap_or('_')))
                 {
-                    state.errors.extend(TfErrBuilder::default()
-                                .message(
-                                    "Capture patterns must start with a lowercase letter; to match a type, add '()'",
-                                )
-                                .span(self.span)
-                                .build_errs());
+                    state.errors.extend(simple_err(
+                        "Capture patterns must start with a lowercase letter; to match a type, add '()'",
+                        self.span,
+                    ));
                 }
 
                 if let Some(cap) = cap.clone() {
@@ -626,12 +560,10 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
                     let span = item.span;
 
                     if default {
-                        state.errors.extend(
-                            TfErrBuilder::default()
-                                .message("Default pattern makes remaining patterns unreachable")
-                                .span(span)
-                                .build_errs(),
-                        );
+                        state.errors.extend(simple_err(
+                            "Default pattern makes remaining patterns unreachable",
+                            span,
+                        ));
                     }
 
                     default |= meta.default;
@@ -640,12 +572,9 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
                     meta.captures.sort_by_key(|x| x.0.clone());
 
                     if captures != meta.captures {
-                        state.errors.extend(
-                            TfErrBuilder::default()
-                                .message("Or patterns must bind the same names")
-                                .span(span)
-                                .build_errs(),
-                        );
+                        state
+                            .errors
+                            .extend(simple_err("Or patterns must bind the same names", span));
                     }
 
                     items.push(pattern);
@@ -855,14 +784,10 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                     if !meta.captures.is_empty() {
                         state.errors.extend(
-                            TfErrBuilder::default()
-                                .message(concat!(
-                                    "Non-'_' captures in a 'matches' are only ",
-                                    "allowed in 'if ... matches ...', ",
-                                    "or 'if ... matches not ...' constructions."
-                                ))
-                                .span(pattern.span)
-                                .build_errs(),
+                            simple_err(
+                                "Non-'_' captures in a 'matches' are only allowed in 'if ... matches ...', or 'if ... matches not ...' constructions",
+                                pattern.span,
+                            )
                         );
                     }
 
@@ -891,12 +816,10 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
             Expr::Matches(x, pattern) => {
                 let (pattern, meta) = pattern.traverse(state);
                 if !meta.captures.is_empty() {
-                    state.errors.extend(TfErrBuilder::default()
-                        .message(
-                            "Non-'_' capture patterns are not allowed in bare 'matches'-expressions",
-                        )
-                        .span(pattern.span)
-                        .build_errs());
+                    state.errors.extend(simple_err(
+                        "Non-'_' capture patterns are not allowed in bare 'matches'-expressions",
+                        pattern.span,
+                    ));
                 }
 
                 state.patterns.insert(
@@ -1100,11 +1023,11 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                         .find(|x| x.borrow().name == decl.borrow().name)
                     {
                         state.errors.extend(
-                            TfErrBuilder::default()
+                            TlErrBuilder::new()
                                 .message("Duplicate declaration in function arguments")
                                 .context("First declared here", found.borrow().loc)
                                 .span(decl.borrow().loc)
-                                .build_errs(),
+                                .build(),
                         );
                     }
 
@@ -1431,12 +1354,10 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 
                 if import_stmt.reexport {
                     if !scope.is_global_scope {
-                        state.errors.extend(
-                            TfErrBuilder::default()
-                                .message("Re-exporting imports is only allowed in the global scope")
-                                .span(span)
-                                .build_errs(),
-                        );
+                        state.errors.extend(simple_err(
+                            "Re-exporting imports is only allowed in the global scope",
+                            span,
+                        ));
                     }
                 }
 

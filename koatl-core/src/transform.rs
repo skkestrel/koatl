@@ -5,72 +5,12 @@ use std::{
 };
 
 use crate::{
-    linecol::LineColCache,
     py::{ast::*, util::PyAstBuilder},
-    resolve_names::{
-        Declaration, DeclarationRef, FnInfo, PatternInfo, RcKey, RefHash, ResolveState, Scope,
-    },
+    resolve_names::{Declaration, DeclarationRef, FnInfo, PatternInfo, ResolveState},
+    util::{LineColCache, RcKey, RefHash, TlErrBuilder, TlErrs, TlResult},
 };
 use once_cell::sync::Lazy;
 use parser::ast::*;
-
-#[derive(Debug)]
-pub struct TfErr {
-    pub message: String,
-    pub span: Option<Span>,
-    pub contexts: Vec<(String, Span)>,
-}
-
-#[derive(Debug)]
-pub struct TfErrs(pub Vec<TfErr>);
-
-impl TfErrs {
-    pub fn new() -> Self {
-        TfErrs(vec![])
-    }
-
-    pub fn extend(&mut self, other: TfErrs) {
-        self.0.extend(other.0);
-    }
-}
-
-#[derive(Default)]
-pub struct TfErrBuilder {
-    message: String,
-    span: Option<Span>,
-    contexts: Vec<(String, Span)>,
-}
-
-impl TfErrBuilder {
-    pub fn span(mut self, span: Span) -> Self {
-        self.span = Some(span);
-        self
-    }
-
-    pub fn message<S: Into<String>>(mut self, message: S) -> Self {
-        self.message = message.into();
-        self
-    }
-
-    pub fn build(self) -> TfErr {
-        TfErr {
-            message: self.message,
-            span: self.span,
-            contexts: self.contexts,
-        }
-    }
-
-    pub fn context(mut self, message: impl Into<String>, span: Span) -> Self {
-        self.contexts.push((message.into(), span));
-        self
-    }
-
-    pub fn build_errs(self) -> TfErrs {
-        TfErrs(vec![self.build()])
-    }
-}
-
-pub type TfResult<T> = Result<T, TfErrs>;
 
 static PY_KWS: &[&str] = &[
     "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else", "except",
@@ -105,7 +45,7 @@ struct PyDecl<'src> {
 }
 
 #[allow(dead_code)]
-struct TfCtx<'src, 'ast> {
+struct TlCtx<'src, 'ast> {
     source: &'src str,
     export_stars: Vec<PyIdent<'src>>,
     line_cache: LineColCache,
@@ -118,9 +58,9 @@ struct TfCtx<'src, 'ast> {
     resolutions: &'ast HashMap<RefHash, DeclarationRef<'src>>,
 }
 
-impl<'src, 'ast> TfCtx<'src, 'ast> {
-    fn new(source: &'src str, resolve_state: &'ast ResolveState<'src>) -> TfResult<Self> {
-        Ok(TfCtx {
+impl<'src, 'ast> TlCtx<'src, 'ast> {
+    fn new(source: &'src str, resolve_state: &'ast ResolveState<'src>) -> TlResult<Self> {
+        Ok(TlCtx {
             source,
             export_stars: Vec::new(),
             line_cache: LineColCache::new(source),
@@ -143,7 +83,7 @@ impl<'src, 'ast> TfCtx<'src, 'ast> {
         format!("_{}_l{}c{}", typ, line, col).into()
     }
 
-    fn fn_info(&self, expr: &SExpr<'src>) -> TfResult<&'ast FnInfo<'src>> {
+    fn fn_info(&self, expr: &SExpr<'src>) -> TlResult<&'ast FnInfo<'src>> {
         let Expr::Fn(..) = &expr.value else {
             return Err(simple_err("Internal: expected an Expr::Fn", expr.span));
         };
@@ -153,13 +93,13 @@ impl<'src, 'ast> TfCtx<'src, 'ast> {
             .ok_or_else(|| simple_err("Internal: Unresolved function", expr.span))
     }
 
-    fn pattern_info(&self, pattern: &SPattern<'src>) -> TfResult<&'ast PatternInfo<'src>> {
+    fn pattern_info(&self, pattern: &SPattern<'src>) -> TlResult<&'ast PatternInfo<'src>> {
         self.patterns
             .get(&pattern.into())
             .ok_or_else(|| simple_err("Internal: Unresolved pattern", pattern.span))
     }
 
-    fn decl_py_ident(&mut self, decl: &DeclarationRef<'src>) -> TfResult<PyIdent<'src>> {
+    fn decl_py_ident(&mut self, decl: &DeclarationRef<'src>) -> TlResult<PyIdent<'src>> {
         let ident = &decl.borrow().name;
         let decl_borrowed = decl.borrow();
         let scope = decl_borrowed.scope.borrow();
@@ -183,7 +123,7 @@ impl<'src, 'ast> TfCtx<'src, 'ast> {
         Ok(entry.ident.clone())
     }
 
-    fn py_ident(&mut self, expr: &SExpr<'src>) -> TfResult<PyIdent<'src>> {
+    fn py_ident(&mut self, expr: &SExpr<'src>) -> TlResult<PyIdent<'src>> {
         let Expr::Ident(_) = &expr.value else {
             return Err(simple_err("Internal: expected an Expr::Ident", expr.span));
         };
@@ -219,11 +159,11 @@ type SPyExprWithPre<'src> = WithPre<'src, SPyExpr<'src>>;
 type PyBlockExprWithPre<'src> = WithPre<'src, PyBlockExpr<'src>>;
 
 trait SPyExprWithPreExt<'src> {
-    fn drop_expr<'ast>(self, ctx: &mut TfCtx<'src, 'ast>) -> PyBlock<'src>;
+    fn drop_expr<'ast>(self, ctx: &mut TlCtx<'src, 'ast>) -> PyBlock<'src>;
 }
 
 impl<'src> SPyExprWithPreExt<'src> for SPyExprWithPre<'src> {
-    fn drop_expr<'ast>(self, _ctx: &mut TfCtx<'src, 'ast>) -> PyBlock<'src> {
+    fn drop_expr<'ast>(self, _ctx: &mut TlCtx<'src, 'ast>) -> PyBlock<'src> {
         let mut block = self.pre;
 
         match self.value.value {
@@ -239,7 +179,7 @@ impl<'src> SPyExprWithPreExt<'src> for SPyExprWithPre<'src> {
 }
 
 impl<'src> SPyExprWithPreExt<'src> for PyBlockExprWithPre<'src> {
-    fn drop_expr<'ast>(self, ctx: &mut TfCtx<'src, 'ast>) -> PyBlock<'src> {
+    fn drop_expr<'ast>(self, ctx: &mut TlCtx<'src, 'ast>) -> PyBlock<'src> {
         if let PyBlockExpr::Expr(expr) = self.value {
             SPyExprWithPre {
                 pre: self.pre,
@@ -255,15 +195,15 @@ impl<'src> SPyExprWithPreExt<'src> for PyBlockExprWithPre<'src> {
 trait BlockExt<'src> {
     fn transform<'ast>(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'ast>,
-    ) -> TfResult<PyBlockExprWithPre<'src>>;
+        ctx: &mut TlCtx<'src, 'ast>,
+    ) -> TlResult<PyBlockExprWithPre<'src>>;
 }
 
 impl<'src> BlockExt<'src> for [Indirect<SStmt<'src>>] {
     fn transform<'ast>(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'ast>,
-    ) -> TfResult<PyBlockExprWithPre<'src>> {
+        ctx: &mut TlCtx<'src, 'ast>,
+    ) -> TlResult<PyBlockExprWithPre<'src>> {
         if self.is_empty() {
             return Ok(WithPre {
                 pre: PyBlock::new(),
@@ -318,17 +258,17 @@ impl<'src> BlockExt<'src> for [Indirect<SStmt<'src>>] {
         if ok {
             Ok(WithPre { pre, value })
         } else {
-            Err(TfErrs(errs))
+            Err(TlErrs(errs))
         }
     }
 }
 
 fn destructure_list<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     target: &'ast SExpr<'src>,
     items: &'ast [SListItem<'src>],
     modifier: Option<DeclType>,
-) -> TfResult<DestructureBindings<'src>> {
+) -> TlResult<DestructureBindings<'src>> {
     let cursor_var = ctx.create_aux_var("des_curs", target.span.start);
 
     // a, b, *c = cursor_var
@@ -348,10 +288,10 @@ fn destructure_list<'src, 'ast>(
             }
             ListItem::Spread(expr) => {
                 if seen_spread {
-                    return Err(TfErrBuilder::default()
-                        .message("Destructuring assignment with multiple spreads is not allowed")
-                        .span(target.span)
-                        .build_errs());
+                    return Err(simple_err(
+                        "Destructuring assignment with multiple spreads is not allowed",
+                        target.span,
+                    ));
                 }
                 seen_spread = true;
 
@@ -377,11 +317,11 @@ fn destructure_list<'src, 'ast>(
 }
 
 fn destructure_tuple<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     target: &'ast SExpr<'src>,
     items: &'ast [SListItem<'src>],
     modifier: Option<DeclType>,
-) -> TfResult<DestructureBindings<'src>> {
+) -> TlResult<DestructureBindings<'src>> {
     let cursor_var = ctx.create_aux_var("des_curs", target.span.start);
     let tuple_var = ctx.create_aux_var("des_tuple", target.span.start);
     let len_var = ctx.create_aux_var("des_len", target.span.start);
@@ -444,10 +384,10 @@ fn destructure_tuple<'src, 'ast>(
             }
             ListItem::Spread(expr) => {
                 if seen_spread {
-                    return Err(TfErrBuilder::default()
-                        .message("Destructuring assignment with multiple spreads is not allowed")
-                        .span(target.span)
-                        .build_errs());
+                    return Err(simple_err(
+                        "Destructuring assignment with multiple spreads is not allowed",
+                        target.span,
+                    ));
                 }
                 seen_spread = true;
 
@@ -484,11 +424,11 @@ fn destructure_tuple<'src, 'ast>(
 }
 
 fn destructure_mapping<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     target: &'ast SExpr<'src>,
     items: &'ast [SMappingItem<'src>],
     modifier: Option<DeclType>,
-) -> TfResult<DestructureBindings<'src>> {
+) -> TlResult<DestructureBindings<'src>> {
     let cursor_var = ctx.create_aux_var("des_curs", target.span.start);
     let dict_var = ctx.create_aux_var("des_dict", target.span.start);
 
@@ -515,10 +455,7 @@ fn destructure_mapping<'src, 'ast>(
                 let lhs = post_stmts.bind(ident.transform_store(ctx)?);
 
                 let Expr::Ident(ident) = &ident.value else {
-                    return Err(TfErrBuilder::default()
-                        .message("Internal error: Expected ident")
-                        .span(ident.span)
-                        .build_errs());
+                    return Err(simple_err("Internal error: Expected ident", ident.span));
                 };
 
                 stmts.push(a.assign(
@@ -545,10 +482,10 @@ fn destructure_mapping<'src, 'ast>(
             }
             MappingItem::Spread(expr) => {
                 if spread_var.is_some() {
-                    return Err(TfErrBuilder::default()
-                        .message("Destructuring assignment with multiple spreads is not allowed")
-                        .span(target.span)
-                        .build_errs());
+                    return Err(simple_err(
+                        "Destructuring assignment with multiple spreads is not allowed",
+                        target.span,
+                    ));
                 }
 
                 spread_var = Some(expr);
@@ -579,10 +516,10 @@ struct DestructureBindings<'a> {
 }
 
 fn destructure<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     target: &'ast SExpr<'src>,
     modifier: Option<DeclType>,
-) -> TfResult<DestructureBindings<'src>> {
+) -> TlResult<DestructureBindings<'src>> {
     let mut post = PyBlock::new();
 
     let assign_to: SPyExpr<'src>;
@@ -593,19 +530,19 @@ fn destructure<'src, 'ast>(
                 Expr::Ident(..) => target.transform_store(ctx)?,
                 Expr::RawAttribute(..) | Expr::Subscript(..) => {
                     if modifier.is_some() {
-                        return Err(TfErrBuilder::default()
-                            .message("Only identifiers allowed in this destructuring")
-                            .span(target.span)
-                            .build_errs());
+                        return Err(simple_err(
+                            "Only identifiers allowed in this destructuring",
+                            target.span,
+                        ));
                     }
                     target.transform_store(ctx)?
                 }
                 Expr::Attribute(lhs, ext) => {
                     if modifier.is_some() {
-                        return Err(TfErrBuilder::default()
-                            .message("Only identifiers allowed in this destructuring")
-                            .span(target.span)
-                            .build_errs());
+                        return Err(simple_err(
+                            "Only identifiers allowed in this destructuring",
+                            target.span,
+                        ));
                     }
 
                     // we need to replace an extension with a regular attribute
@@ -654,30 +591,24 @@ fn destructure<'src, 'ast>(
             assign_to = bindings.assign_to;
         }
         _ => {
-            return Err(TfErrBuilder::default()
-                .message("Assignment target is not allowed")
-                .span(target.span)
-                .build_errs());
+            return Err(simple_err("Assignment target is not allowed", target.span));
         }
     };
 
     Ok(DestructureBindings { post, assign_to })
 }
 
-fn simple_err(msg: impl Into<String>, span: Span) -> TfErrs {
-    TfErrBuilder::default()
-        .message(msg.into())
-        .span(span)
-        .build_errs()
+fn simple_err(msg: impl Into<String>, span: Span) -> TlErrs {
+    TlErrBuilder::new().message(msg.into()).span(span).build()
 }
 
 fn transform_assignment<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     lhs: &'ast SExpr<'src>,
     rhs: &'ast SExpr<'src>,
     modifier: Option<DeclType>,
     span: &Span,
-) -> TfResult<PyBlock<'src>> {
+) -> TlResult<PyBlock<'src>> {
     let mut stmts = PyBlock::new();
     let a = PyAstBuilder::new(*span);
 
@@ -718,7 +649,7 @@ fn transform_assignment<'src, 'ast>(
 
         let lhs_ident = ctx.py_ident(lhs)?;
 
-        let py_decorators = || {
+        let py_decorators = || -> TlResult<_> {
             Ok(PyDecorators(
                 decorators
                     .into_iter()
@@ -727,7 +658,7 @@ fn transform_assignment<'src, 'ast>(
                         stmts.extend(t.pre);
                         Ok(t.value)
                     })
-                    .collect::<TfResult<_>>()?,
+                    .collect::<TlResult<_>>()?,
             ))
         };
 
@@ -765,14 +696,14 @@ fn transform_assignment<'src, 'ast>(
 }
 
 fn transform_if_matches_not_never_expr<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     subject: &'ast SExpr<'src>,
     pattern_neg: &'ast SPattern<'src>,
     pattern_meta: &'ast PatternInfo<'src>,
     then_block: &'ast SExpr<'src>,
     else_block: Option<&'ast SExpr<'src>>,
     span: &Span,
-) -> TfResult<SPyExprWithPre<'src>> {
+) -> TlResult<SPyExprWithPre<'src>> {
     let mut pre = PyBlock::new();
     let subject = pre.bind(subject.transform(ctx)?);
 
@@ -782,13 +713,10 @@ fn transform_if_matches_not_never_expr<'src, 'ast>(
     let span = then_block.span;
 
     let err = || {
-        TfErrBuilder::default()
-            .message(concat!(
-                "then block of 'if ... matches not ...' with named captures ",
-                "must have type Never (raise, return, continue, break)"
-            ))
-            .span(span)
-            .build_errs()
+        simple_err(
+            "Internal: then block of 'if ... matches not ...' with named captures must have type Never (raise, return, continue, break)",
+            span,
+        )
     };
 
     let Expr::Block(then_block) = &then_block.value else {
@@ -836,12 +764,12 @@ fn transform_if_matches_not_never_expr<'src, 'ast>(
 }
 
 fn transform_if_expr<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     cond: &'ast SExpr<'src>,
     then_block: &'ast SExpr<'src>,
     else_block: Option<&'ast SExpr<'src>>,
     span: &Span,
-) -> TfResult<SPyExprWithPre<'src>> {
+) -> TlResult<SPyExprWithPre<'src>> {
     if let Expr::Unary(UnaryOp::Not, expr) = &cond.value {
         if let Expr::Matches(expr, pattern) = &expr.value {
             let info = ctx.pattern_info(pattern)?;
@@ -886,17 +814,17 @@ fn transform_if_expr<'src, 'ast>(
 trait SPatternExt<'src, 'ast> {
     fn transform(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'ast>,
+        ctx: &mut TlCtx<'src, 'ast>,
         info: &PatternInfo<'src>,
-    ) -> TfResult<WithPre<'src, SPyPattern<'src>>>;
+    ) -> TlResult<WithPre<'src, SPyPattern<'src>>>;
 }
 
 impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
     fn transform(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'ast>,
+        ctx: &mut TlCtx<'src, 'ast>,
         info: &PatternInfo<'src>,
-    ) -> TfResult<WithPre<'src, SPyPattern<'src>>> {
+    ) -> TlResult<WithPre<'src, SPyPattern<'src>>> {
         // TODO avoid python syntaxerror by verifying that all branches in Or bind the same name
         // also check for no patterns after default pattern
 
@@ -906,10 +834,10 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
         let span = self.span;
 
         fn capture_slot<'src, 'ast>(
-            ctx: &mut TfCtx<'src, 'ast>,
+            ctx: &mut TlCtx<'src, 'ast>,
             ident: &SIdent<'src>,
             info: &PatternInfo<'src>,
-        ) -> TfResult<Option<PyIdent<'src>>> {
+        ) -> TlResult<Option<PyIdent<'src>>> {
             if ident.value.0 == "_" {
                 Ok(None)
             } else {
@@ -924,10 +852,10 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
         }
 
         fn maybe_capture_slot<'src, 'ast>(
-            ctx: &mut TfCtx<'src, 'ast>,
+            ctx: &mut TlCtx<'src, 'ast>,
             ident: &Option<SIdent<'src>>,
             info: &PatternInfo<'src>,
-        ) -> TfResult<Option<PyIdent<'src>>> {
+        ) -> TlResult<Option<PyIdent<'src>>> {
             if let Some(ident) = ident {
                 capture_slot(ctx, ident, info)
             } else {
@@ -970,7 +898,7 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
                 let items_nodes = items
                     .iter()
                     .map(|x| Ok(pre.bind(x.transform(ctx, info)?)))
-                    .collect::<TfResult<Vec<_>>>()?;
+                    .collect::<TlResult<Vec<_>>>()?;
                 PyPattern::Or(items_nodes)
             }
             Pattern::Sequence(items) => {
@@ -984,10 +912,10 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
                         }
                         PatternSequenceItem::Spread(item) => {
                             if seen_spread {
-                                return Err(TfErrBuilder::default()
-                                            .message("Destructuring assignment with multiple spreads is not allowed")
-                                            .span(span)
-                                            .build_errs());
+                                return Err(simple_err(
+                                    "Destructuring assignment with multiple spreads is not allowed",
+                                    span,
+                                ));
                             }
                             seen_spread = true;
                             PyPatternSequenceItem::Spread(maybe_capture_slot(ctx, item, info)?)
@@ -1006,10 +934,7 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
                     match item {
                         PatternMappingItem::Ident(ident) => {
                             if ident.value.0 == "_" {
-                                return Err(TfErrBuilder::default()
-                                    .message("Record matching '_' is not allowed")
-                                    .span(span)
-                                    .build_errs());
+                                return Err(simple_err("Record matching '_' is not allowed", span));
                             }
 
                             kvps.push((
@@ -1029,10 +954,10 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
                         }
                         PatternMappingItem::Spread(value) => {
                             if spread.is_some() {
-                                return Err(TfErrBuilder::default()
-                                        .message("Destructuring assignment with multiple spreads is not allowed")
-                                        .span(span)
-                                        .build_errs());
+                                return Err(simple_err(
+                                    "Destructuring assignment with multiple spreads is not allowed",
+                                    span,
+                                ));
                             }
 
                             spread = maybe_capture_slot(ctx, value, info)?;
@@ -1050,10 +975,10 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
                     match item {
                         PatternClassItem::Item(value) => {
                             if !kvps.is_empty() {
-                                return Err(TfErrBuilder::default()
-                                    .message("Keyword patterns must come after positional patterns")
-                                    .span(span)
-                                    .build_errs());
+                                return Err(simple_err(
+                                    "Keyword patterns must come after positional patterns",
+                                    span,
+                                ));
                             }
                             values.push(pre.bind(value.transform(ctx, info)?));
                         }
@@ -1080,10 +1005,10 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
  * Creates a matcher that throws an error if the pattern does not match.
  */
 fn create_throwing_matcher<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     pattern: &'ast SPattern<'src>,
     pattern_meta: &'ast PatternInfo<'src>,
-) -> TfResult<(PyBlock<'src>, PyIdent<'src>)> {
+) -> TlResult<(PyBlock<'src>, PyIdent<'src>)> {
     if let Pattern::Capture(Some(_)) = &pattern.value {
         if pattern_meta.decls.len() != 1 {
             return Err(simple_err(
@@ -1129,13 +1054,13 @@ fn create_throwing_matcher<'src, 'ast>(
  * Creates a basic match expression that either matches or doesn't.
  */
 fn create_binary_matcher<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     subject: SPyExpr<'src>,
     pattern: &'ast SPattern<'src>,
     pattern_meta: &'ast PatternInfo<'src>,
     on_success: PyBlock<'src>,
     on_fail: PyBlock<'src>,
-) -> TfResult<PyBlock<'src>> {
+) -> TlResult<PyBlock<'src>> {
     let mut post = PyBlock::new();
     let a = PyAstBuilder::new(pattern.span);
     let pattern_node = pattern.transform(ctx, pattern_meta)?;
@@ -1167,12 +1092,12 @@ enum MatchSubject<'src, 'ast> {
 }
 
 fn transform_match_expr<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     subject: MatchSubject<'src, 'ast>,
     cases: &'ast [SMatchCase<'src>],
     fill_default_case: bool,
     span: &Span,
-) -> TfResult<(SPyExprWithPre<'src>, bool)> {
+) -> TlResult<(SPyExprWithPre<'src>, bool)> {
     let mut pre = PyBlock::new();
     let subject = match subject {
         MatchSubject::Tl(subject) => pre.bind(subject.transform(ctx)?),
@@ -1198,10 +1123,10 @@ fn transform_match_expr<'src, 'ast>(
 
     for case in cases {
         if has_default_case {
-            return Err(TfErrBuilder::default()
-                .message("Previous default case makes remaining cases unreachable")
-                .span(case.body.span)
-                .build_errs());
+            return Err(simple_err(
+                "Previous default case makes remaining cases unreachable",
+                case.body.span,
+            ));
         }
 
         let (pattern, default) = if let Some(pattern) = &case.pattern {
@@ -1257,13 +1182,13 @@ fn transform_match_expr<'src, 'ast>(
 }
 
 fn make_class_def<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     name: Cow<'src, str>,
     bases: &'ast [SCallItem<'src>],
     body: &'ast SExpr<'src>,
     decorators: PyDecorators<'src>,
     span: &Span,
-) -> TfResult<PyBlock<'src>> {
+) -> TlResult<PyBlock<'src>> {
     let mut stmts = PyBlock::new();
     let mut py_bases: Vec<PyCallItem<'src>> = vec![];
 
@@ -1280,10 +1205,10 @@ fn make_class_def<'src, 'ast>(
                 PyCallItem::Kwarg(name.value.escape(), expr_node.value)
             }
             _ => {
-                return Err(TfErrBuilder::default()
-                    .message("spread args are not allowed in class bases")
-                    .span(*span)
-                    .build_errs());
+                return Err(simple_err(
+                    "spread args are not allowed in class bases",
+                    *span,
+                ));
             }
         };
 
@@ -1319,10 +1244,10 @@ struct PyArgList<'src> {
 }
 
 fn make_arglist<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     args: &'ast [SArgDefItem<'src>],
     info: &FnInfo<'src>,
-) -> TfResult<PyArgList<'src>> {
+) -> TlResult<PyArgList<'src>> {
     let mut pre = PyBlock::new();
     let mut post = PyBlock::new();
 
@@ -1390,10 +1315,10 @@ enum FnDef<'src, 'ast> {
  * This function uses lifted_decls to store future declarations to make recursion work.
  */
 fn prepare_py_fn<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     def: FnDef<'src, 'ast>,
     span: &Span,
-) -> TfResult<WithPre<'src, PartialPyFnDef<'src>>> {
+) -> TlResult<WithPre<'src, PartialPyFnDef<'src>>> {
     let mut pre = PyBlock::new();
     let mut py_body = PyBlock::new();
     let mut decorators = PyDecorators(vec![]);
@@ -1475,10 +1400,10 @@ fn prepare_py_fn<'src, 'ast>(
 }
 
 fn make_fn_exp<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     def: FnDef<'src, 'ast>,
     span: &Span,
-) -> TfResult<SPyExprWithPre<'src>> {
+) -> TlResult<SPyExprWithPre<'src>> {
     let mut pre = PyBlock::new();
     let PartialPyFnDef {
         body,
@@ -1493,10 +1418,10 @@ fn make_fn_exp<'src, 'ast>(
 
         if let PyStmt::Return(_) = &body.0[0].value {
             let PyStmt::Return(expr) = body.0.into_iter().next().unwrap().value else {
-                return Err(TfErrBuilder::default()
-                    .message("Internal error: Expected a single return statement in function body")
-                    .span(*span)
-                    .build_errs());
+                return Err(simple_err(
+                    "Internal error: Expected a single return statement in function body",
+                    *span,
+                ));
             };
 
             let mut inner = a.lambda(args, expr);
@@ -1531,12 +1456,12 @@ fn make_fn_exp<'src, 'ast>(
 }
 
 fn make_fn_def<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     name: Cow<'src, str>,
     def: FnDef<'src, 'ast>,
     mut decorators: PyDecorators<'src>,
     span: &Span,
-) -> TfResult<PyBlock<'src>> {
+) -> TlResult<PyBlock<'src>> {
     let mut pre = PyBlock::new();
     let PartialPyFnDef {
         body,
@@ -1565,10 +1490,10 @@ fn make_fn_def<'src, 'ast>(
 }
 
 fn transform_call_items<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     args: &'ast [SCallItem<'src>],
     span: &Span,
-) -> TfResult<WithPre<'src, Vec<PyCallItem<'src>>>> {
+) -> TlResult<WithPre<'src, Vec<PyCallItem<'src>>>> {
     let mut started_kwargs = false;
     let mut call_items = vec![];
 
@@ -1578,10 +1503,7 @@ fn transform_call_items<'src, 'ast>(
         match &arg {
             CallItem::Arg(expr) => {
                 if started_kwargs {
-                    return Err(TfErrBuilder::default()
-                        .message("Cannot have args after kwargs")
-                        .span(*span)
-                        .build_errs());
+                    return Err(simple_err("Cannot have args after kwargs", *span));
                 }
 
                 let e = pre.bind(expr.transform(ctx)?);
@@ -1594,10 +1516,7 @@ fn transform_call_items<'src, 'ast>(
             }
             CallItem::ArgSpread(expr) => {
                 if started_kwargs {
-                    return Err(TfErrBuilder::default()
-                        .message("Cannot have arg spread after kwargs")
-                        .span(*span)
-                        .build_errs());
+                    return Err(simple_err("Cannot have arg spread after kwargs", *span));
                 }
 
                 let e = pre.bind(expr.transform(ctx)?);
@@ -1618,10 +1537,10 @@ fn transform_call_items<'src, 'ast>(
 }
 
 fn transform_subscript_items<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     indices: &'ast [SListItem<'src>],
     span: &Span,
-) -> TfResult<WithPre<'src, SPyExpr<'src>>> {
+) -> TlResult<WithPre<'src, SPyExpr<'src>>> {
     let mut pre = PyBlock::new();
 
     let single_item = if indices.len() == 1 {
@@ -1648,7 +1567,7 @@ fn transform_subscript_items<'src, 'ast>(
                             Ok(PyListItem::Spread(pre.bind(expr.transform(ctx)?)))
                         }
                     })
-                    .collect::<TfResult<Vec<_>>>()?,
+                    .collect::<TlResult<Vec<_>>>()?,
                 PyAccessCtx::Load,
             ),
             *span,
@@ -1663,10 +1582,10 @@ fn transform_subscript_items<'src, 'ast>(
 }
 
 fn transform_postfix_expr<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     expr: &'ast SExpr<'src>,
     access_ctx: PyAccessCtx,
-) -> TfResult<SPyExprWithPre<'src>> {
+) -> TlResult<SPyExprWithPre<'src>> {
     let (lift_lhs, lhs_node) = match &expr.value {
         Expr::RawAttribute(obj, _) => (false, obj),
         Expr::Subscript(obj, _) => (false, obj),
@@ -1679,20 +1598,20 @@ fn transform_postfix_expr<'src, 'ast>(
         Expr::MappedScopedAttribute(obj, _) => (true, obj),
         Expr::MappedAttribute(obj, _) => (true, obj),
         _ => {
-            return Err(TfErrBuilder::default()
-                .message("Internal error: Postfix expressions can only be attributes, subscripts, calls, or extensions")
-                .span(expr.span)
-                .build_errs());
+            return Err(simple_err(
+                "Internal error: Postfix expressions can only be attributes, subscripts, calls, or extensions",
+                expr.span,
+            ));
         }
     };
 
     if let Expr::Attribute(..) | Expr::RawAttribute(..) = &expr.value {
     } else {
         if access_ctx != PyAccessCtx::Load {
-            return Err(TfErrBuilder::default()
-                .message("Internal error: Cannot use null-coalescing in a non-Load context")
-                .span(expr.span)
-                .build_errs());
+            return Err(simple_err(
+                "Internal error: Cannot use null-coalescing in a non-Load context",
+                expr.span,
+            ));
         }
     }
 
@@ -1760,10 +1679,10 @@ fn transform_postfix_expr<'src, 'ast>(
             ],
         )),
         _ => {
-            return Err(TfErrBuilder::default()
-                .message("Internal error: Postfix expressions can only be attributes, subscripts, calls, or extensions")
-                .span(expr.span)
-                .build_errs());
+            return Err(simple_err(
+                "Internal error: Postfix expressions can only be attributes, subscripts, calls, or extensions",
+                expr.span,
+            ));
         }
     };
 
@@ -1771,11 +1690,11 @@ fn transform_postfix_expr<'src, 'ast>(
 }
 
 fn matching_except_handler<'src, 'ast>(
-    ctx: &mut TfCtx<'src, 'ast>,
+    ctx: &mut TlCtx<'src, 'ast>,
     var_name: PyIdent<'src>,
     handlers: &'ast [SMatchCase<'src>],
     span: &Span,
-) -> TfResult<PyExceptHandler<'src>> {
+) -> TlResult<PyExceptHandler<'src>> {
     let a = PyAstBuilder::new(*span);
     let mut block = PyBlock::new();
 
@@ -1796,10 +1715,10 @@ fn matching_except_handler<'src, 'ast>(
             });
         }
     } else {
-        return Err(TfErrBuilder::default()
-            .message("Internal error: Expected a match statement")
-            .span(*span)
-            .build_errs());
+        return Err(simple_err(
+            "Internal error: Expected a match statement",
+            *span,
+        ));
     }
 
     block.extend(match_stmt.pre);
@@ -1814,15 +1733,15 @@ fn matching_except_handler<'src, 'ast>(
 trait ListItemsExt<'src> {
     fn transform<'ast>(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'ast>,
-    ) -> TfResult<WithPre<'src, Vec<PyListItem<'src>>>>;
+        ctx: &mut TlCtx<'src, 'ast>,
+    ) -> TlResult<WithPre<'src, Vec<PyListItem<'src>>>>;
 }
 
 impl<'src> ListItemsExt<'src> for Vec<SListItem<'src>> {
     fn transform<'ast>(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'ast>,
-    ) -> TfResult<WithPre<'src, Vec<PyListItem<'src>>>> {
+        ctx: &mut TlCtx<'src, 'ast>,
+    ) -> TlResult<WithPre<'src, Vec<PyListItem<'src>>>> {
         let mut pre = PyBlock::new();
         let mut items = vec![];
 
@@ -1843,11 +1762,11 @@ impl<'src> ListItemsExt<'src> for Vec<SListItem<'src>> {
 }
 
 trait LiteralExt<'src> {
-    fn transform<'ast>(&'ast self, ctx: &TfCtx<'src, 'ast>) -> TfResult<PyLiteral<'src>>;
+    fn transform<'ast>(&'ast self, ctx: &TlCtx<'src, 'ast>) -> TlResult<PyLiteral<'src>>;
 }
 
 impl<'src> LiteralExt<'src> for Literal<'src> {
-    fn transform<'ast>(&'ast self, _ctx: &TfCtx<'src, 'ast>) -> TfResult<PyLiteral<'src>> {
+    fn transform<'ast>(&'ast self, _ctx: &TlCtx<'src, 'ast>) -> TlResult<PyLiteral<'src>> {
         let value = match self {
             Literal::Num(num) => PyLiteral::Num(num.to_owned()),
             Literal::Str(s) => PyLiteral::Str(s.to_owned()),
@@ -1860,11 +1779,11 @@ impl<'src> LiteralExt<'src> for Literal<'src> {
 }
 
 trait SStmtExt<'src> {
-    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<PyBlock<'src>>;
+    fn transform<'ast>(&'ast self, ctx: &mut TlCtx<'src, 'ast>) -> TlResult<PyBlock<'src>>;
 }
 
 impl<'src> SStmtExt<'src> for SStmt<'src> {
-    fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<PyBlock<'src>> {
+    fn transform<'ast>(&'ast self, ctx: &mut TlCtx<'src, 'ast>) -> TlResult<PyBlock<'src>> {
         let mut pre = PyBlock::new();
         let stmt = &self.value;
         let span = self.span;
@@ -1942,14 +1861,14 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                     // if fn_ctx.is_async {
                     //     // TODO revisit this!
-                    //     return Err(TfErrBuilder::default()
+                    //     return Err(TlErrBuilder::default()
                     //         .message("Await is not allowed in this complex loop condition")
                     //         .span(span)
                     //         .build_errs());
                     // }
 
                     // if fn_ctx.is_do {
-                    //     return Err(TfErrBuilder::default()
+                    //     return Err(TlErrBuilder::default()
                     //         .message("Binding is not allowed in this complex loop condition")
                     //         .span(span)
                     //         .build_errs());
@@ -2024,10 +1943,10 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 };
             }
             Stmt::Module => {
-                return Err(TfErrBuilder::default()
-                    .message("Module statements are not allowed in the transform phase".to_owned())
-                    .span(span)
-                    .build_errs());
+                return Err(simple_err(
+                    "Module statements are not allowed in the transform phase",
+                    span,
+                ));
             }
         };
 
@@ -2036,7 +1955,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 }
 
 trait SExprExt<'src, 'ast> {
-    fn transform(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<SPyExprWithPre<'src>>;
+    fn transform(&'ast self, ctx: &mut TlCtx<'src, 'ast>) -> TlResult<SPyExprWithPre<'src>>;
 
     /**
      * Transforms
@@ -2047,23 +1966,23 @@ trait SExprExt<'src, 'ast> {
      *
      * to avoid evaluating expr multiple times
      */
-    fn transform_lifted(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<SPyExprWithPre<'src>>;
+    fn transform_lifted(&'ast self, ctx: &mut TlCtx<'src, 'ast>) -> TlResult<SPyExprWithPre<'src>>;
 
-    fn transform_store(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<SPyExprWithPre<'src>>;
+    fn transform_store(&'ast self, ctx: &mut TlCtx<'src, 'ast>) -> TlResult<SPyExprWithPre<'src>>;
 
     fn transform_full(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'ast>,
+        ctx: &mut TlCtx<'src, 'ast>,
         py_ctx: PyAccessCtx,
-    ) -> TfResult<SPyExprWithPre<'src>>;
+    ) -> TlResult<SPyExprWithPre<'src>>;
 }
 
 impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
-    fn transform(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<SPyExprWithPre<'src>> {
+    fn transform(&'ast self, ctx: &mut TlCtx<'src, 'ast>) -> TlResult<SPyExprWithPre<'src>> {
         self.transform_full(ctx, PyAccessCtx::Load)
     }
 
-    fn transform_lifted(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<SPyExprWithPre<'src>> {
+    fn transform_lifted(&'ast self, ctx: &mut TlCtx<'src, 'ast>) -> TlResult<SPyExprWithPre<'src>> {
         let mut pre = PyBlock::new();
         let value = pre.bind(self.transform(ctx)?);
         let a = PyAstBuilder::new(self.span);
@@ -2082,15 +2001,15 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
         Ok(SPyExprWithPre { value: expr, pre })
     }
 
-    fn transform_store(&'ast self, ctx: &mut TfCtx<'src, 'ast>) -> TfResult<SPyExprWithPre<'src>> {
+    fn transform_store(&'ast self, ctx: &mut TlCtx<'src, 'ast>) -> TlResult<SPyExprWithPre<'src>> {
         self.transform_full(ctx, PyAccessCtx::Store)
     }
 
     fn transform_full(
         &'ast self,
-        ctx: &mut TfCtx<'src, 'ast>,
+        ctx: &mut TlCtx<'src, 'ast>,
         access_ctx: PyAccessCtx,
-    ) -> TfResult<SPyExprWithPre<'src>> {
+    ) -> TlResult<SPyExprWithPre<'src>> {
         let expr = &self.value;
         let span = self.span;
         let a = PyAstBuilder::new(span);
@@ -2101,10 +2020,10 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
             Expr::RawAttribute(..) | Expr::Subscript(..) | Expr::Ident(..) => {}
             _ => {
                 if access_ctx != PyAccessCtx::Load {
-                    return Err(TfErrBuilder::default()
-                        .message("Expression context must be Load for this expression")
-                        .span(span)
-                        .build_errs());
+                    return Err(simple_err(
+                        "Expression context must be Load for this expression",
+                        span,
+                    ));
                 }
             }
         }
@@ -2413,8 +2332,8 @@ pub fn transform_ast<'src, 'ast>(
     source: &'src str,
     block: &'ast SExpr<'src>,
     resolve_state: &'ast ResolveState<'src>,
-) -> TfResult<TransformOutput<'src>> {
-    let mut ctx = TfCtx::new(source, resolve_state)?;
+) -> TlResult<TransformOutput<'src>> {
+    let mut ctx = TlCtx::new(source, resolve_state)?;
 
     let mut py_block = PyBlock::new();
     let expr = py_block.bind(block.transform(&mut ctx)?);

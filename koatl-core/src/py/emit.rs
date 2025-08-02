@@ -5,7 +5,7 @@ use parser::{
     lexer::{escape_fstr, escape_str},
 };
 
-use crate::{py::ast::*, transform::TfResult};
+use crate::{py::ast::*, util::TlResult};
 
 const LOW_PREC: f32 = -100.0;
 const HIGH_PREC: f32 = 100.0;
@@ -88,7 +88,7 @@ impl PyImportAlias<'_> {
 }
 
 impl PyCallItem<'_> {
-    fn emit_to(&mut self, ctx: &mut EmitCtx) -> TfResult<()> {
+    fn emit_to(&mut self, ctx: &mut EmitCtx) -> TlResult<()> {
         match self {
             PyCallItem::Arg(expr) => {
                 expr.emit_to(ctx, LOW_PREC)?;
@@ -113,7 +113,7 @@ impl PyCallItem<'_> {
 }
 
 impl PyArgDefItem<'_> {
-    fn emit_to(&mut self, ctx: &mut EmitCtx) -> TfResult<()> {
+    fn emit_to(&mut self, ctx: &mut EmitCtx) -> TlResult<()> {
         match self {
             PyArgDefItem::Arg(name, default) => {
                 if let Some(default) = default {
@@ -155,7 +155,7 @@ impl PyUnaryOp {
 }
 
 impl SPyPattern<'_> {
-    pub fn emit_to(&mut self, ctx: &mut EmitCtx) -> TfResult<()> {
+    pub fn emit_to(&mut self, ctx: &mut EmitCtx) -> TlResult<()> {
         let span_start = ctx.source.len();
 
         match &mut self.value {
@@ -290,7 +290,7 @@ impl PyBinaryOp {
 }
 
 impl PyLiteral<'_> {
-    pub fn emit_to(&mut self, ctx: &mut EmitCtx, prec: f32) -> TfResult<()> {
+    pub fn emit_to(&mut self, ctx: &mut EmitCtx, prec: f32) -> TlResult<()> {
         match self {
             PyLiteral::Num(num) => {
                 if prec > 15. {
@@ -319,7 +319,7 @@ impl PyLiteral<'_> {
 }
 
 impl SPyExpr<'_> {
-    pub fn emit_to(&mut self, ctx: &mut EmitCtx, prec: f32) -> TfResult<()> {
+    pub fn emit_to(&mut self, ctx: &mut EmitCtx, prec: f32) -> TlResult<()> {
         self.emit_sided_to(ctx, prec, true)
     }
 
@@ -328,7 +328,7 @@ impl SPyExpr<'_> {
         ctx: &mut EmitCtx,
         parent_precendence: f32,
         lhs: bool,
-    ) -> TfResult<()> {
+    ) -> TlResult<()> {
         let mut require_paren = false;
         let span_start = ctx.source.len();
 
@@ -552,7 +552,7 @@ impl SPyExpr<'_> {
 }
 
 impl PyBlock<'_> {
-    pub fn emit_to(&mut self, ctx: &mut EmitCtx, delta_indentation: i32) -> TfResult<()> {
+    pub fn emit_to(&mut self, ctx: &mut EmitCtx, delta_indentation: i32) -> TlResult<()> {
         let old_indentation = ctx.indentation;
         ctx.indentation = (ctx.indentation as i32 + delta_indentation) as usize;
 
@@ -566,7 +566,7 @@ impl PyBlock<'_> {
 }
 
 impl SPyStmt<'_> {
-    pub fn emit_to(&mut self, ctx: &mut EmitCtx) -> TfResult<()> {
+    pub fn emit_to(&mut self, ctx: &mut EmitCtx) -> TlResult<()> {
         let start_span = ctx.source.len();
         ctx.record_source_map(self.tl_span);
 
