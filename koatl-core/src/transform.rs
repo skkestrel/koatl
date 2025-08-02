@@ -78,76 +78,6 @@ static PY_KWS_SET: Lazy<HashSet<String>> = Lazy::new(|| {
         .collect::<HashSet<_>>()
 });
 
-struct PlaceholderCtx {
-    activated: bool,
-    span: Span,
-}
-
-impl PlaceholderCtx {
-    fn new(span: Span) -> Self {
-        Self {
-            activated: false,
-            span,
-        }
-    }
-
-    fn var_name<'src>(&self, ctx: &TfCtx<'src>) -> Cow<'src, str> {
-        ctx.create_aux_var("ph", self.span.start).into()
-    }
-}
-
-struct FnCtx<'src> {
-    is_async: bool,
-    is_do: bool,
-
-    globals: HashSet<PyIdent<'src>>,
-    nonlocals: HashSet<PyIdent<'src>>,
-}
-
-impl FnCtx<'_> {
-    fn new() -> Self {
-        Self {
-            is_async: false,
-            is_do: false,
-            globals: HashSet::new(),
-            nonlocals: HashSet::new(),
-        }
-    }
-}
-
-trait FnCtxStackExt {
-    fn set_async(&mut self, allow_top_level_await: bool, span: &Span) -> TfResult<()>;
-    fn set_do(&mut self, span: &Span) -> TfResult<()>;
-}
-
-impl<'src> FnCtxStackExt for Vec<FnCtx<'src>> {
-    fn set_async(&mut self, allow_top_level_await: bool, span: &Span) -> TfResult<()> {
-        if let Some(fn_ctx) = self.last_mut() {
-            fn_ctx.is_async = true;
-        } else if !allow_top_level_await {
-            return Err(TfErrBuilder::default()
-                .message("Await is only allowed in a function context")
-                .span(*span)
-                .build_errs());
-        }
-
-        Ok(())
-    }
-
-    fn set_do(&mut self, span: &Span) -> TfResult<()> {
-        if let Some(fn_ctx) = self.last_mut() {
-            fn_ctx.is_do = true;
-        } else {
-            return Err(TfErrBuilder::default()
-                .message("Bind operator is only allowed in a function context")
-                .span(*span)
-                .build_errs());
-        }
-
-        Ok(())
-    }
-}
-
 trait IdentExt<'src> {
     fn escape(&self) -> PyIdent<'src>;
 }
@@ -272,118 +202,6 @@ enum PyDeclType {
     NonlocalCapture,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-struct Declaration<'src> {
-    ident: Ident<'src>,
-    py_ident: PyIdent<'src>,
-    loc: Span,
-    typ: PyDeclType,
-    const_: bool,
-    const_assigned: Option<Span>,
-}
-
-#[derive(Debug)]
-struct ScopeCtx<'src> {
-    locals: Vec<Declaration<'src>>,
-    is_class_scope: bool,
-    is_global_scope: bool,
-    is_py_fn_scope: bool,
-
-    /**
-     * This enables special treatment for defining
-     * recursive functions; lifted_decls are added to the
-     * containing scope when processing the function body.
-     */
-    lifted_decls: Vec<Declaration<'src>>,
-
-    /**
-     * this is a really messed up hack to handle Python's
-     * weird class scoping rules -
-     * method bodies TWO scopes lower
-     * are able to see the class definition
-     */
-    lifted_class_decls: Vec<Declaration<'src>>,
-}
-
-impl<'src> ScopeCtx<'src> {
-    fn new() -> Self {
-        Self {
-            locals: Vec::new(),
-            lifted_decls: Vec::new(),
-            lifted_class_decls: Vec::new(),
-            is_py_fn_scope: false,
-            is_class_scope: false,
-            is_global_scope: false,
-        }
-    }
-}
-
-#[derive(Debug)]
-#[allow(dead_code)]
-struct ScopeSearchResultMut<'slf, 'src> {
-    decl: &'slf mut Declaration<'src>,
-
-    local: bool,
-    py_local: bool,
-}
-
-#[derive(Debug)]
-struct ScopeSearchResult<'slf, 'src> {
-    decl: &'slf Declaration<'src>,
-}
-
-trait ScopeCtxStackExt<'src> {
-    fn find_decl<'slf>(&'slf self, ident: &SIdent<'src>) -> Option<ScopeSearchResult<'slf, 'src>>;
-    fn find_decl_mut<'slf>(
-        &'slf mut self,
-        ident: &SIdent<'src>,
-    ) -> Option<ScopeSearchResultMut<'slf, 'src>>;
-}
-
-impl<'src> ScopeCtxStackExt<'src> for Vec<ScopeCtx<'src>> {
-    fn find_decl<'slf>(&'slf self, ident: &SIdent<'src>) -> Option<ScopeSearchResult<'slf, 'src>> {
-        for scope in self.iter().rev() {
-            if let Some(decl) = scope.locals.iter().rev().find(|d| d.ident == ident.value) {
-                return Some(ScopeSearchResult { decl });
-            }
-        }
-
-        None
-    }
-
-    fn find_decl_mut<'slf>(
-        &'slf mut self,
-        ident: &SIdent<'src>,
-    ) -> Option<ScopeSearchResultMut<'slf, 'src>> {
-        let mut crossed_tl_scope = false;
-        let mut crossed_py_scope = false;
-
-        for scope in self.iter_mut().rev() {
-            if let Some(decl) = scope
-                .locals
-                .iter_mut()
-                .rev()
-                .find(|d| d.ident == ident.value)
-            {
-                return Some(ScopeSearchResultMut {
-                    decl,
-                    local: !crossed_tl_scope,
-                    py_local: !crossed_py_scope,
-                });
-            }
-
-            if scope.is_py_fn_scope {
-                crossed_py_scope = true;
-            }
-
-            crossed_tl_scope = true;
-        }
-
-        None
-    }
-}
-
 fn create_declaration<'src>(
     ctx: &mut TfCtx<'src>,
     ident: &SIdent<'src>,
@@ -494,56 +312,19 @@ fn create_declaration<'src>(
     }
 }
 
-fn declare_var<'src>(
-    ctx: &mut TfCtx<'src>,
-    ident: &SIdent<'src>,
-    modifier: DeclType,
-) -> TfResult<()> {
-    if let Some(decl) = create_declaration(ctx, ident, modifier)? {
-        ctx.scope_ctx_stack
-            .last_mut()
-            .ok_or_else(|| {
-                TfErrBuilder::default()
-                    .message("Internal error: expected a scope")
-                    .span(ident.span)
-                    .build_errs()
-            })?
-            .locals
-            .push(decl);
-    }
-
-    Ok(())
-}
-
 #[allow(dead_code)]
 struct TfCtx<'src> {
     source: &'src str,
-    exports: Vec<PyIdent<'src>>,
-    module_star_exports: Vec<PyIdent<'src>>,
-
-    allow_top_level_await: bool,
-
-    placeholder_ctx_stack: Vec<PlaceholderCtx>,
-    fn_ctx_stack: Vec<FnCtx<'src>>,
-    scope_ctx_stack: Vec<ScopeCtx<'src>>,
-    scope_id_counter: usize,
-
+    export_stars: Vec<PyIdent<'src>>,
     line_cache: LineColCache,
 }
 
 impl<'src> TfCtx<'src> {
     fn new(source: &'src str) -> TfResult<Self> {
         Ok(TfCtx {
-            allow_top_level_await: false,
             source,
+            export_stars: Vec::new(),
             line_cache: LineColCache::new(source),
-            exports: Vec::new(),
-            module_star_exports: Vec::new(),
-
-            scope_id_counter: 0,
-            placeholder_ctx_stack: Vec::new(),
-            fn_ctx_stack: Vec::new(),
-            scope_ctx_stack: Vec::new(),
         })
     }
 
@@ -2945,7 +2726,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                         });
 
                         if import_stmt.reexport {
-                            ctx.module_star_exports.push(full_module.into());
+                            ctx.export_stars.push(full_module.into());
                         }
                     }
                     ImportList::Leaves(imports) => {
@@ -3007,49 +2788,18 @@ trait SExprExt<'src> {
      */
     fn transform_lifted<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>>;
 
-    /**
-     * Transforms the expression, setting a placeholder guard so that
-     * expr($, ...) will transform into x => expr(x, ...)
-     */
-    fn transform_with_placeholder_guard<'ast>(
-        &'ast self,
-        ctx: &mut TfCtx<'src>,
-    ) -> TfResult<SPyExprWithPre<'src>>;
-
-    /**
-     * Transforms the expression, setting a placeholder guard one level deeper
-     * so that
-     * $ will transform into x => parent_expr(x)
-     * and
-     * expr will transform into transform_with_placeholder_guard(expr)
-     */
-    fn transform_with_deep_placeholder_guard<'ast>(
-        &'ast self,
-        ctx: &mut TfCtx<'src>,
-    ) -> TfResult<SPyExprWithPre<'src>>;
-
-    fn transform_with_access<'ast>(
-        &'ast self,
-        ctx: &mut TfCtx<'src>,
-        py_ctx: PyAccessCtx,
-    ) -> TfResult<SPyExprWithPre<'src>>;
-
-    fn transform_expecting_new_block_scope<'ast>(
-        &'ast self,
-        ctx: &mut TfCtx<'src>,
-    ) -> TfResult<SPyExprWithPre<'src>>;
+    fn transform_store<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>>;
 
     fn transform_full<'ast>(
         &'ast self,
         ctx: &mut TfCtx<'src>,
         py_ctx: PyAccessCtx,
-        create_new_block_scope: bool,
     ) -> TfResult<SPyExprWithPre<'src>>;
 }
 
 impl<'src> SExprExt<'src> for SExpr<'src> {
     fn transform<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>> {
-        self.transform_with_access(ctx, PyAccessCtx::Load)
+        self.transform_full(ctx, PyAccessCtx::Load)
     }
 
     fn transform_lifted<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>> {
@@ -3071,43 +2821,14 @@ impl<'src> SExprExt<'src> for SExpr<'src> {
         Ok(SPyExprWithPre { value: expr, pre })
     }
 
-    fn transform_with_placeholder_guard<'ast>(
-        &'ast self,
-        ctx: &mut TfCtx<'src>,
-    ) -> TfResult<SPyExprWithPre<'src>> {
-        placeholder_guard(ctx, &self.span, |ctx| self.transform(ctx))
-    }
-
-    fn transform_with_deep_placeholder_guard<'ast>(
-        &'ast self,
-        ctx: &mut TfCtx<'src>,
-    ) -> TfResult<SPyExprWithPre<'src>> {
-        match &self.value {
-            Expr::Placeholder => transform_placeholder(ctx, &self.span, PyAccessCtx::Load),
-            _ => self.transform_with_placeholder_guard(ctx),
-        }
-    }
-
-    fn transform_with_access<'ast>(
-        &'ast self,
-        ctx: &mut TfCtx<'src>,
-        py_ctx: PyAccessCtx,
-    ) -> TfResult<SPyExprWithPre<'src>> {
-        self.transform_full(ctx, py_ctx, true)
-    }
-
-    fn transform_expecting_new_block_scope<'ast>(
-        &'ast self,
-        ctx: &mut TfCtx<'src>,
-    ) -> TfResult<SPyExprWithPre<'src>> {
-        self.transform_full(ctx, PyAccessCtx::Load, false)
+    fn transform_store<'ast>(&'ast self, ctx: &mut TfCtx<'src>) -> TfResult<SPyExprWithPre<'src>> {
+        self.transform_full(ctx, PyAccessCtx::Store)
     }
 
     fn transform_full<'ast>(
         &'ast self,
         ctx: &mut TfCtx<'src>,
         access_ctx: PyAccessCtx,
-        create_new_block_scope: bool,
     ) -> TfResult<SPyExprWithPre<'src>> {
         let expr = &self.value;
         let span = self.span;
@@ -3450,26 +3171,18 @@ pub struct TransformOutput<'src> {
 pub fn transform_ast<'src, 'ast>(
     source: &'src str,
     block: &'ast SExpr<'src>,
-    allow_await: bool,
+    resolve_state: &ResolveState<'src>,
 ) -> TfResult<TransformOutput<'src>> {
     let mut ctx = TfCtx::new(source)?;
-    ctx.allow_top_level_await = allow_await;
 
     let mut py_block = PyBlock::new();
-    let mut scope = ScopeCtx::new();
-    scope.is_global_scope = true;
+    let block = py_block.bind(block.transform(&mut ctx)?);
 
-    let block = py_block.bind(scoped(&mut ctx, scope, |ctx| block.transform(ctx))?.0);
-
-    if !ctx.scope_ctx_stack.is_empty() {
-        return Err(TfErrBuilder::default()
-            .message("Internal error: Scope stack is not empty after transformation")
-            .build_errs());
-    }
+    let mut exports = Vec::new();
 
     Ok(TransformOutput {
         py_block,
         exports: ctx.exports,
-        module_star_exports: ctx.module_star_exports,
+        module_star_exports: ctx.export_stars,
     })
 }

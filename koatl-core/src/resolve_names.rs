@@ -3,6 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::ptr;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
+use crate::transform::TfErrs;
 use crate::{
     transform::{TfErrBuilder, TfResult},
     types::Type,
@@ -82,53 +83,6 @@ impl FnInfo<'_> {
     }
 }
 
-trait FnCtxStackExt {
-    fn set_async(&mut self, allow_top_level_await: bool, span: Span) -> TfResult<()>;
-    fn set_generator(&mut self, span: Span) -> TfResult<()>;
-    fn set_do(&mut self, span: Span) -> TfResult<()>;
-}
-
-impl<'src> FnCtxStackExt for Vec<FnInfo<'src>> {
-    fn set_async(&mut self, allow_top_level_await: bool, span: Span) -> TfResult<()> {
-        if let Some(fn_ctx) = self.last_mut() {
-            fn_ctx.is_async = true;
-        } else if !allow_top_level_await {
-            return Err(TfErrBuilder::default()
-                .message("Await is only allowed in a function context")
-                .span(span)
-                .build_errs());
-        }
-
-        Ok(())
-    }
-
-    fn set_do(&mut self, span: Span) -> TfResult<()> {
-        if let Some(fn_ctx) = self.last_mut() {
-            fn_ctx.is_do = true;
-        } else {
-            return Err(TfErrBuilder::default()
-                .message("Bind operator is only allowed in a function context")
-                .span(span)
-                .build_errs());
-        }
-
-        Ok(())
-    }
-
-    fn set_generator(&mut self, span: Span) -> TfResult<()> {
-        if let Some(fn_ctx) = self.last_mut() {
-            fn_ctx.is_generator = true;
-        } else {
-            return Err(TfErrBuilder::default()
-                .message("Generator is only allowed in a function context")
-                .span(span)
-                .build_errs());
-        }
-
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Declaration<'src> {
     pub name: Ident<'src>,
@@ -195,68 +149,6 @@ impl<'src> Scope<'src> {
     }
 }
 
-trait ScopeRefExt<'src> {
-    fn declare(
-        &self,
-        state: &State<'src>,
-        name: SIdent<'src>,
-        modifier: DeclType,
-    ) -> TfResult<DeclarationRef<'src>>;
-}
-
-impl<'src> ScopeRefExt<'src> for Rc<RefCell<Scope<'src>>> {
-    fn declare(
-        &self,
-        state: &State<'src>,
-        name: SIdent<'src>,
-        modifier: DeclType,
-    ) -> TfResult<DeclarationRef<'src>> {
-        let scope = self.borrow();
-
-        match modifier {
-            DeclType::Global => {
-                if scope.is_global_scope || scope.is_class_scope {
-                    return Err(TfErrBuilder::default()
-                        .message("Global declarations are not allowed at the module or class level")
-                        .span(name.span)
-                        .build_errs());
-                }
-            }
-            DeclType::Export => {
-                if !scope.is_global_scope {
-                    return Err(TfErrBuilder::default()
-                        .message("Exports are only allowed at the module level")
-                        .span(name.span)
-                        .build_errs());
-                }
-            }
-            DeclType::Let | DeclType::Const => {
-                if scope.is_class_scope || scope.is_global_scope {
-                    if let Some(found) = state.scope_ctx_stack.find_decl(&name) {
-                        return Err(TfErrBuilder::default()
-                            .message("Cannot shadow declarations in a class or global scope")
-                            .span(name.span)
-                            .context("Declared here", found.decl.borrow().loc)
-                            .build_errs());
-                    }
-                }
-            }
-        };
-
-        let decl = Rc::new(RefCell::new(Declaration {
-            name: name.value,
-            scope: self.clone(),
-            loc: name.span,
-            typ: Type::Unprocessed,
-            modifier,
-        }));
-
-        self.borrow_mut().locals.push(decl.clone());
-
-        Ok(decl)
-    }
-}
-
 struct FindResult<'src> {
     decl: DeclarationRef<'src>,
     local: bool,
@@ -302,7 +194,7 @@ struct PatternInfo<'src> {
 }
 
 #[allow(dead_code)]
-struct State<'src> {
+struct ResolveState<'src> {
     source: &'src str,
     allow_top_level_await: bool,
 
@@ -311,6 +203,8 @@ struct State<'src> {
     resolutions: HashMap<BoxHash, DeclarationRef<'src>>,
     functions: HashMap<BoxHash, FnInfo<'src>>,
     patterns: HashMap<BoxHash, PatternInfo<'src>>,
+
+    errors: TfErrs,
 
     placeholder_ctx_stack: Vec<PlaceholderCtx<'src>>,
     fn_ctx_stack: Vec<FnInfo<'src>>,
@@ -324,9 +218,9 @@ struct ScopedOutput<'src, T> {
     pub scope: Rc<RefCell<Scope<'src>>>,
 }
 
-impl<'src> State<'src> {
-    fn new(source: &'src str) -> TfResult<Self> {
-        Ok(State {
+impl<'src> ResolveState<'src> {
+    fn new(source: &'src str) -> Self {
+        ResolveState {
             allow_top_level_await: false,
             source,
 
@@ -336,12 +230,14 @@ impl<'src> State<'src> {
             functions: HashMap::new(),
             patterns: HashMap::new(),
 
+            errors: TfErrs::new(),
+
             scope_id_counter: 0,
 
             placeholder_ctx_stack: Vec::new(),
             fn_ctx_stack: Vec::new(),
             scope_ctx_stack: Vec::new(),
-        })
+        }
     }
 
     fn resolve(&mut self, ident: &SIdent<'src>, lhs: bool) -> TfResult<DeclarationRef<'src>> {
@@ -390,30 +286,32 @@ impl<'src> State<'src> {
 
         if lhs {
             if scope.borrow().is_class_scope || scope.borrow().is_global_scope {
-                let decl = scope.declare(self, ident.clone(), DeclType::Let)?;
+                let decl = Declaration::new(ident.clone(), scope.clone(), DeclType::Let);
+
+                scope.borrow_mut().locals.push(decl.clone());
+
                 return Ok(decl);
             }
         }
 
         if !lhs {
+            let decl = Declaration::new(ident.clone(), scope.clone(), DeclType::Let);
+
             let global = &self.scope_ctx_stack[0];
-            let decl = global.declare(self, ident.clone(), DeclType::Let)?;
+            global.borrow_mut().locals.push(decl.clone());
+
             return Ok(decl);
         }
 
-        Err(TfErrBuilder::default()
+        return Err(TfErrBuilder::default()
             .message("Undeclared identifier; either declare with 'let' or mark as 'global'.")
             .span(ident.span)
-            .build_errs())
+            .build_errs());
     }
 
-    fn scoped<F, O>(
-        &mut self,
-        scope: Rc<RefCell<Scope<'src>>>,
-        f: F,
-    ) -> TfResult<ScopedOutput<'src, O>>
+    fn scoped<F, O>(&mut self, scope: Rc<RefCell<Scope<'src>>>, f: F) -> ScopedOutput<'src, O>
     where
-        F: FnOnce(&mut State<'src>) -> TfResult<O>,
+        F: FnOnce(&mut ResolveState<'src>) -> O,
     {
         self.scope_id_counter += 1;
         self.scope_ctx_stack.push(scope);
@@ -425,9 +323,9 @@ impl<'src> State<'src> {
         result.map(|value| ScopedOutput { value, scope })
     }
 
-    fn placeholder_guarded<F>(&mut self, span: Span, f: F) -> TfResult<Indirect<SExpr<'src>>>
+    fn placeholder_guarded<F>(&mut self, span: Span, f: F) -> Indirect<SExpr<'src>>
     where
-        F: FnOnce(&mut State<'src>) -> TfResult<Indirect<SExpr<'src>>>,
+        F: FnOnce(&mut ResolveState<'src>) -> Indirect<SExpr<'src>>,
     {
         let scope = Scope::new();
         scope.borrow_mut().is_fn_scope = true;
@@ -442,24 +340,19 @@ impl<'src> State<'src> {
             .push(PlaceholderCtx::new(ph_decl, span));
         self.fn_ctx_stack.push(FnInfo::new());
 
-        let result = match f(self) {
-            Err(e) => {
-                self.placeholder_ctx_stack.pop();
-                self.fn_ctx_stack.pop();
-                return Err(e);
-            }
-            Ok(result) => result,
-        };
+        let result = f(self);
 
         let mut fn_ctx = self.fn_ctx_stack.pop().unwrap();
         let placeholder_ctx = self.placeholder_ctx_stack.pop().unwrap();
 
         if placeholder_ctx.activated {
             if fn_ctx.is_async || fn_ctx.is_generator || fn_ctx.is_do {
-                return Err(TfErrBuilder::default()
-                    .message("Await, bind, and yield are not allowed in placeholder functions")
-                    .span(span)
-                    .build_errs());
+                self.errors.extend(
+                    TfErrBuilder::default()
+                        .message("Await, bind, and yield are not allowed in placeholder functions")
+                        .span(span)
+                        .build_errs(),
+                );
             }
 
             fn_ctx.is_placeholder = true;
@@ -484,17 +377,113 @@ impl<'src> State<'src> {
 
             self.functions.insert(BoxHash::new(&fn_node), fn_ctx);
 
-            return Ok(fn_node);
+            return fn_node;
         } else {
-            return Ok(result);
+            return result;
+        }
+    }
+
+    fn declare(&mut self, name: SIdent<'src>, modifier: DeclType) -> DeclarationRef<'src> {
+        let scope = &mut self.scope_ctx_stack.last().unwrap().borrow_mut();
+
+        match modifier {
+            DeclType::Global => {
+                if scope.is_global_scope || scope.is_class_scope {
+                    self.errors.extend(
+                        TfErrBuilder::default()
+                            .message(
+                                "Global declarations are not allowed at the module or class level",
+                            )
+                            .span(name.span)
+                            .build_errs(),
+                    );
+                }
+            }
+            DeclType::Export => {
+                if !scope.is_global_scope {
+                    self.errors.extend(
+                        TfErrBuilder::default()
+                            .message("Exports are only allowed at the module level")
+                            .span(name.span)
+                            .build_errs(),
+                    );
+                }
+            }
+            DeclType::Let | DeclType::Const => {
+                if scope.is_class_scope || scope.is_global_scope {
+                    if let Some(found) = self.scope_ctx_stack.find_decl(&name) {
+                        self.errors.extend(
+                            TfErrBuilder::default()
+                                .message("Cannot shadow declarations in a class or global scope")
+                                .span(name.span)
+                                .context("Declared here", found.decl.borrow().loc)
+                                .build_errs(),
+                        );
+                    }
+                }
+            }
+        };
+
+        let decl = Rc::new(RefCell::new(Declaration {
+            name: name.value,
+            scope: self.scope_ctx_stack.last().unwrap().clone(),
+            loc: name.span,
+            typ: Type::Unprocessed,
+            modifier,
+        }));
+
+        scope.locals.push(decl.clone());
+
+        decl
+    }
+
+    fn set_async(&mut self, span: Span) -> () {
+        if let Some(fn_ctx) = self.fn_ctx_stack.last_mut() {
+            fn_ctx.is_async = true;
+        } else if !self.allow_top_level_await {
+            self.errors.extend(
+                TfErrBuilder::default()
+                    .message("Await is only allowed in a function context")
+                    .span(span)
+                    .build_errs(),
+            );
+        }
+    }
+
+    fn set_do(&mut self, span: Span) -> () {
+        if let Some(fn_ctx) = self.fn_ctx_stack.last_mut() {
+            fn_ctx.is_do = true;
+        } else {
+            self.errors.extend(
+                TfErrBuilder::default()
+                    .message("Bind operator is only allowed in a function context")
+                    .span(span)
+                    .build_errs(),
+            );
+        }
+    }
+
+    fn set_generator(&mut self, span: Span) -> () {
+        if let Some(fn_ctx) = self.fn_ctx_stack.last_mut() {
+            fn_ctx.is_generator = true;
+        } else {
+            self.errors.extend(
+                TfErrBuilder::default()
+                    .message("Generator is only allowed in a function context")
+                    .span(span)
+                    .build_errs(),
+            );
         }
     }
 }
 
-fn traverse_placeholder<'src>(
-    state: &mut State<'src>,
-    span: Span,
-) -> TfResult<Indirect<SExpr<'src>>> {
+fn error_expr<'src>(span: Span) -> Indirect<SExpr<'src>> {
+    Expr::Literal(Literal::None.spanned(span))
+        .spanned(span)
+        .indirect()
+}
+
+fn traverse_placeholder<'src>(state: &mut ResolveState<'src>, span: Span) -> Indirect<SExpr<'src>> {
     if let Some(placeholder_ctx) = state.placeholder_ctx_stack.last_mut() {
         placeholder_ctx.activated = true;
 
@@ -504,13 +493,10 @@ fn traverse_placeholder<'src>(
             .resolutions
             .insert(BoxHash::new(&expr), placeholder_ctx.decl.clone());
 
-        return Ok(expr);
+        return expr;
     }
 
-    return Err(TfErrBuilder::default()
-        .message("Internal error: no placeholder context found")
-        .span(span)
-        .build_errs());
+    panic!("Internal error: Placeholder context stack is empty");
 }
 
 struct PatternMeta<'src> {
@@ -521,15 +507,15 @@ struct PatternMeta<'src> {
 trait SPatternExt<'src> {
     fn traverse(
         self,
-        state: &mut State<'src>,
-    ) -> TfResult<(Indirect<SPattern<'src>>, PatternMeta<'src>)>;
+        state: &mut ResolveState<'src>,
+    ) -> (Indirect<SPattern<'src>>, PatternMeta<'src>);
 }
 
 impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
     fn traverse(
         self,
-        state: &mut State<'src>,
-    ) -> TfResult<(Indirect<SPattern<'src>>, PatternMeta<'src>)> {
+        state: &mut ResolveState<'src>,
+    ) -> (Indirect<SPattern<'src>>, PatternMeta<'src>) {
         let mut default = false;
         let mut captures = vec![];
         let span = self.span;
@@ -543,7 +529,7 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
                     .as_ref()
                     .is_some_and(|x| char::is_uppercase(x.value.0.chars().nth(0).unwrap_or('_')))
                 {
-                    return Err(TfErrBuilder::default()
+                    state.errors.extend(TfErrBuilder::default()
                                 .message(
                                     "Capture patterns must start with a lowercase letter; to match a type, add '()'",
                                 )
@@ -560,7 +546,7 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
                 Pattern::Capture(cap)
             }
             Pattern::As(pattern, name) => {
-                let (pattern, meta) = pattern.traverse(state)?;
+                let (pattern, meta) = pattern.traverse(state);
                 captures.extend(meta.captures);
                 captures.push(name.value.clone());
                 default |= meta.default;
@@ -568,16 +554,19 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
             }
             Pattern::Or(items) => {
                 let mut iter = items.into_iter();
-                let initial = iter.next().ok_or_else(|| {
-                    TfErrBuilder::default()
-                        .message("Internal error: Or pattern must have at least one item")
-                        .span(self.span)
-                        .build_errs()
-                })?;
+                let Some(initial) = iter.next() else {
+                    return (
+                        Pattern::Capture(None).spanned(span).indirect(),
+                        PatternMeta {
+                            default: false,
+                            captures: vec![],
+                        },
+                    );
+                };
 
                 let mut items = vec![];
 
-                let (pattern, meta) = initial.traverse(state)?;
+                let (pattern, meta) = initial.traverse(state);
                 items.push(pattern);
                 default = meta.default;
                 captures.extend(meta.captures);
@@ -587,22 +576,26 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
                     let span = item.span;
 
                     if default {
-                        return Err(TfErrBuilder::default()
-                            .message("Default pattern makes remaining patterns unreachable")
-                            .span(span)
-                            .build_errs())?;
+                        state.errors.extend(
+                            TfErrBuilder::default()
+                                .message("Default pattern makes remaining patterns unreachable")
+                                .span(span)
+                                .build_errs(),
+                        );
                     }
 
                     default |= meta.default;
-                    let (pattern, mut meta) = item.traverse(state)?;
+                    let (pattern, mut meta) = item.traverse(state);
 
                     meta.captures.sort_by_key(|x| x.0.clone());
 
                     if captures != meta.captures {
-                        return Err(TfErrBuilder::default()
-                            .message("Or patterns must bind the same names")
-                            .span(span)
-                            .build_errs());
+                        state.errors.extend(
+                            TfErrBuilder::default()
+                                .message("Or patterns must bind the same names")
+                                .span(span)
+                                .build_errs(),
+                        );
                     }
 
                     items.push(pattern);
@@ -615,124 +608,116 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
             Pattern::Sequence(items) => {
                 let items = items
                     .into_iter()
-                    .map(|item| {
-                        Ok(match item {
-                            PatternSequenceItem::Item(inner) => {
-                                let (pattern, meta) = inner.traverse(state)?;
-                                captures.extend(meta.captures);
-                                PatternSequenceItem::Item(pattern)
+                    .map(|item| match item {
+                        PatternSequenceItem::Item(inner) => {
+                            let (pattern, meta) = inner.traverse(state);
+                            captures.extend(meta.captures);
+                            PatternSequenceItem::Item(pattern)
+                        }
+                        PatternSequenceItem::Spread(inner) => {
+                            if let Some(inner) = inner.clone() {
+                                captures.push(inner.value.clone());
                             }
-                            PatternSequenceItem::Spread(inner) => {
-                                if let Some(inner) = inner.clone() {
-                                    captures.push(inner.value.clone());
-                                }
-                                PatternSequenceItem::Spread(inner)
-                            }
-                        })
+                            PatternSequenceItem::Spread(inner)
+                        }
                     })
-                    .collect::<TfResult<_>>()?;
+                    .collect::<Vec<_>>();
 
                 Pattern::Sequence(items)
             }
             Pattern::Mapping(items) => {
                 let items = items
                     .into_iter()
-                    .map(|item| {
-                        Ok(match item {
-                            PatternMappingItem::Ident(id) => {
-                                captures.push(id.value.clone());
-                                PatternMappingItem::Ident(id)
-                            }
-                            PatternMappingItem::Item(key, value) => {
-                                let (pattern, meta) = value.traverse(state)?;
-                                captures.extend(meta.captures);
+                    .map(|item| match item {
+                        PatternMappingItem::Ident(id) => {
+                            captures.push(id.value.clone());
+                            PatternMappingItem::Ident(id)
+                        }
+                        PatternMappingItem::Item(key, value) => {
+                            let (pattern, meta) = value.traverse(state);
+                            captures.extend(meta.captures);
 
-                                PatternMappingItem::Item(key, pattern)
+                            PatternMappingItem::Item(key, pattern)
+                        }
+                        PatternMappingItem::Spread(inner) => {
+                            if let Some(inner) = inner.clone() {
+                                captures.push(inner.value.clone());
                             }
-                            PatternMappingItem::Spread(inner) => {
-                                if let Some(inner) = inner.clone() {
-                                    captures.push(inner.value.clone());
-                                }
 
-                                PatternMappingItem::Spread(inner)
-                            }
-                        })
+                            PatternMappingItem::Spread(inner)
+                        }
                     })
-                    .collect::<TfResult<_>>()?;
+                    .collect::<Vec<_>>();
 
                 Pattern::Mapping(items)
             }
             Pattern::Class(cls, items) => {
                 let items = items
                     .into_iter()
-                    .map(|item| {
-                        Ok(match item {
-                            PatternClassItem::Item(inner) => {
-                                let (pattern, meta) = inner.traverse(state)?;
-                                captures.extend(meta.captures);
-                                PatternClassItem::Item(pattern)
-                            }
-                            PatternClassItem::Kw(key, inner) => {
-                                let (pattern, meta) = inner.traverse(state)?;
-                                captures.extend(meta.captures);
-                                PatternClassItem::Kw(key, pattern)
-                            }
-                        })
+                    .map(|item| match item {
+                        PatternClassItem::Item(inner) => {
+                            let (pattern, meta) = inner.traverse(state);
+                            captures.extend(meta.captures);
+                            PatternClassItem::Item(pattern)
+                        }
+                        PatternClassItem::Kw(key, inner) => {
+                            let (pattern, meta) = inner.traverse(state);
+                            captures.extend(meta.captures);
+                            PatternClassItem::Kw(key, pattern)
+                        }
                     })
-                    .collect::<TfResult<_>>()?;
+                    .collect::<Vec<_>>();
 
-                Pattern::Class(cls.traverse(state)?, items)
+                Pattern::Class(cls.traverse(state), items)
             }
         };
 
-        Ok((
+        (
             pattern.spanned(span).indirect(),
             PatternMeta { default, captures },
-        ))
+        )
     }
 }
 
 fn traverse_list_items<'src>(
-    state: &mut State<'src>,
+    state: &mut ResolveState<'src>,
     items: Vec<SListItem<'src>>,
-) -> TfResult<Vec<SListItem<'src>>> {
+) -> Vec<SListItem<'src>> {
     items
         .into_iter()
-        .map(|i| -> TfResult<SListItem<'src>> {
-            Ok(match i {
-                ListItem::Item(i) => ListItem::<STree>::Item(i.traverse(state)?),
-                ListItem::Spread(i) => ListItem::<STree>::Spread(i.traverse(state)?),
-            })
+        .map(|i| -> SListItem<'src> {
+            match i {
+                ListItem::Item(i) => ListItem::<STree>::Item(i.traverse(state)),
+                ListItem::Spread(i) => ListItem::<STree>::Spread(i.traverse(state)),
+            }
         })
-        .collect::<TfResult<_>>()
+        .collect::<Vec<_>>()
 }
 
 fn traverse_call_items<'src>(
-    state: &mut State<'src>,
+    state: &mut ResolveState<'src>,
     items: Vec<SCallItem<'src>>,
-) -> TfResult<Vec<SCallItem<'src>>> {
+) -> Vec<SCallItem<'src>> {
     items
         .into_iter()
-        .map(|item| {
-            Ok(match item {
-                CallItem::Arg(i) => CallItem::Arg(i.traverse_deep_guarded(state)?),
-                CallItem::Kwarg(name, i) => {
-                    CallItem::Kwarg(name.clone(), i.traverse_deep_guarded(state)?)
-                }
-                CallItem::ArgSpread(i) => CallItem::ArgSpread(i.traverse_deep_guarded(state)?),
-                CallItem::KwargSpread(i) => CallItem::KwargSpread(i.traverse_deep_guarded(state)?),
-            })
+        .map(|item| match item {
+            CallItem::Arg(i) => CallItem::Arg(i.traverse_deep_guarded(state)),
+            CallItem::Kwarg(name, i) => {
+                CallItem::Kwarg(name.clone(), i.traverse_deep_guarded(state))
+            }
+            CallItem::ArgSpread(i) => CallItem::ArgSpread(i.traverse_deep_guarded(state)),
+            CallItem::KwargSpread(i) => CallItem::KwargSpread(i.traverse_deep_guarded(state)),
         })
-        .collect::<TfResult<_>>()
+        .collect::<Vec<_>>()
 }
 
 fn pattern_scoped<'src>(
-    state: &mut State<'src>,
+    state: &mut ResolveState<'src>,
     pattern: Indirect<SPattern<'src>>,
-) -> TfResult<(Indirect<SPattern<'src>>, ScopeRef<'src>, PatternMeta<'src>)> {
+) -> (Indirect<SPattern<'src>>, ScopeRef<'src>, PatternMeta<'src>) {
     let scope = Scope::new();
 
-    let (pattern, meta) = pattern.traverse(state)?;
+    let (pattern, meta) = pattern.traverse(state);
 
     scope
         .borrow_mut()
@@ -745,109 +730,118 @@ fn pattern_scoped<'src>(
             )
         }));
 
-    Ok((pattern, scope, meta))
+    ((pattern, scope, meta))
 }
 
 trait SExprExt<'src> {
-    fn traverse(self, state: &mut State<'src>) -> TfResult<Indirect<SExpr<'src>>>;
-    fn traverse_expecting_scope(self, state: &mut State<'src>) -> TfResult<Indirect<SExpr<'src>>>;
-    fn traverse_guarded(self, state: &mut State<'src>) -> TfResult<Indirect<SExpr<'src>>>;
-    fn traverse_deep_guarded(self, state: &mut State<'src>) -> TfResult<Indirect<SExpr<'src>>>;
+    fn traverse(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>>;
+    fn traverse_expecting_scope(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>>;
+    fn traverse_guarded(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>>;
+    fn traverse_deep_guarded(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>>;
     fn traverse_full(
         self,
-        state: &mut State<'src>,
+        state: &mut ResolveState<'src>,
         expect_scope: bool,
-    ) -> TfResult<Indirect<SExpr<'src>>>;
+    ) -> Indirect<SExpr<'src>>;
 }
 
 impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
-    fn traverse_deep_guarded(self, state: &mut State<'src>) -> TfResult<Indirect<SExpr<'src>>> {
+    fn traverse_deep_guarded(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>> {
         match self.value {
             Expr::Placeholder => traverse_placeholder(state, self.span),
             _ => self.traverse_guarded(state),
         }
     }
 
-    fn traverse_guarded(self, state: &mut State<'src>) -> TfResult<Indirect<SExpr<'src>>> {
+    fn traverse_guarded(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>> {
         state.placeholder_guarded(self.span, |state| self.traverse(state))
     }
 
-    fn traverse_expecting_scope(self, state: &mut State<'src>) -> TfResult<Indirect<SExpr<'src>>> {
+    fn traverse_expecting_scope(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>> {
         state.placeholder_guarded(self.span, |state| self.traverse_full(state, true))
     }
 
-    fn traverse(self: Self, state: &mut State<'src>) -> TfResult<Indirect<SExpr<'src>>> {
+    fn traverse(self: Self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>> {
         self.traverse_full(state, false)
     }
 
     fn traverse_full(
         self: Self,
-        state: &mut State<'src>,
+        state: &mut ResolveState<'src>,
         expect_scope: bool,
-    ) -> TfResult<Indirect<SExpr<'src>>> {
+    ) -> Indirect<SExpr<'src>> {
         let span = self.span;
 
         let t = match self.value {
-            Expr::Literal(_) => return Ok(self),
+            Expr::Literal(_) => return self,
             Expr::Ident(ident) => {
-                let decl = state.resolve(&ident, false)?;
+                let decl = match state.resolve(&ident, false) {
+                    Ok(decl) => decl,
+                    Err(errs) => {
+                        state.errors.extend(errs);
+                        return error_expr(span);
+                    }
+                };
+
                 let expr = Expr::Ident(ident).spanned(span).indirect();
                 state.resolutions.insert(BoxHash::new(&expr), decl.clone());
-                return Ok(expr);
+
+                return expr;
             }
             Expr::Checked(expr, pattern) => {
-                let pattern = if let Some(pattern) = pattern {
-                    let (pattern, meta) = pattern.traverse(state)?;
+                let pattern =
+                    if let Some(pattern) = pattern {
+                        let (pattern, meta) = pattern.traverse(state);
 
-                    if !meta.captures.is_empty() {
-                        return Err(TfErrBuilder::default()
+                        if !meta.captures.is_empty() {
+                            state.errors.extend(TfErrBuilder::default()
                             .message(
                                 "Non-'_' capture patterns are not allowed in 'try'-expressions",
                             )
                             .span(pattern.span)
                             .build_errs());
-                    }
+                        }
 
-                    if meta.default {
-                        None
+                        if meta.default {
+                            None
+                        } else {
+                            state.patterns.insert(
+                                BoxHash::new(&pattern),
+                                PatternInfo {
+                                    default: false,
+                                    decls: vec![],
+                                },
+                            );
+                            Some(pattern)
+                        }
                     } else {
-                        state.patterns.insert(
-                            BoxHash::new(&pattern),
-                            PatternInfo {
-                                default: false,
-                                decls: vec![],
-                            },
-                        );
-                        Some(pattern)
-                    }
-                } else {
-                    None
-                };
+                        None
+                    };
 
-                Expr::Checked(expr.traverse_guarded(state)?, pattern)
+                Expr::Checked(expr.traverse_guarded(state), pattern)
             }
             Expr::Decorated(deco, expr) => Expr::Call(
-                deco.traverse(state)?,
-                vec![CallItem::Arg(expr.traverse(state)?)],
+                deco.traverse(state),
+                vec![CallItem::Arg(expr.traverse(state))],
             ),
             Expr::Matches(x, pattern) => {
-                let (pattern, meta) = pattern.traverse(state)?;
+                let (pattern, meta) = pattern.traverse(state);
                 if !meta.captures.is_empty() {
-                    return Err(TfErrBuilder::default()
+                    state.errors.extend(TfErrBuilder::default()
                         .message(
                             "Non-'_' capture patterns are not allowed in bare 'matches'-expressions",
                         )
                         .span(pattern.span)
                         .build_errs());
                 }
-                Expr::Matches(x.traverse(state)?, pattern)
+                Expr::Matches(x.traverse(state), pattern)
             }
             Expr::Placeholder => return traverse_placeholder(state, span),
             Expr::Block(stmts) => {
                 let new_stmts = if expect_scope {
                     let mut new_stmts = Vec::new();
                     for stmt in stmts {
-                        let stmt = stmt.traverse(state)?;
+                        let stmt = stmt.traverse(state);
                         new_stmts.push(stmt);
                     }
                     new_stmts
@@ -856,11 +850,11 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                         .scoped(Scope::new(), |state| {
                             let mut new_stmts = Vec::new();
                             for stmt in stmts {
-                                let stmt = stmt.traverse(state)?;
+                                let stmt = stmt.traverse(state);
                                 new_stmts.push(stmt);
                             }
-                            Ok(new_stmts)
-                        })?
+                            new_stmts
+                        })
                         .value
                 };
 
@@ -875,22 +869,18 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                             unreachable!();
                         };
 
-                        let (pattern, then_scope, _meta) = pattern_scoped(state, pattern)?;
+                        let (pattern, then_scope, _meta) = pattern_scoped(state, pattern);
 
-                        let then = state
-                            .scoped(then_scope, |state| then.traverse(state))?
-                            .value;
+                        let then = state.scoped(then_scope, |state| then.traverse(state)).value;
 
-                        let else_ = else_
-                            .map(|else_| {
-                                state
-                                    .scoped(Scope::new(), |state| else_.traverse(state))
-                                    .map(|x| x.value)
-                            })
-                            .transpose()?;
+                        let else_ = else_.map(|else_| {
+                            state
+                                .scoped(Scope::new(), |state| else_.traverse(state))
+                                .value
+                        });
 
                         break 'block SExprInner::If(
-                            Expr::Matches(expr.traverse(state)?, pattern)
+                            Expr::Matches(expr.traverse(state), pattern)
                                 .spanned(cond_span)
                                 .indirect(),
                             then,
@@ -900,7 +890,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     Expr::Unary(UnaryOp::Not, inner) => match &inner.value {
                         Expr::Matches(_, pattern) => {
                             let (pattern, else_scope, meta) =
-                                pattern_scoped(state, pattern.clone())?;
+                                pattern_scoped(state, pattern.clone());
 
                             if !meta.captures.is_empty() {
                                 let Expr::Unary(UnaryOp::Not, inner) = cond.value else {
@@ -912,7 +902,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                                 };
 
                                 let then = state
-                                    .scoped(Scope::new(), |state| then.traverse(state))?
+                                    .scoped(Scope::new(), |state| then.traverse(state))
                                     .value;
 
                                 // TODO: then scope must be never
@@ -928,7 +918,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                                 break 'block SExprInner::If(
                                     SExprInner::Unary(
                                         UnaryOp::Not,
-                                        SExprInner::Matches(expr.traverse(state)?, pattern)
+                                        SExprInner::Matches(expr.traverse(state), pattern)
                                             .spanned(cond_span)
                                             .indirect(),
                                     )
@@ -937,8 +927,8 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                                     then,
                                     state
                                         .scoped(Scope::new(), |state| {
-                                            else_.map(|x| x.traverse(state)).transpose()
-                                        })?
+                                            else_.map(|x| x.traverse(state))
+                                        })
                                         .value,
                                 );
                             }
@@ -949,50 +939,46 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 }
 
                 Expr::If(
-                    cond.traverse(state)?,
+                    cond.traverse(state),
                     state
-                        .scoped(Scope::new(), |state| then.traverse(state))?
+                        .scoped(Scope::new(), |state| then.traverse(state))
                         .value,
-                    else_
-                        .map(|else_| {
-                            state
-                                .scoped(Scope::new(), |state| else_.traverse(state))
-                                .map(|x| x.value)
-                        })
-                        .transpose()?,
+                    else_.map(|else_| {
+                        state
+                            .scoped(Scope::new(), |state| else_.traverse(state))
+                            .value
+                    }),
                 )
             }
             Expr::Match(subject, cases) => {
-                let subject = subject.traverse(state)?;
+                let subject = subject.traverse(state);
                 let cases = cases
                     .into_iter()
                     .map(|case| {
                         let (pattern, scope) = if let Some(pattern) = case.pattern {
-                            let (pattern, scope, _meta) = pattern_scoped(state, pattern)?;
+                            let (pattern, scope, _meta) = pattern_scoped(state, pattern);
                             (Some(pattern), scope)
                         } else {
                             (None, Scope::new())
                         };
 
-                        Ok(SMatchCase {
+                        SMatchCase {
                             pattern,
-                            guard: case.guard.map(|g| g.traverse(state)).transpose()?,
-                            body: state
-                                .scoped(scope, |state| case.body.traverse(state))?
-                                .value,
-                        })
+                            guard: case.guard.map(|g| g.traverse(state)),
+                            body: state.scoped(scope, |state| case.body.traverse(state)).value,
+                        }
                     })
-                    .collect::<TfResult<_>>()?;
+                    .collect::<Vec<_>>();
 
                 Expr::Match(subject, cases)
             }
             Expr::Class(bases, body) => {
-                let bases = traverse_call_items(state, bases)?;
+                let bases = traverse_call_items(state, bases);
 
                 let scope = Scope::new();
                 scope.borrow_mut().is_class_scope = true;
 
-                let body = state.scoped(scope, |state| body.traverse(state))?.value;
+                let body = state.scoped(scope, |state| body.traverse(state)).value;
 
                 Expr::Class(bases, body)
             }
@@ -1001,39 +987,36 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 let items = arg_def_items
                     .into_iter()
-                    .map(|item| {
-                        Ok(match item {
-                            ArgDefItem::Arg(arg, default) => {
-                                let (pattern, meta) = arg.traverse(state)?;
+                    .map(|item| match item {
+                        ArgDefItem::Arg(arg, default) => {
+                            let (pattern, meta) = arg.traverse(state);
 
-                                for capture in meta.captures {
-                                    all_captures.push(capture.spanned(pattern.span));
-                                }
+                            for capture in meta.captures {
+                                all_captures.push(capture.spanned(pattern.span));
+                            }
 
-                                ArgDefItem::Arg(
-                                    pattern,
-                                    default.map(|x| x.traverse(state)).transpose()?,
-                                )
-                            }
-                            ArgDefItem::ArgSpread(arg) => {
-                                all_captures.push(arg.clone());
-                                ArgDefItem::ArgSpread(arg)
-                            }
-                            ArgDefItem::KwargSpread(arg) => {
-                                all_captures.push(arg.clone());
-                                ArgDefItem::KwargSpread(arg)
-                            }
-                        })
+                            ArgDefItem::Arg(pattern, default.map(|x| x.traverse(state)))
+                        }
+                        ArgDefItem::ArgSpread(arg) => {
+                            all_captures.push(arg.clone());
+                            ArgDefItem::ArgSpread(arg)
+                        }
+                        ArgDefItem::KwargSpread(arg) => {
+                            all_captures.push(arg.clone());
+                            ArgDefItem::KwargSpread(arg)
+                        }
                     })
-                    .collect::<TfResult<_>>()?;
+                    .collect::<Vec<_>>();
 
                 for (i, cap) in all_captures.iter().enumerate() {
                     if let Some(found) = all_captures[..i].iter().find(|x| x.value == cap.value) {
-                        return Err(TfErrBuilder::default()
-                            .message("Duplicate capture in function arguments")
-                            .context("First captured here", found.span)
-                            .span(cap.span)
-                            .build_errs());
+                        state.errors.extend(
+                            TfErrBuilder::default()
+                                .message("Duplicate capture in function arguments")
+                                .context("First captured here", found.span)
+                                .span(cap.span)
+                                .build_errs(),
+                        );
                     }
                 }
 
@@ -1060,7 +1043,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 scope.borrow_mut().locals.extend(decls);
 
-                let body = state.scoped(scope, |state| body.traverse(state))?.value;
+                let body = state.scoped(scope, |state| body.traverse(state)).value;
 
                 Expr::Fn(items, body)
             }
@@ -1069,290 +1052,273 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 items
                     .into_iter()
                     .map(|(expr, suffix)| {
-                        Ok((
+                        (
                             FmtExpr {
-                                expr: expr.expr.traverse(state)?,
+                                expr: expr.expr.traverse(state),
                                 fmt: expr.fmt,
                             },
                             suffix,
-                        ))
+                        )
                     })
-                    .collect::<TfResult<_>>()?,
+                    .collect::<Vec<_>>(),
             ),
 
             // special case for pipe
             Expr::Binary(binary_op, mut x, mut y) => {
                 if let BinaryOp::Pipe = binary_op {
-                    x = x.traverse_guarded(state)?;
-                    y = y.traverse_guarded(state)?;
+                    x = x.traverse_guarded(state);
+                    y = y.traverse_guarded(state);
                 } else {
-                    x = x.traverse(state)?;
-                    y = y.traverse(state)?;
+                    x = x.traverse(state);
+                    y = y.traverse(state);
                 }
 
                 Expr::Binary(binary_op, x, y)
             }
 
             // postfix
-            Expr::Attribute(expr, attr) => Expr::Attribute(expr.traverse(state)?, attr.clone()),
-            Expr::MappedAttribute(expr, attr) => Expr::MappedAttribute(expr.traverse(state)?, attr),
-            Expr::RawAttribute(expr, attr) => Expr::RawAttribute(expr.traverse(state)?, attr),
+            Expr::Attribute(expr, attr) => Expr::Attribute(expr.traverse(state), attr.clone()),
+            Expr::MappedAttribute(expr, attr) => Expr::MappedAttribute(expr.traverse(state), attr),
+            Expr::RawAttribute(expr, attr) => Expr::RawAttribute(expr.traverse(state), attr),
             Expr::MappedRawAttribute(expr, spanned) => {
-                Expr::MappedRawAttribute(expr.traverse(state)?, spanned)
+                Expr::MappedRawAttribute(expr.traverse(state), spanned)
             }
             Expr::ScopedAttribute(expr, value) => {
-                Expr::ScopedAttribute(expr.traverse(state)?, value.traverse_guarded(state)?)
+                Expr::ScopedAttribute(expr.traverse(state), value.traverse_guarded(state))
             }
             Expr::MappedScopedAttribute(expr, value) => {
-                Expr::MappedScopedAttribute(expr.traverse(state)?, value.traverse_guarded(state)?)
+                Expr::MappedScopedAttribute(expr.traverse(state), value.traverse_guarded(state))
             }
             Expr::Call(a, items) => {
-                Expr::Call(a.traverse(state)?, traverse_call_items(state, items)?)
+                Expr::Call(a.traverse(state), traverse_call_items(state, items))
             }
             Expr::MappedCall(a, call_items) => {
-                Expr::MappedCall(a.traverse(state)?, traverse_call_items(state, call_items)?)
+                Expr::MappedCall(a.traverse(state), traverse_call_items(state, call_items))
             }
             Expr::Subscript(x, list_items) => {
-                Expr::Subscript(x.traverse(state)?, traverse_list_items(state, list_items)?)
+                Expr::Subscript(x.traverse(state), traverse_list_items(state, list_items))
             }
-            Expr::MappedSubscript(expr, list_items) => Expr::MappedSubscript(
-                expr.traverse(state)?,
-                traverse_list_items(state, list_items)?,
-            ),
-            Expr::Tuple(items) => Expr::Tuple(traverse_list_items(state, items)?),
-            Expr::List(items) => Expr::List(traverse_list_items(state, items)?),
+            Expr::MappedSubscript(expr, list_items) => {
+                Expr::MappedSubscript(expr.traverse(state), traverse_list_items(state, list_items))
+            }
+            Expr::Tuple(items) => Expr::Tuple(traverse_list_items(state, items)),
+            Expr::List(items) => Expr::List(traverse_list_items(state, items)),
             Expr::Mapping(items) => Expr::Mapping(
                 items
                     .into_iter()
-                    .map(|item| {
-                        Ok(match item {
-                            MappingItem::Item(key, value) => {
-                                MappingItem::Item(key.traverse(state)?, value.traverse(state)?)
-                            }
-                            MappingItem::Spread(i) => MappingItem::Spread(i.traverse(state)?),
-                            MappingItem::Ident(i) => MappingItem::Ident(i),
-                        })
+                    .map(|item| match item {
+                        MappingItem::Item(key, value) => {
+                            MappingItem::Item(key.traverse(state), value.traverse(state))
+                        }
+                        MappingItem::Spread(i) => MappingItem::Spread(i.traverse(state)),
+                        MappingItem::Ident(i) => MappingItem::Ident(i),
                     })
-                    .collect::<TfResult<_>>()?,
+                    .collect::<Vec<_>>(),
             ),
             Expr::Slice(a, b, c) => Expr::Slice(
-                a.map(|e| e.traverse(state)).transpose()?,
-                b.map(|e| e.traverse(state)).transpose()?,
-                c.map(|e| e.traverse(state)).transpose()?,
+                a.map(|e| e.traverse(state)),
+                b.map(|e| e.traverse(state)),
+                c.map(|e| e.traverse(state)),
             ),
             Expr::Unary(unary_op, expr) => {
                 if let UnaryOp::Bind = unary_op {
-                    state.fn_ctx_stack.set_do(span);
+                    state.set_do(span);
                 }
 
-                Expr::Unary(unary_op, expr.traverse(state)?)
+                Expr::Unary(unary_op, expr.traverse(state))
             }
             Expr::Await(x) => {
-                state
-                    .fn_ctx_stack
-                    .set_async(state.allow_top_level_await, span);
-                Expr::Await(x.traverse(state)?)
+                state.set_async(span);
+                Expr::Await(x.traverse(state))
             }
             Expr::Yield(x) => {
-                state.fn_ctx_stack.set_generator(span);
-                Expr::Yield(x.traverse(state)?)
+                state.set_generator(span);
+                Expr::Yield(x.traverse(state))
             }
             Expr::YieldFrom(x) => {
-                state.fn_ctx_stack.set_generator(span);
-                Expr::YieldFrom(x.traverse(state)?)
+                state.set_generator(span);
+                Expr::YieldFrom(x.traverse(state))
             }
         };
 
-        Ok(t.spanned(span).indirect())
+        t.spanned(span).indirect()
     }
 }
 
 fn traverse_assign_lhs<'src>(
-    state: &mut State<'src>,
+    state: &mut ResolveState<'src>,
     lhs: Indirect<SExpr<'src>>,
-) -> TfResult<Indirect<SExpr<'src>>> {
+) -> Indirect<SExpr<'src>> {
     match lhs.value {
         Expr::Ident(ident) => {
-            let decl = state.resolve(&ident, true)?;
+            let decl = match state.resolve(&ident, true) {
+                Ok(decl) => decl,
+                Err(errs) => {
+                    state.errors.extend(errs);
+                    return error_expr(lhs.span);
+                }
+            };
+
             let expr = Expr::Ident(ident).spanned(lhs.span).indirect();
             state.resolutions.insert(BoxHash::new(&expr), decl.clone());
-            Ok(expr)
+            expr
         }
         Expr::Tuple(items) => {
             let items = items
                 .into_iter()
-                .map(|item| {
-                    Ok(match item {
-                        ListItem::Item(inner) => {
-                            let inner = traverse_assign_lhs(state, inner)?;
-                            ListItem::Item(inner)
-                        }
-                        ListItem::Spread(inner) => {
-                            let inner = traverse_assign_lhs(state, inner)?;
-                            ListItem::Spread(inner)
-                        }
-                    })
+                .map(|item| match item {
+                    ListItem::Item(inner) => {
+                        let inner = traverse_assign_lhs(state, inner);
+                        ListItem::Item(inner)
+                    }
+                    ListItem::Spread(inner) => {
+                        let inner = traverse_assign_lhs(state, inner);
+                        ListItem::Spread(inner)
+                    }
                 })
-                .collect::<TfResult<_>>()?;
-            Ok(Expr::Tuple(items).spanned(lhs.span).indirect())
+                .collect::<Vec<_>>();
+            Expr::Tuple(items).spanned(lhs.span).indirect()
         }
         Expr::List(items) => {
             let items = items
                 .into_iter()
-                .map(|item| {
-                    Ok(match item {
-                        ListItem::Item(inner) => {
-                            let inner = traverse_assign_lhs(state, inner)?;
-                            ListItem::Item(inner)
-                        }
-                        ListItem::Spread(inner) => {
-                            let inner = traverse_assign_lhs(state, inner)?;
-                            ListItem::Spread(inner)
-                        }
-                    })
+                .map(|item| match item {
+                    ListItem::Item(inner) => {
+                        let inner = traverse_assign_lhs(state, inner);
+                        ListItem::Item(inner)
+                    }
+                    ListItem::Spread(inner) => {
+                        let inner = traverse_assign_lhs(state, inner);
+                        ListItem::Spread(inner)
+                    }
                 })
-                .collect::<TfResult<_>>()?;
-            Ok(Expr::List(items).spanned(lhs.span).indirect())
+                .collect::<Vec<_>>();
+            Expr::List(items).spanned(lhs.span).indirect()
         }
         Expr::Mapping(items) => {
             let items = items
                 .into_iter()
-                .map(|item| {
-                    Ok(match item {
-                        MappingItem::Item(key, value) => MappingItem::Item(
-                            key.traverse_guarded(state)?,
-                            traverse_assign_lhs(state, value)?,
-                        ),
-                        MappingItem::Spread(inner) => {
-                            MappingItem::Spread(traverse_assign_lhs(state, inner)?)
-                        }
-                        MappingItem::Ident(inner) => {
-                            MappingItem::Ident(traverse_assign_lhs(state, inner)?)
-                        }
-                    })
+                .map(|item| match item {
+                    MappingItem::Item(key, value) => MappingItem::Item(
+                        key.traverse_guarded(state),
+                        traverse_assign_lhs(state, value),
+                    ),
+                    MappingItem::Spread(inner) => {
+                        MappingItem::Spread(traverse_assign_lhs(state, inner))
+                    }
+                    MappingItem::Ident(inner) => {
+                        MappingItem::Ident(traverse_assign_lhs(state, inner))
+                    }
                 })
-                .collect::<TfResult<_>>()?;
-            Ok(Expr::Mapping(items).spanned(lhs.span).indirect())
+                .collect::<Vec<_>>();
+            Expr::Mapping(items).spanned(lhs.span).indirect()
         }
-        _ => Ok(lhs),
+        _ => lhs,
     }
 }
 
 trait SStmtExt<'src> {
-    fn traverse(self, state: &mut State<'src>) -> TfResult<Indirect<SStmt<'src>>>;
+    fn traverse(self, state: &mut ResolveState<'src>) -> Indirect<SStmt<'src>>;
 }
 
 impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
-    fn traverse(self, state: &mut State<'src>) -> TfResult<Indirect<SStmt<'src>>> {
+    fn traverse(self, state: &mut ResolveState<'src>) -> Indirect<SStmt<'src>> {
         let span = self.span;
 
         let stmt = match self.value {
             Stmt::Decl(idents, typ) => {
                 for ident in idents.iter() {
-                    state
-                        .scope_ctx_stack
-                        .last()
-                        .unwrap()
-                        .declare(state, ident.clone(), typ)?;
+                    state.declare(ident.clone(), typ);
                 }
 
                 Stmt::Decl(idents, typ)
             }
             Stmt::Assign(lhs, rhs, typ) => Stmt::Assign(
-                traverse_assign_lhs(state, lhs)?,
-                rhs.traverse_guarded(state)?,
+                traverse_assign_lhs(state, lhs),
+                rhs.traverse_guarded(state),
                 typ,
             ),
-            Stmt::Expr(expr) => Stmt::Expr(expr.traverse_guarded(state)?),
-            Stmt::Return(expr) => Stmt::Return(expr.traverse_guarded(state)?),
+            Stmt::Expr(expr) => Stmt::Expr(expr.traverse_guarded(state)),
+            Stmt::Return(expr) => Stmt::Return(expr.traverse_guarded(state)),
             Stmt::While(cond, body) => {
-                Stmt::While(cond.traverse_guarded(state)?, body.traverse_guarded(state)?)
+                Stmt::While(cond.traverse_guarded(state), body.traverse_guarded(state))
             }
             Stmt::For(pattern, iter, body) => {
-                let (pattern, scope, _meta) = pattern_scoped(state, pattern)?;
+                let (pattern, scope, _meta) = pattern_scoped(state, pattern);
 
                 let body = state
-                    .scoped(scope, |state| body.traverse_guarded(state))?
+                    .scoped(scope, |state| body.traverse_guarded(state))
                     .value;
 
-                Stmt::For(pattern, iter.traverse_guarded(state)?, body)
+                Stmt::For(pattern, iter.traverse_guarded(state), body)
             }
             Stmt::Try(body, cases, finally) => {
-                let body = body.traverse_guarded(state)?;
+                let body = body.traverse_guarded(state);
                 let cases = cases
                     .into_iter()
                     .map(|case| {
                         let (pattern, scope) = if let Some(pattern) = case.pattern {
-                            let (pattern, scope, _meta) = pattern_scoped(state, pattern)?;
+                            let (pattern, scope, _meta) = pattern_scoped(state, pattern);
                             (Some(pattern), scope)
                         } else {
                             (None, Scope::new())
                         };
 
                         let body = state
-                            .scoped(scope, |state| case.body.traverse_guarded(state))?
+                            .scoped(scope, |state| case.body.traverse_guarded(state))
                             .value;
 
-                        Ok(MatchCase {
+                        MatchCase {
                             pattern,
-                            guard: case.guard.map(|x| x.traverse_guarded(state)).transpose()?,
+                            guard: case.guard.map(|x| x.traverse_guarded(state)),
                             body,
-                        })
+                        }
                     })
-                    .collect::<TfResult<_>>()?;
-                let finally = finally.map(|x| x.traverse_guarded(state)).transpose()?;
+                    .collect::<Vec<_>>();
+                let finally = finally.map(|x| x.traverse_guarded(state));
 
                 Stmt::Try(body, cases, finally)
             }
             Stmt::Assert(a, b) => Stmt::Assert(
-                a.traverse_guarded(state)?,
-                b.map(|x| x.traverse_guarded(state)).transpose()?,
+                a.traverse_guarded(state),
+                b.map(|x| x.traverse_guarded(state)),
             ),
-            Stmt::Raise(expr) => Stmt::Raise(expr.map(|x| x.traverse_guarded(state)).transpose()?),
+            Stmt::Raise(expr) => Stmt::Raise(expr.map(|x| x.traverse_guarded(state))),
             Stmt::Import(import_stmt) => Stmt::Import(import_stmt),
             Stmt::Break => Stmt::Break,
             Stmt::Module => Stmt::Module,
             Stmt::Continue => Stmt::Continue,
         };
 
-        Ok(stmt.spanned(span).indirect())
+        stmt.spanned(span).indirect()
     }
 }
 
 pub fn resolve_names<'src>(
     source: &'src str,
     expr: impl IntoIndirect<SExpr<'src>>,
-) -> TfResult<Indirect<SExpr<'src>>> {
-    let mut state = State::new(source)?;
+) -> (ResolveState<'src>, Indirect<SExpr<'src>>) {
+    let mut state = ResolveState::new(source);
     state.root_scope = Scope::new();
     state.root_scope.borrow_mut().is_global_scope = true;
 
     let expr = state
         .scoped(state.root_scope.clone(), |state| {
             expr.indirect().traverse(state)
-        })?
+        })
         .value;
 
     if !state.fn_ctx_stack.is_empty() {
-        return Err(TfErrBuilder::default()
-            .message("Internal error: function context stack is not empty after resolving names")
-            .span(expr.span)
-            .build_errs());
+        panic!("Function context stack is not empty after resolving names");
     }
 
     if !state.scope_ctx_stack.is_empty() {
-        return Err(TfErrBuilder::default()
-            .message("Internal error: scope context stack is not empty after resolving names")
-            .span(expr.span)
-            .build_errs());
+        panic!("Scope context stack is not empty after resolving names");
     }
 
     if !state.placeholder_ctx_stack.is_empty() {
-        return Err(TfErrBuilder::default()
-            .message("Internal error: placeholder context stack is not empty after resolving names")
-            .span(expr.span)
-            .build_errs());
+        panic!("Placeholder context stack is not empty after resolving names");
     }
 
-    Ok(expr)
+    (state, expr)
 }

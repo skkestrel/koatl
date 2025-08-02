@@ -78,6 +78,17 @@ pub fn transpile_to_py_ast<'src>(
 ) -> TlResult<PyBlock<'src>> {
     let tl_ast = parse_tl(src)?;
 
+    let (tl_ast, resolve_state) = resolve_names::resolve_names(&tl_ast).map_err(|e| {
+        e.0.into_iter()
+            .map(|e| TlErr {
+                kind: TlErrKind::Parse,
+                message: e.message,
+                span: e.span,
+                contexts: e.contexts,
+            })
+            .collect::<Vec<_>>()
+    })?;
+
     let output = transform_ast(&src, &tl_ast, options.allow_await).map_err(|e| {
         e.0.into_iter()
             .map(|e| TlErr {
