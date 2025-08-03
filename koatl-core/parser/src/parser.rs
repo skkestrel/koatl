@@ -1196,9 +1196,12 @@ where
         .map(|(decl, idents)| SStmtInner::Decl(idents, decl))
         .boxed();
 
+    let assign_lhs = nary_tuple.clone().memoized();
+    let inline_assign_lhs = expr.clone().memoized();
+
     let assign_stmt = group((
         decl_mod.clone().or_not(),
-        nary_tuple.clone(),
+        assign_lhs.clone(),
         symbol("=").ignore_then(nary_tuple.clone()),
     ))
     .map(|(decl, lhs, rhs)| SStmtInner::Assign(lhs.indirect(), rhs.indirect(), decl))
@@ -1206,18 +1209,21 @@ where
 
     let inline_assign_stmt = group((
         decl_mod.clone().or_not(),
-        expr.clone(),
+        inline_assign_lhs.clone(),
         symbol("=").ignore_then(expr.clone()),
     ))
     .map(|(decl, lhs, rhs)| SStmtInner::Assign(lhs.indirect(), rhs.indirect(), decl))
     .boxed();
 
-    let expr_stmt = nary_tuple
+    let expr_stmt = assign_lhs
         .clone()
         .map(|x| SStmtInner::Expr(x.indirect()))
         .boxed();
 
-    let inline_expr_stmt = expr.clone().map(|x| SStmtInner::Expr(x.indirect())).boxed();
+    let inline_expr_stmt = inline_assign_lhs
+        .clone()
+        .map(|x| SStmtInner::Expr(x.indirect()))
+        .boxed();
 
     let while_stmt = just(Token::Kw("while"))
         .ignore_then(expr.clone())
@@ -1355,14 +1361,11 @@ where
         .labelled("import statement")
         .boxed();
 
-    let module_stmt = just(Token::Kw("module")).map(|_| SStmtInner::Module);
-
     stmt.define(
         choice((
             decl_stmt.then_ignore(just(Token::Eol)),
             assign_stmt.then_ignore(just(Token::Eol)),
             expr_stmt.then_ignore(just(Token::Eol)),
-            module_stmt.then_ignore(just(Token::Eol)),
             while_stmt.clone().then_ignore(just(Token::Eol)),
             for_stmt.clone().then_ignore(just(Token::Eol)),
             return_stmt.then_ignore(just(Token::Eol)),

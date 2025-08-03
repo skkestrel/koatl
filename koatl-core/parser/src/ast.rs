@@ -120,7 +120,6 @@ pub enum DeclType {
 
 #[derive(Debug, Clone)]
 pub enum Stmt<'a, TTree: Tree> {
-    Module,
     Decl(Vec<SIdent<'a>>, DeclType),
     Assign(TTree::Expr, TTree::Expr, Option<DeclType>),
     Expr(TTree::Expr),

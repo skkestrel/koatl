@@ -1978,12 +1978,6 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     pre.push(a.import(aliases));
                 };
             }
-            Stmt::Module => {
-                return Err(simple_err(
-                    "Module statements are not allowed in the transform phase",
-                    span,
-                ));
-            }
         };
 
         Ok(pre)

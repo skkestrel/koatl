@@ -1,5 +1,3 @@
-#![allow(unused_variables)]
-
 use std::{
     io::Write,
     process::{Command, Stdio},

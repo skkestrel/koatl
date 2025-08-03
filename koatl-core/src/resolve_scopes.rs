@@ -1555,7 +1555,6 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                 Stmt::Import(import_stmt)
             }
             Stmt::Break => Stmt::Break,
-            Stmt::Module => Stmt::Module,
             Stmt::Continue => Stmt::Continue,
         };
 
