@@ -1600,7 +1600,7 @@ fn transform_postfix_expr<'src, 'ast>(
     expr: &'ast SExpr<'src>,
     access_ctx: PyAccessCtx,
 ) -> TlResult<SPyExprWithPre<'src>> {
-    let (lift_lhs, lhs_node) = match &expr.value {
+    let (mapped, lhs_node) = match &expr.value {
         Expr::RawAttribute(obj, _) => (false, obj),
         Expr::Subscript(obj, _) => (false, obj),
         Expr::Call(obj, _) => (false, obj),
@@ -1619,20 +1619,22 @@ fn transform_postfix_expr<'src, 'ast>(
         }
     };
 
-    if let Expr::Attribute(..) | Expr::RawAttribute(..) = &expr.value {
-    } else {
-        if access_ctx != PyAccessCtx::Load {
-            return Err(simple_err(
-                "Internal error: Cannot use null-coalescing in a non-Load context",
-                expr.span,
-            ));
+    if mapped {
+        if let Expr::MappedAttribute(..) | Expr::MappedRawAttribute(..) = &expr.value {
+        } else {
+            if access_ctx != PyAccessCtx::Load {
+                return Err(simple_err(
+                    "Cannot use null-coalescing as an assignment target",
+                    expr.span,
+                ));
+            }
         }
     }
 
     let mut pre = PyBlock::new();
     let a = PyAstBuilder::new(expr.span);
 
-    let lhs = if lift_lhs {
+    let lhs = if mapped {
         pre.bind(lhs_node.transform_lifted(ctx)?)
     } else {
         pre.bind(lhs_node.transform(ctx)?)
