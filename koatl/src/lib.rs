@@ -29,7 +29,7 @@ fn get_option(mode: &str) -> PyResult<TranspileOptions> {
 fn transpile(src: &str, mode: &str, filename: &str) -> PyResult<PyObject> {
     let options = get_option(mode)?;
 
-    let py_ast = transpile_to_py_ast(src, options).map_err(|e| {
+    let py_ast = transpile_to_py_ast(src, filename, options).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PySyntaxError, _>(format_errs(&e, filename, src))
     })?;
 
@@ -43,7 +43,7 @@ fn transpile(src: &str, mode: &str, filename: &str) -> PyResult<PyObject> {
 fn transpile_raw(src: &str, mode: &str, filename: &str) -> PyResult<PyObject> {
     let options = get_option(mode)?;
 
-    let ctx = transpile_to_source(src, options).map_err(|e| {
+    let ctx = transpile_to_source(src, filename, options).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PySyntaxError, _>(format_errs(&e, filename, src))
     })?;
 

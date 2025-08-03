@@ -51,8 +51,9 @@ struct PyDecl<'src> {
 #[allow(dead_code)]
 struct TlCtx<'src, 'ast> {
     source: &'src str,
-    export_stars: Vec<PyIdent<'src>>,
+    filename: &'src str,
     line_cache: LineColCache,
+    export_stars: Vec<PyIdent<'src>>,
 
     ident_counts: HashMap<Ident<'src>, usize>,
     py_decls: HashMap<DeclarationKey, PyDecl<'src>>,
@@ -60,6 +61,7 @@ struct TlCtx<'src, 'ast> {
     functions: &'ast HashMap<RefHash, FnInfo>,
     patterns: &'ast HashMap<RefHash, PatternInfo>,
     resolutions: &'ast HashMap<RefHash, DeclarationKey>,
+    memo_captures: &'ast HashMap<RefHash, FnInfo>,
 
     scopes: &'ast SlotMap<ScopeKey, Scope>,
     declarations: &'ast SlotMap<DeclarationKey, Declaration<'src>>,
@@ -70,11 +72,13 @@ struct TlCtx<'src, 'ast> {
 impl<'src, 'ast> TlCtx<'src, 'ast> {
     fn new(
         source: &'src str,
+        filename: &'src str,
         resolve_state: &'ast ResolveState<'src>,
         inference: &'ast InferenceCtx<'src, 'ast>,
     ) -> TlResult<Self> {
         Ok(TlCtx {
             source,
+            filename,
             export_stars: Vec::new(),
             line_cache: LineColCache::new(source),
 
@@ -84,6 +88,7 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
             functions: &resolve_state.functions,
             patterns: &resolve_state.patterns,
             resolutions: &resolve_state.resolutions,
+            memo_captures: &resolve_state.memo_captures,
 
             scopes: &resolve_state.scopes,
             declarations: &resolve_state.declarations,
@@ -1314,7 +1319,9 @@ struct PartialPyFnDef<'a> {
 }
 
 enum FnDef<'src, 'ast> {
-    // Args, body, is_do, is_async
+    /**
+     * Args, body, is_do, is_async
+     */
     PyFnDef(Vec<PyArgDefItem<'src>>, PyBlock<'src>, bool, bool),
 
     // Expr::Fn, args, body
@@ -1619,15 +1626,10 @@ fn transform_postfix_expr<'src, 'ast>(
         }
     };
 
-    if mapped {
-        if let Expr::MappedAttribute(..) | Expr::MappedRawAttribute(..) = &expr.value {
-        } else {
-            if access_ctx != PyAccessCtx::Load {
-                return Err(simple_err(
-                    "Cannot use null-coalescing as an assignment target",
-                    expr.span,
-                ));
-            }
+    if let Expr::Attribute(..) | Expr::RawAttribute(..) | Expr::Subscript(..) = &expr.value {
+    } else {
+        if access_ctx != PyAccessCtx::Load {
+            return Err(simple_err("Illegal assignment target", expr.span));
         }
     }
 
@@ -2228,6 +2230,70 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
 
                 a.binary(py_op, lhs, rhs)
             }
+            Expr::Memo(expr) => {
+                let memo_captures =
+                    ctx.memo_captures
+                        .get(&expr.as_ref().into())
+                        .ok_or_else(|| {
+                            simple_err(
+                                "Internal error: Memo expression not found in memo captures",
+                                expr.span,
+                            )
+                        })?;
+
+                let py_expr = expr.transform(ctx)?;
+                let mut py_body = PyBlock::new();
+
+                let mut nonlocals = vec![];
+                let mut globals = vec![];
+
+                for capture in memo_captures.captures.iter() {
+                    if ctx.scopes[ctx.declarations[*capture].scope].is_global {
+                        globals.push(ctx.decl_py_ident(*capture)?);
+                    } else {
+                        nonlocals.push(ctx.decl_py_ident(*capture)?);
+                    }
+                }
+
+                if !nonlocals.is_empty() {
+                    py_body.push(a.nonlocal(nonlocals.iter().map(|x| x.clone()).collect()));
+                }
+                if !globals.is_empty() {
+                    py_body.push(a.global(globals.iter().map(|x| x.clone()).collect()));
+                }
+
+                py_body.extend(py_expr.pre);
+                py_body.push(a.return_(py_expr.value));
+
+                let callback = pre.bind(make_fn_exp(
+                    ctx,
+                    FnDef::PyFnDef(vec![], py_body, false, false),
+                    &span,
+                )?);
+
+                let linecol = ctx.line_cache.linecol(span.start);
+
+                a.yield_(a.call(
+                    a.tl_builtin("memo"),
+                    vec![
+                        PyCallItem::Arg(
+                            a.str(
+                                format!("{}:{}:{}", ctx.filename, linecol.0, linecol.1)
+                            )
+                        ),
+                        PyCallItem::Arg(
+                            a.tuple(
+                                nonlocals
+                                    .iter()
+                                    .map(|x| a.list_item(a.load_ident(x.clone())))
+                                    .collect(),
+                                PyAccessCtx::Load,
+                            ),
+                        ),
+                        PyCallItem::Arg(callback),
+                    ],
+                ))
+            }
             Expr::Await(expr) => a.await_(pre.bind(expr.transform(ctx)?)),
             Expr::Yield(expr) => a.yield_(pre.bind(expr.transform(ctx)?)),
             Expr::YieldFrom(expr) => a.yield_from(a.call(
@@ -2346,11 +2412,12 @@ pub struct TransformOutput<'src> {
 
 pub fn transform_ast<'src, 'ast>(
     source: &'src str,
+    filename: &'src str,
     block: &'ast SExpr<'src>,
     resolve_state: &'ast ResolveState<'src>,
     inference: &'ast InferenceCtx<'src, 'ast>,
 ) -> TlResult<TransformOutput<'src>> {
-    let mut ctx = TlCtx::new(source, resolve_state, inference)?;
+    let mut ctx = TlCtx::new(source, filename, resolve_state, inference)?;
 
     let mut py_block = PyBlock::new();
     let expr = py_block.bind(block.transform(&mut ctx)?);

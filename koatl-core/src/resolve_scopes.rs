@@ -37,6 +37,7 @@ pub struct ResolveState<'src> {
     pub resolutions: HashMap<RefHash, DeclarationKey>,
     pub functions: HashMap<RefHash, FnInfo>,
     pub patterns: HashMap<RefHash, PatternInfo>,
+    pub memo_captures: HashMap<RefHash, FnInfo>,
 
     pub declarations: SlotMap<DeclarationKey, Declaration<'src>>,
     pub scopes: SlotMap<ScopeKey, Scope>,
@@ -86,6 +87,7 @@ impl<'src> ResolveState<'src> {
             resolutions: HashMap::new(),
             functions: HashMap::new(),
             patterns: HashMap::new(),
+            memo_captures: HashMap::new(),
 
             declarations: SlotMap::with_key(),
             scopes,
@@ -116,6 +118,7 @@ impl<'src> ResolveState<'src> {
             }
 
             let Some(fn_ctx) = self.fn_stack.last_mut() else {
+                // This should never happen since if not fn_local, there must be at least one function context
                 return Err(simple_err("Internal error: no function context", ident.span).into());
             };
 
@@ -374,12 +377,19 @@ impl PlaceholderGuard {
     }
 }
 
+// This is a bit of a misuse, since during traversal,
+// FnInfo represents a "capture context" rather than a function
+// (i.e., it logs captures and monadic constructs like Async)
+
+// ...but it becomes a real function context once it gets added
+// to the hashmap.
 #[derive(Debug, Clone)]
 pub struct FnInfo {
     pub is_do: bool,
     pub is_async: bool,
     pub is_generator: bool,
     pub is_placeholder: bool,
+    pub is_memo: bool,
 
     pub arg_names: Vec<DeclarationKey>,
     pub captures: HashSet<DeclarationKey>,
@@ -392,6 +402,7 @@ impl FnInfo {
             is_async: false,
             is_generator: false,
             is_placeholder: false,
+            is_memo: false,
             arg_names: Vec::new(),
             captures: HashSet::new(),
         }
@@ -1285,6 +1296,42 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 }
 
                 Expr::Unary(unary_op, expr.traverse(state))
+            }
+            Expr::Memo(inner) => {
+                state.set_do(span);
+
+                let mut fn_ctx = FnInfo::new();
+                fn_ctx.is_memo = true;
+
+                let mut scope = Scope::new();
+                scope.is_fn = true;
+
+                // TODO it's confusing that we need to
+                // set scope.is_fn = true all the time in order
+                // for captures to be found properly.
+                // is there any better way?
+
+                let scope = state.scopes.insert(scope);
+                state.fn_stack.push(fn_ctx);
+
+                let scoped = state.scoped(scope, |state| {
+                    state.placeholder_guarded(span, |state| inner.traverse_expecting_scope(state))
+                });
+
+                let inner = scoped.value;
+
+                let fn_ctx = state.fn_stack.pop().unwrap();
+
+                if fn_ctx.is_async || fn_ctx.is_generator || fn_ctx.is_do {
+                    state.errors.extend(simple_err(
+                        "Memo expressions cannot be async, generator, or do",
+                        span,
+                    ));
+                }
+
+                state.memo_captures.insert(inner.as_ref().into(), fn_ctx);
+
+                Expr::Memo(inner)
             }
             Expr::Await(x) => {
                 state.set_async(span);

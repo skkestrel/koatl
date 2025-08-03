@@ -21,11 +21,18 @@ from .record import *
 from .helpers import *
 
 
+def dummy_memo(*args, **kwargs):
+    raise RuntimeError(
+        "memo is not available without the prelude. Please import koatl.prelude."
+    )
+
+
 __tl__ = SimpleNamespace(
     Exception=Exception,
     slice=slice,
     vget=virtual.vget,
     vhas=virtual.vhas,
+    memo=dummy_memo,
     unpack_record=helpers.unpack_record,
     set_exports=helpers.set_exports,
     do=helpers.do,

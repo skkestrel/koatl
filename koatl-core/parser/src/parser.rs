@@ -781,8 +781,17 @@ where
     })
     .labelled("control-expression");
 
+    let memo_expr = just(Token::Ident("memo"))
+        .then(just(START_BLOCK).or_not())
+        .ignore_then(expr_or_inline_stmt_or_block.clone())
+        .map(|x| Expr::Memo(x.indirect()))
+        .spanned_expr()
+        .labelled("memo-expression")
+        .boxed();
+
     atom.define(
         choice((
+            memo_expr,
             ident_expr.clone(),
             classic_if,
             classic_match,

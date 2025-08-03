@@ -334,11 +334,11 @@ impl PyAstBuilder {
     }
 
     // Utility builders for tuple items
-    pub fn tuple_item<'src>(&self, expr: SPyExpr<'src>) -> PyListItem<'src> {
+    pub fn list_item<'src>(&self, expr: SPyExpr<'src>) -> PyListItem<'src> {
         PyListItem::Item(expr)
     }
 
-    pub fn tuple_spread<'src>(&self, expr: SPyExpr<'src>) -> PyListItem<'src> {
+    pub fn list_spread<'src>(&self, expr: SPyExpr<'src>) -> PyListItem<'src> {
         PyListItem::Spread(expr)
     }
 

@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let filename = std::env::args().nth(2).ok_or("Missing filename argument")?;
     let src = std::fs::read_to_string(&filename).unwrap();
 
-    match transpile_to_source(&src, TranspileOptions::module()) {
+    match transpile_to_source(&src, &filename, TranspileOptions::module()) {
         Ok(ctx) => match cmd.as_str() {
             "trans" => {
                 println!("{}", ctx.source);

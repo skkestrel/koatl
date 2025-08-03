@@ -60,6 +60,7 @@ impl TranspileOptions {
 
 pub fn transpile_to_py_ast<'src>(
     src: &'src str,
+    filename: &'src str,
     options: TranspileOptions,
 ) -> TlResult<PyBlock<'src>> {
     let tl_ast = parse_tl(src)?;
@@ -79,7 +80,7 @@ pub fn transpile_to_py_ast<'src>(
         }
     };
 
-    let output = match transform_ast(&src, &tl_ast, &resolve_state, &inference) {
+    let output = match transform_ast(&src, &filename, &tl_ast, &resolve_state, &inference) {
         Ok(output) => Some(output),
         Err(e) => {
             errs.extend(e);
@@ -173,8 +174,12 @@ pub fn transpile_to_py_ast<'src>(
     Ok(py_ast)
 }
 
-pub fn transpile_to_source(src: &str, options: TranspileOptions) -> TlResult<EmitCtx> {
-    let mut py_ast = transpile_to_py_ast(src, options)?;
+pub fn transpile_to_source(
+    src: &str,
+    filename: &str,
+    options: TranspileOptions,
+) -> TlResult<EmitCtx> {
+    let mut py_ast = transpile_to_py_ast(src, filename, options)?;
 
     let mut ctx = EmitCtx::new();
     py_ast.emit_to(&mut ctx, 0).map_err(|e| {

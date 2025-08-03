@@ -2,6 +2,7 @@ export import .monad.*
 export import .result.*
 export import .async.*
 export import .reader.*
+export import .memo.*
 
 export Fn = class:
     compose = staticmethod& (*args) =>
