@@ -475,6 +475,245 @@ where
     })
 }
 
+pub fn statement<'tokens, 'src: 'tokens, TInput, PBody, PTuple, PExpr, PIdent, PPattern>(
+    expr_or_inline_stmt_or_block: PBody,
+    nary_tuple: PTuple,
+    expr: PExpr,
+    ident: PIdent,
+    nary_pattern: PPattern,
+) -> (
+    impl Parser<'tokens, TInput, SStmt<'src>, TExtra<'tokens, 'src>> + Clone,
+    impl Parser<'tokens, TInput, SStmt<'src>, TExtra<'tokens, 'src>> + Clone,
+)
+where
+    TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
+    PBody: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PTuple: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PExpr: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PIdent: Parser<'tokens, TInput, SIdent<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PPattern: Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+{
+    let mut stmt = Recursive::<chumsky::recursive::Indirect<TInput, SStmt, TExtra>>::declare();
+    let mut inline_stmt =
+        Recursive::<chumsky::recursive::Indirect<TInput, SStmt, TExtra>>::declare();
+
+    let decl_mod = choice((
+        just(Token::Kw("export")).to(DeclType::Export),
+        just(Token::Kw("global")).to(DeclType::Global),
+        just(Token::Kw("let")).to(DeclType::Let),
+        just(Token::Kw("const")).to(DeclType::Const),
+    ));
+
+    let decl_stmt = decl_mod
+        .clone()
+        .then(ident.clone().separated_by(symbol(",")).collect())
+        .map(|(decl, idents)| SStmtInner::Decl(idents, decl))
+        .boxed();
+
+    let assign_lhs = nary_tuple.clone().memoized();
+    let inline_assign_lhs = expr.clone().memoized();
+
+    let assign_stmt = group((
+        decl_mod.clone().or_not(),
+        assign_lhs.clone(),
+        symbol("=").ignore_then(nary_tuple.clone()),
+    ))
+    .map(|(decl, lhs, rhs)| SStmtInner::Assign(lhs.indirect(), rhs.indirect(), decl))
+    .boxed();
+
+    let inline_assign_stmt = group((
+        decl_mod.clone().or_not(),
+        inline_assign_lhs.clone(),
+        symbol("=").ignore_then(expr.clone()),
+    ))
+    .map(|(decl, lhs, rhs)| SStmtInner::Assign(lhs.indirect(), rhs.indirect(), decl))
+    .boxed();
+
+    let expr_stmt = assign_lhs
+        .clone()
+        .map(|x| SStmtInner::Expr(x.indirect()))
+        .boxed();
+
+    let inline_expr_stmt = inline_assign_lhs
+        .clone()
+        .map(|x| SStmtInner::Expr(x.indirect()))
+        .boxed();
+
+    let while_stmt = just(Token::Kw("while"))
+        .ignore_then(expr.clone())
+        .then_ignore(just(START_BLOCK))
+        .then(expr_or_inline_stmt_or_block.clone())
+        .map(|(cond, body)| SStmtInner::While(cond.indirect(), body.indirect()))
+        .labelled("while statement")
+        .boxed();
+
+    let except_block = just(Token::Eol)
+        .then(just(Token::Kw("except")))
+        .ignore_then(nary_pattern.clone().or_not())
+        .boxed()
+        .then(just(START_BLOCK).ignore_then(expr_or_inline_stmt_or_block.clone()))
+        .map(|(pattern, body)| SMatchCase {
+            pattern: pattern.map(|x| x.indirect()),
+            guard: None,
+            body: body.indirect(),
+        })
+        .labelled("except block")
+        .boxed();
+
+    let finally_block = one_of([Token::Eol])
+        .then(just(Token::Kw("finally")))
+        .then(just(START_BLOCK))
+        .ignore_then(expr_or_inline_stmt_or_block.clone())
+        .labelled("finally block")
+        .boxed();
+
+    let try_stmt = just(Token::Kw("try"))
+        .then(just(START_BLOCK))
+        .ignore_then(group((
+            expr_or_inline_stmt_or_block.clone(),
+            except_block.repeated().collect(),
+            finally_block.or_not(),
+        )))
+        .map(|(body, excepts, finally)| {
+            SStmtInner::Try(body.indirect(), excepts, finally.map(|x| x.indirect()))
+        })
+        .labelled("try statement")
+        .boxed();
+
+    let for_stmt = just(Token::Kw("for"))
+        .ignore_then(group((
+            nary_pattern.clone().then_ignore(just(Token::Kw("in"))),
+            expr.clone().then_ignore(just(START_BLOCK)),
+            expr_or_inline_stmt_or_block.clone(),
+        )))
+        .map(|(decl, iter, body)| {
+            SStmtInner::For(decl.indirect(), iter.indirect(), body.indirect())
+        })
+        .labelled("for statement")
+        .boxed();
+
+    let return_stmt = just(Token::Kw("return"))
+        .ignore_then(nary_tuple.clone())
+        .map(|x| SStmtInner::Return(x.indirect()))
+        .labelled("return statement")
+        .boxed();
+
+    let inline_return_stmt = just(Token::Kw("return"))
+        .ignore_then(expr.clone())
+        .map(|x| SStmtInner::Return(x.indirect()))
+        .labelled("inline return statement")
+        .boxed();
+
+    let assert_stmt = just(Token::Ident("assert"))
+        .ignore_then(expr.clone())
+        .then(symbol(",").ignore_then(expr.clone()).or_not())
+        .map(|(x, y)| SStmtInner::Assert(x.indirect(), y.map(|y| y.indirect())))
+        .labelled("assert statement")
+        .boxed();
+
+    let raise_stmt = just(Token::Kw("raise"))
+        .ignore_then(nary_tuple.clone().or_not())
+        .map(|x| SStmtInner::Raise(x.map(|x| x.indirect())))
+        .labelled("raise statement")
+        .boxed();
+
+    let inline_raise_stmt = just(Token::Kw("raise"))
+        .ignore_then(expr.clone().or_not())
+        .map(|x| SStmtInner::Raise(x.map(|x| x.indirect())))
+        .labelled("inline raise statement")
+        .boxed();
+
+    let break_stmt = just(Token::Kw("break"))
+        .map(|_| SStmtInner::Break)
+        .labelled("break statement")
+        .boxed();
+
+    let continue_stmt = just(Token::Kw("continue"))
+        .map(|_| SStmtInner::Continue)
+        .labelled("continue statement")
+        .boxed();
+
+    let import_stmt = just(Token::Kw("export"))
+        .to(1)
+        .or_not()
+        .then_ignore(just(Token::Kw("import")))
+        .then(group((
+            symbol(".").repeated().count(),
+            ident
+                .clone()
+                .then_ignore(symbol("."))
+                .repeated()
+                .collect()
+                .boxed(),
+            choice((
+                enumeration(
+                    ident
+                        .clone()
+                        .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not()),
+                    symbol(","),
+                )
+                .delimited_by_with_eol(symbol("("), symbol(")"))
+                .map(ImportList::Leaves)
+                .boxed(),
+                just(Token::Symbol("*")).map(|_| ImportList::Star),
+                ident
+                    .clone()
+                    .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not())
+                    .map(|x| ImportList::Leaves(vec![x]))
+                    .boxed(),
+            ))
+            .boxed(),
+        )))
+        .map(|(reexport, (level, trunk, import_list))| {
+            SStmtInner::Import(ImportStmt {
+                trunk,
+                imports: import_list,
+                level,
+                reexport: reexport.is_some(),
+            })
+        })
+        .labelled("import statement")
+        .boxed();
+
+    stmt.define(
+        choice((
+            decl_stmt.then_ignore(just(Token::Eol)),
+            assign_stmt.then_ignore(just(Token::Eol)),
+            expr_stmt.then_ignore(just(Token::Eol)),
+            while_stmt.clone().then_ignore(just(Token::Eol)),
+            for_stmt.clone().then_ignore(just(Token::Eol)),
+            return_stmt.then_ignore(just(Token::Eol)),
+            assert_stmt.then_ignore(just(Token::Eol)),
+            raise_stmt.then_ignore(just(Token::Eol)),
+            break_stmt.clone().then_ignore(just(Token::Eol)),
+            continue_stmt.clone().then_ignore(just(Token::Eol)),
+            import_stmt.then_ignore(just(Token::Eol)),
+            try_stmt.then_ignore(just(Token::Eol)),
+        ))
+        .labelled("statement")
+        .map_with(|x, e| x.spanned(e.span()))
+        .boxed(),
+    );
+
+    inline_stmt.define(
+        choice((
+            inline_assign_stmt,
+            inline_expr_stmt,
+            while_stmt,
+            for_stmt,
+            inline_return_stmt,
+            inline_raise_stmt,
+            break_stmt,
+            continue_stmt,
+        ))
+        .labelled("inline-statement")
+        .map_with(|x, e| x.spanned(e.span()))
+        .boxed(),
+    );
+
+    (stmt, inline_stmt)
+}
+
 pub fn parser<'tokens, 'src: 'tokens, TInput>()
 -> impl Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone
 where
@@ -483,6 +722,7 @@ where
     let mut stmt = Recursive::<chumsky::recursive::Indirect<TInput, SStmt, TExtra>>::declare();
     let mut inline_stmt =
         Recursive::<chumsky::recursive::Indirect<TInput, SStmt, TExtra>>::declare();
+
     let mut atom = Recursive::<chumsky::recursive::Indirect<TInput, SExpr, TExtra>>::declare();
     let mut expr = Recursive::<chumsky::recursive::Indirect<TInput, SExpr, TExtra>>::declare();
     let mut unary = Recursive::<chumsky::recursive::Indirect<TInput, SExpr, TExtra>>::declare();
@@ -1181,221 +1421,16 @@ where
         binary6.labelled("expression").as_context().boxed(), // .memoized(),
     );
 
-    // Statements
-
-    let decl_mod = choice((
-        just(Token::Kw("export")).to(DeclType::Export),
-        just(Token::Kw("global")).to(DeclType::Global),
-        just(Token::Kw("let")).to(DeclType::Let),
-        just(Token::Kw("const")).to(DeclType::Const),
-    ));
-
-    let decl_stmt = decl_mod
-        .clone()
-        .then(ident.clone().separated_by(symbol(",")).collect())
-        .map(|(decl, idents)| SStmtInner::Decl(idents, decl))
-        .boxed();
-
-    let assign_lhs = nary_tuple.clone().memoized();
-    let inline_assign_lhs = expr.clone().memoized();
-
-    let assign_stmt = group((
-        decl_mod.clone().or_not(),
-        assign_lhs.clone(),
-        symbol("=").ignore_then(nary_tuple.clone()),
-    ))
-    .map(|(decl, lhs, rhs)| SStmtInner::Assign(lhs.indirect(), rhs.indirect(), decl))
-    .boxed();
-
-    let inline_assign_stmt = group((
-        decl_mod.clone().or_not(),
-        inline_assign_lhs.clone(),
-        symbol("=").ignore_then(expr.clone()),
-    ))
-    .map(|(decl, lhs, rhs)| SStmtInner::Assign(lhs.indirect(), rhs.indirect(), decl))
-    .boxed();
-
-    let expr_stmt = assign_lhs
-        .clone()
-        .map(|x| SStmtInner::Expr(x.indirect()))
-        .boxed();
-
-    let inline_expr_stmt = inline_assign_lhs
-        .clone()
-        .map(|x| SStmtInner::Expr(x.indirect()))
-        .boxed();
-
-    let while_stmt = just(Token::Kw("while"))
-        .ignore_then(expr.clone())
-        .then_ignore(just(START_BLOCK))
-        .then(expr_or_inline_stmt_or_block.clone())
-        .map(|(cond, body)| SStmtInner::While(cond.indirect(), body.indirect()))
-        .labelled("while statement")
-        .boxed();
-
-    let except_block = just(Token::Eol)
-        .then(just(Token::Kw("except")))
-        .ignore_then(nary_pattern.clone().or_not())
-        .boxed()
-        .then(just(START_BLOCK).ignore_then(expr_or_inline_stmt_or_block.clone()))
-        .map(|(pattern, body)| SMatchCase {
-            pattern: pattern.map(|x| x.indirect()),
-            guard: None,
-            body: body.indirect(),
-        })
-        .labelled("except block")
-        .boxed();
-
-    let finally_block = one_of([Token::Eol])
-        .then(just(Token::Kw("finally")))
-        .then(just(START_BLOCK))
-        .ignore_then(expr_or_inline_stmt_or_block.clone())
-        .labelled("finally block")
-        .boxed();
-
-    let try_stmt = just(Token::Kw("try"))
-        .then(just(START_BLOCK))
-        .ignore_then(group((
-            expr_or_inline_stmt_or_block.clone(),
-            except_block.repeated().collect(),
-            finally_block.or_not(),
-        )))
-        .map(|(body, excepts, finally)| {
-            SStmtInner::Try(body.indirect(), excepts, finally.map(|x| x.indirect()))
-        })
-        .labelled("try statement")
-        .boxed();
-
-    let for_stmt = just(Token::Kw("for"))
-        .ignore_then(group((
-            nary_pattern.clone().then_ignore(just(Token::Kw("in"))),
-            expr.clone().then_ignore(just(START_BLOCK)),
-            expr_or_inline_stmt_or_block.clone(),
-        )))
-        .map(|(decl, iter, body)| {
-            SStmtInner::For(decl.indirect(), iter.indirect(), body.indirect())
-        })
-        .labelled("for statement")
-        .boxed();
-
-    let return_stmt = just(Token::Kw("return"))
-        .ignore_then(nary_tuple.clone())
-        .map(|x| SStmtInner::Return(x.indirect()))
-        .labelled("return statement")
-        .boxed();
-
-    let inline_return_stmt = just(Token::Kw("return"))
-        .ignore_then(expr.clone())
-        .map(|x| SStmtInner::Return(x.indirect()))
-        .labelled("inline return statement")
-        .boxed();
-
-    let assert_stmt = just(Token::Ident("assert"))
-        .ignore_then(expr.clone())
-        .then(symbol(",").ignore_then(expr.clone()).or_not())
-        .map(|(x, y)| SStmtInner::Assert(x.indirect(), y.map(|y| y.indirect())))
-        .labelled("assert statement")
-        .boxed();
-
-    let raise_stmt = just(Token::Kw("raise"))
-        .ignore_then(nary_tuple.clone().or_not())
-        .map(|x| SStmtInner::Raise(x.map(|x| x.indirect())))
-        .labelled("raise statement")
-        .boxed();
-
-    let inline_raise_stmt = just(Token::Kw("raise"))
-        .ignore_then(expr.clone().or_not())
-        .map(|x| SStmtInner::Raise(x.map(|x| x.indirect())))
-        .labelled("inline raise statement")
-        .boxed();
-
-    let break_stmt = just(Token::Kw("break"))
-        .map(|_| SStmtInner::Break)
-        .labelled("break statement")
-        .boxed();
-
-    let continue_stmt = just(Token::Kw("continue"))
-        .map(|_| SStmtInner::Continue)
-        .labelled("continue statement")
-        .boxed();
-
-    let import_stmt = just(Token::Kw("export"))
-        .to(1)
-        .or_not()
-        .then_ignore(just(Token::Kw("import")))
-        .then(group((
-            symbol(".").repeated().count(),
-            ident
-                .clone()
-                .then_ignore(symbol("."))
-                .repeated()
-                .collect()
-                .boxed(),
-            choice((
-                enumeration(
-                    ident
-                        .clone()
-                        .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not()),
-                    symbol(","),
-                )
-                .delimited_by_with_eol(symbol("("), symbol(")"))
-                .map(ImportList::Leaves)
-                .boxed(),
-                just(Token::Symbol("*")).map(|_| ImportList::Star),
-                ident
-                    .clone()
-                    .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not())
-                    .map(|x| ImportList::Leaves(vec![x]))
-                    .boxed(),
-            ))
-            .boxed(),
-        )))
-        .map(|(reexport, (level, trunk, import_list))| {
-            SStmtInner::Import(ImportStmt {
-                trunk,
-                imports: import_list,
-                level,
-                reexport: reexport.is_some(),
-            })
-        })
-        .labelled("import statement")
-        .boxed();
-
-    stmt.define(
-        choice((
-            decl_stmt.then_ignore(just(Token::Eol)),
-            assign_stmt.then_ignore(just(Token::Eol)),
-            expr_stmt.then_ignore(just(Token::Eol)),
-            while_stmt.clone().then_ignore(just(Token::Eol)),
-            for_stmt.clone().then_ignore(just(Token::Eol)),
-            return_stmt.then_ignore(just(Token::Eol)),
-            assert_stmt.then_ignore(just(Token::Eol)),
-            raise_stmt.then_ignore(just(Token::Eol)),
-            break_stmt.clone().then_ignore(just(Token::Eol)),
-            continue_stmt.clone().then_ignore(just(Token::Eol)),
-            import_stmt.then_ignore(just(Token::Eol)),
-            try_stmt.then_ignore(just(Token::Eol)),
-        ))
-        .labelled("statement")
-        .map_with(|x, e| x.spanned(e.span()))
-        .boxed(),
+    let (stmt_, inline_stmt_) = statement(
+        expr_or_inline_stmt_or_block.clone(),
+        nary_tuple.clone(),
+        expr.clone(),
+        ident.clone(),
+        nary_pattern.clone(),
     );
 
-    inline_stmt.define(
-        choice((
-            inline_assign_stmt,
-            inline_expr_stmt,
-            while_stmt,
-            for_stmt,
-            inline_return_stmt,
-            inline_raise_stmt,
-            break_stmt,
-            continue_stmt,
-        ))
-        .labelled("inline-statement")
-        .map_with(|x, e| x.spanned(e.span()))
-        .boxed(),
-    );
+    stmt.define(stmt_.labelled("statement").boxed());
+    inline_stmt.define(inline_stmt_.labelled("inline-statement").boxed());
 
     block.labelled("program")
 }
