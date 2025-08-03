@@ -1142,17 +1142,18 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 let mut fn_info = FnInfo::new();
                 for (i, decl) in decls.iter().enumerate() {
-                    if let Some(found) = decls[..i]
-                        .iter()
-                        .find(|x| state.declarations[**x].name == state.declarations[*decl].name)
-                    {
-                        state.errors.extend(
-                            TlErrBuilder::new()
-                                .message("Duplicate declaration in function arguments")
-                                .context("First declared here", state.declarations[*found].loc)
-                                .span(state.declarations[*decl].loc)
-                                .build(),
-                        );
+                    if state.declarations[*decl].name.0 != "_" {
+                        if let Some(found) = decls[..i].iter().find(|x| {
+                            state.declarations[**x].name == state.declarations[*decl].name
+                        }) {
+                            state.errors.extend(
+                                TlErrBuilder::new()
+                                    .message("Duplicate declaration in function arguments")
+                                    .context("First declared here", state.declarations[*found].loc)
+                                    .span(state.declarations[*decl].loc)
+                                    .build(),
+                            );
+                        }
                     }
 
                     fn_info.arg_names.push(*decl);

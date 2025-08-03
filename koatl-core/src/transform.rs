@@ -1026,7 +1026,7 @@ fn create_throwing_matcher<'src, 'ast>(
     pattern: &'ast SPattern<'src>,
     pattern_meta: &'ast PatternInfo,
 ) -> TlResult<(PyBlock<'src>, PyIdent<'src>)> {
-    if let Pattern::Capture(Some(_)) = &pattern.value {
+    if let Pattern::Capture(Some(ident)) = &pattern.value {
         if pattern_meta.decls.len() != 1 {
             return Err(simple_err(
                 "Internal: expected exactly one decl",
@@ -1034,8 +1034,10 @@ fn create_throwing_matcher<'src, 'ast>(
             ));
         }
 
-        let decl = pattern_meta.decls.iter().next().unwrap();
-        return Ok((PyBlock::new(), ctx.decl_py_ident(*decl)?));
+        if ident.value.0 != "_" {
+            let decl = pattern_meta.decls.iter().next().unwrap();
+            return Ok((PyBlock::new(), ctx.decl_py_ident(*decl)?));
+        }
     }
 
     let cursor = ctx.create_aux_var("matcher", pattern.span.start);
@@ -1290,7 +1292,15 @@ fn make_arglist<'src, 'ast>(
                     .iter()
                     .find(|key| ctx.declarations[**key].name == name.value)
                     .ok_or_else(|| simple_err("Internal: missing arg name", name.span))?;
-                PyArgDefItem::ArgSpread(ctx.decl_py_ident(*decl)?)
+
+                let decl_value = &ctx.declarations[*decl];
+
+                if decl_value.name.0 == "_" {
+                    // need to create a unique name to prevent python complaining
+                    PyArgDefItem::ArgSpread(ctx.create_aux_var("_", name.span.start))
+                } else {
+                    PyArgDefItem::ArgSpread(ctx.decl_py_ident(*decl)?)
+                }
             }
             ArgDefItem::KwargSpread(name) => {
                 let decl = info
@@ -1298,7 +1308,14 @@ fn make_arglist<'src, 'ast>(
                     .iter()
                     .find(|key| ctx.declarations[**key].name == name.value)
                     .ok_or_else(|| simple_err("Internal: missing arg name", name.span))?;
-                PyArgDefItem::KwargSpread(ctx.decl_py_ident(*decl)?)
+
+                let decl_value = &ctx.declarations[*decl];
+
+                if decl_value.name.0 == "_" {
+                    PyArgDefItem::KwargSpread(ctx.create_aux_var("_", name.span.start))
+                } else {
+                    PyArgDefItem::KwargSpread(ctx.decl_py_ident(*decl)?)
+                }
             }
         };
         args_vec.push(arg);
@@ -1390,7 +1407,8 @@ fn prepare_py_fn<'src, 'ast>(
             let mut globals = vec![];
 
             for capture in fn_info.captures.iter() {
-                if ctx.scopes[ctx.declarations[*capture].scope].is_global {
+                let scope = &ctx.scopes[ctx.declarations[*capture].scope];
+                if scope.is_global || scope.is_class {
                     globals.push(ctx.decl_py_ident(*capture)?);
                 } else {
                     nonlocals.push(ctx.decl_py_ident(*capture)?);

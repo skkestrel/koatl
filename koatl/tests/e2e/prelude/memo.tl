@@ -23,8 +23,9 @@ f = x =>
         counts = counts + 1
         x * 2
 
-ctx = MemoCtx()
+ctx = Memo.Cache()
 assert_eq(f(10).run(ctx), 20)
 assert_eq(f(10).run(ctx), 20)
+assert_eq(f(5).run(ctx), 10)
 assert_eq(f(5).run(ctx), 10)
 assert_eq(counts, 2)

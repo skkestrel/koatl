@@ -31,6 +31,22 @@
 >>> #                              v                           v
 >>> ["key0", "key1"].map(x => try { key0: "Queried value" }[x] ?? "Default").list()
 ["Queried value", "Default"]
+
+>>> # Memoization made easy as pie
+>>> #            v
+>>> let fib = Memo.fn& x =>
+>>>     if x < 2: return 1
+>>>     let a = @fib(x - 1) # Monadic bind syntax with @
+>>>     let b = @fib(x - 2)
+>>>     memo a + b
+>>> #          ^
+>>> # pretend this is slow too
+>>> fib(200).run()
+453973694165307953197296969697410619233826
+
+>>> import timeit.timeit
+>>> timeit(() => fib(200).run(), number=1000000)
+1.097149383975193
 ```
 
 > Note: Koatl is under heavy development. Features may be broken, added, or removed at any time.

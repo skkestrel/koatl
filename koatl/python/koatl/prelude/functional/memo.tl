@@ -1,57 +1,63 @@
 import collections.defaultdict
 import functools.wraps
 import .result.Ok
+import .Monad
 
-export MemoCtx = class:
-    __init__ = self =>
-        self.cache = defaultdict(dict)
+export Memo = class(Monad):
+    Cache = class:
+        __init__ = self =>
+            self.cache = defaultdict(dict)
 
-    get_or_compute = (self, name, args, f) =>
-        if try self.cache[name][args] except KeyError() matches (Ok() as v):
-            return v
+        get_or_compute = (self, name, deps, f) =>
+            if try self.cache[name][deps] except KeyError() matches (Ok() as v):
+                return v
 
-        let value = f()
-        self.cache[name][args] = value
-        value
+            let value = f()
+            self.cache[name][deps] = value
+            value
 
-    __repr__ = self => f"MemoCtx({self.cache})"
+        __repr__ = self => f"Memo.Cache({self.cache})"
 
-export Memo = class:
-    __init__ = (self, id, deps, f) =>
-        self.id = id
-        self.deps = deps
-        self.f = f
+    __init__ = (self, f) => self.f = f
 
     __repr__ = self => f"Memo(...)"
 
-    run = (self, ctx=MemoCtx()) =>
-        ctx.get_or_compute(self.id, tuple(self.deps), self.f)
+    value = staticmethod& (id, deps, f) =>
+        Memo(ctx => ctx.get_or_compute(id, tuple(deps), f))
 
     fn = staticmethod& f => wraps(f)& (*args, **kwargs) =>
-        let m = object.__new__(Memo)
-        let name = f"{f.__module__}.{f.__qualname__}"
-        m.run = (ctx=MemoCtx()) =>
-            let arg_key = (tuple(args), tuple(kwargs.items()))
+        let id = f"{f.__module__}.{f.__qualname__}"
+        let deps = (tuple(args), tuple(kwargs.items()))
 
-            ctx.get_or_compute(name, arg_key, () =>
+        Memo(ctx =>
+            ctx.get_or_compute(id, deps, () =>
                 let v = f(*args, **kwargs)
                 if v matches Memo():
                     v = v.run(ctx)
                 v
             )
-        m
+        )
 
-    bind_gen = (self, gen) =>
-        let m = object.__new__(Memo)
-        m.run = (ctx=MemoCtx()) =>
-            self = self.run(ctx)
-            try:
-                while True:
-                    self = gen.send(self)
-                    if self matches Memo():
-                        self = self.run(ctx)
-            except StopIteration(value=value):
-                return value
-        m
+    run = (self, ctx=Cache()) => self.f(ctx)
 
-__tl__.memo = Memo
+    pure = staticmethod& value => Memo(ctx => value)
+
+    bind_once = (self, f) => Memo(ctx =>
+        let value = f(self.run(ctx))
+        if value matches Memo():
+            value = value.run(ctx)
+        value
+    )
+
+    bind_gen = (self, gen) => Memo(ctx =>
+        self = self.run(ctx)
+        try:
+            while True:
+                self = gen.send(self)
+                if self matches Memo():
+                    self = self.run(ctx)
+        except StopIteration(value=value):
+            return value
+    )
+
+__tl__.memo = Memo.value

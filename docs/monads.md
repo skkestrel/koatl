@@ -20,6 +20,30 @@ def f():
 Due to limitations of generators (they can't be copied), `@` specifically requires `bind_once(self, f)` instead of the usual `bind(self, f)`;
 the difference is that `f` should called at most once in `bind_once(self, f)`.
 
+## Memo
+
+The Memo monad allows computations to be cached, together with the `memo` keyword.
+
+```koatl
+f = () =>
+    let a = memo 1 + 2
+    let b = memo a * 2
+    let c = memo:
+        let temp = 2
+        a * b * 2 + temp
+    a + b + c
+
+f().run(Memo.Cache()) # or f().run()
+
+g = Memo.fn& x =>
+    2 + 2
+
+g().run()
+```
+
+A Memo instance can be constructed using `Memo.fn(function_to_memoize)`, or `Memo.value(unique_id, dependencies, function)`.
+Using the `memo` keyword automatically constructs a `@Memo.value(id, deps, fn)`, where `deps` is inferred using variables _directly_ captured by the proceeding expression (not including global captures, or captures by inner nested functions).
+
 ## Result
 
 Koatl defines a pseudo-class called Ok, which is used to check that a value is not None and not an error:
