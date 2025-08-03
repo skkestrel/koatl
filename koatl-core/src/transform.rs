@@ -15,6 +15,7 @@ use crate::{
 use once_cell::sync::Lazy;
 use parser::ast::*;
 use slotmap::SlotMap;
+use std::hash::{Hash, Hasher};
 
 static PY_KWS: &[&str] = &[
     "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else", "except",
@@ -2285,26 +2286,35 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
 
                 let linecol = ctx.line_cache.linecol(span.start);
 
-                a.yield_(a.call(
-                    a.tl_builtin("memo"),
-                    vec![
-                        PyCallItem::Arg(
-                            a.str(
-                                format!("{}:{}:{}", ctx.filename, linecol.0, linecol.1)
-                            )
-                        ),
-                        PyCallItem::Arg(
-                            a.tuple(
-                                nonlocals
-                                    .iter()
-                                    .map(|x| a.list_item(a.load_ident(x.clone())))
-                                    .collect(),
-                                PyAccessCtx::Load,
+                a.yield_(
+                    a.call(
+                        a.tl_builtin("memo"),
+                        vec![
+                            PyCallItem::Arg(a.str(format!(
+                                "{}:{}:{}:{:08x}",
+                                ctx.filename,
+                                linecol.0,
+                                linecol.1,
+                                {
+                                    let mut hasher =
+                                        std::collections::hash_map::DefaultHasher::new();
+                                    ctx.source[span.start..span.end].hash(&mut hasher);
+                                    hasher.finish() as u32
+                                }
+                            ))),
+                            PyCallItem::Arg(
+                                a.tuple(
+                                    nonlocals
+                                        .iter()
+                                        .map(|x| a.list_item(a.load_ident(x.clone())))
+                                        .collect(),
+                                    PyAccessCtx::Load,
+                                ),
                             ),
-                        ),
-                        PyCallItem::Arg(callback),
-                    ],
-                ))
+                            PyCallItem::Arg(callback),
+                        ],
+                    ),
+                )
             }
             Expr::Await(expr) => a.await_(pre.bind(expr.transform(ctx)?)),
             Expr::Yield(expr) => a.yield_(pre.bind(expr.transform(ctx)?)),
