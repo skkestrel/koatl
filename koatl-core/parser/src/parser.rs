@@ -131,6 +131,7 @@ pub fn match_pattern<'tokens, 'src: 'tokens, TInput, PIdent, PQualIdent, PExpr, 
 ) -> (
     impl Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone,
     impl Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone,
+    impl Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone,
 )
 where
     TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
@@ -311,7 +312,7 @@ where
 
     pattern.define(
         choice((
-            as_pattern,
+            as_pattern.clone(),
             value_pattern,
             closed_pattern.clone(),
             symbol("_")
@@ -323,6 +324,7 @@ where
 
     (
         closed_pattern.labelled("pattern").as_context(),
+        as_pattern.labelled("pattern").as_context(),
         nary_sequence_pattern.labelled("pattern").as_context(),
     )
 }
@@ -510,8 +512,8 @@ where
         .map(|(decl, idents)| SStmtInner::Decl(idents, decl))
         .boxed();
 
-    let assign_lhs = nary_tuple.clone().memoized();
-    let inline_assign_lhs = expr.clone().memoized();
+    let assign_lhs = nary_tuple.clone();
+    let inline_assign_lhs = expr.clone();
 
     let assign_stmt = group((
         decl_mod.clone().or_not(),
@@ -962,7 +964,7 @@ where
         )
         .boxed();
 
-    let (closed_pattern, nary_pattern) = match_pattern(
+    let (closed_pattern, as_pattern, nary_pattern) = match_pattern(
         ident.clone(),
         qualified_ident.clone(),
         expr.clone(),
@@ -1353,7 +1355,7 @@ where
         .then(
             just(Token::Ident("matches"))
                 .ignore_then(just(Token::Kw("not")).to(0).or_not())
-                .then(closed_pattern.clone())
+                .then(as_pattern.clone())
                 .or_not(),
         )
         .map_with(|(expr, matches_part), e| {

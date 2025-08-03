@@ -8,37 +8,46 @@ export Memo = class(Monad):
         __init__ = self =>
             self.cache = defaultdict(dict)
 
-        get_or_compute = (self, name, deps, f) =>
-            if try self.cache[name][deps] except KeyError() matches (Ok() as v):
-                return v
+        __repr__ = self => f"Memo.Cache({self.cache})"
 
-            let value = f()
+        try_get = (self, name, deps) =>
+            try self.cache[name][deps] except KeyError()
+
+        update = (self, name, deps, value) =>
             self.cache[name][deps] = value
             value
-
-        __repr__ = self => f"Memo.Cache({self.cache})"
 
     __init__ = (self, f) => self.f = f
 
     __repr__ = self => f"Memo(...)"
 
     value = staticmethod& (id, deps, f) =>
-        Memo(ctx => ctx.get_or_compute(id, tuple(deps), f))
+        Memo(ctx =>
+            if ctx.try_get(id, tuple(deps)) matches Ok() as value:
+                return value
+
+            ctx.update(id, tuple(deps), f())
+        )
 
     fn = staticmethod& f => wraps(f)& (*args, **kwargs) =>
         let id = f"{f.__module__}.{f.__qualname__}"
         let deps = (tuple(args), tuple(kwargs.items()))
 
         Memo(ctx =>
-            ctx.get_or_compute(id, deps, () =>
-                let v = f(*args, **kwargs)
-                if v matches Memo():
-                    v = v.run(ctx)
-                v
-            )
+            if ctx.try_get(id, deps) matches Ok() as value:
+                return value
+
+            let v = f(*args, **kwargs)
+            if v matches Memo():
+                v = v.run(ctx)
+
+            ctx.update(id, deps, v)
         )
 
-    run = (self, ctx=Cache()) => self.f(ctx)
+    run = (self, ctx=None) =>
+        if ctx === None:
+            ctx = Memo.Cache()
+        self.f(ctx)
 
     pure = staticmethod& value => Memo(ctx => value)
 
