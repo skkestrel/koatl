@@ -1,5 +1,6 @@
 import abc
 
+# TODO: this should be really called MonadOnce.
 export Monad = class(abc.ABC):
     __slots__ = ()
 

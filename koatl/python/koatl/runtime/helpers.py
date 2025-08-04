@@ -66,6 +66,10 @@ def do(f):
         try:
             m = gen.send(None)
         except StopIteration as e:
+            if not hasattr(e.value, "bind_once"):
+                raise ValueError(
+                    "This do-block returned a bare value before it could infer the monadic type. Wrap the value in pure()."
+                ) from None
             return e.value
 
         def recurse(v):
@@ -74,10 +78,7 @@ def do(f):
                 m = gen.send(v)
                 return vget(m, "bind_once")(recurse)
             except StopIteration as e:
-                try:
-                    return vget(m, "pure")(e.value)
-                except AttributeError:
-                    return e.value
+                return vget(m, "pure")(e.value)
 
         try:
             # TODO: this is a workaround to avoid recursion.

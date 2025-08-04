@@ -4,7 +4,7 @@ counts = 0
 
 fib = Memo.fn& x =>
     if x < 2:
-        return 1
+        return Memo.pure(1)
 
     counts = counts + 1
 

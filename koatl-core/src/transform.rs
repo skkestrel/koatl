@@ -2256,7 +2256,12 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 let linecol = ctx.line_cache.linecol(span.start);
 
                 let memo_call = a.call(
-                    a.tl_builtin("memo"),
+                    if memo_captures.is_do {
+                        // TODO is there any better solution?
+                        a.tl_builtin("bind_memo_value")
+                    } else {
+                        a.tl_builtin("memo_value")
+                    },
                     vec![
                         PyCallItem::Arg(a.str(format!(
                             "{}:{}:{}:{:08x}",
@@ -2282,12 +2287,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                     ],
                 );
 
-                if memo_captures.is_do {
-                    // TODO should we really automatically bind a monadic expression for convenience?
-                    a.yield_(a.yield_(memo_call))
-                } else {
-                    a.yield_(memo_call)
-                }
+                a.yield_(memo_call)
             }
             Expr::Await(expr) => a.await_(pre.bind(expr.transform(ctx)?)),
             Expr::Yield(expr) => a.yield_(pre.bind(expr.transform(ctx)?)),

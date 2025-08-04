@@ -22,6 +22,17 @@ export Memo = class(Monad):
 
     __repr__ = self => f"Memo(...)"
 
+    # This needs to be special cased because if we try to use Memo.value
+    # directly, the *generator* itself gets memoized. We want to memoize
+    # the thing that that comes out of the generator.
+    bind_value = staticmethod& (id, deps, f) =>
+        Memo(ctx =>
+            if ctx.try_get(id, tuple(deps)) matches Ok(value):
+                return value
+
+            ctx.update(id, tuple(deps), f().f(ctx))
+        )
+
     value = staticmethod& (id, deps, f) =>
         Memo(ctx =>
             if ctx.try_get(id, tuple(deps)) matches Ok(value):
@@ -40,7 +51,7 @@ export Memo = class(Monad):
 
             let v = f(*args, **kwargs)
             if v matches Memo():
-                v = v.run(ctx)
+                v = v.f(ctx)
 
             ctx.update(id, deps, v)
         )
@@ -53,21 +64,22 @@ export Memo = class(Monad):
     pure = staticmethod& value => Memo(ctx => value)
 
     bind_once = (self, f) => Memo(ctx =>
-        let value = f(self.run(ctx))
+        let value = f(self.f(ctx))
         if value matches Memo():
-            value = value.run(ctx)
+            value = value.f(ctx)
         value
     )
 
     bind_gen = (self, gen) => Memo(ctx =>
-        self = self.run(ctx)
+        self = self.f(ctx)
         try:
             while True:
                 self = gen.send(self)
                 if self matches Memo():
-                    self = self.run(ctx)
+                    self = self.f(ctx)
         except StopIteration(value=value):
             return value
     )
 
-__tl__.memo = Memo.value
+__tl__.memo_value = Memo.value
+__tl__.bind_memo_value = Memo.bind_value
