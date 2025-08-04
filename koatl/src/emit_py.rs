@@ -502,7 +502,7 @@ impl<'src> PyExprExt<'src> for SPyExpr<'src> {
                 ctx.ast_node("Name", (ident, c.emit_py(ctx)?), &self.tl_span)?
             }
             PyExpr::Binary(op, left, right) => {
-                let py_op_str = match op {
+                let py_bin_op = match op {
                     PyBinaryOp::Add => Some("Add"),
                     PyBinaryOp::Sub => Some("Sub"),
                     PyBinaryOp::Mult => Some("Mult"),
@@ -512,13 +512,30 @@ impl<'src> PyExprExt<'src> for SPyExpr<'src> {
                     _ => None,
                 };
 
-                if let Some(py_op_str) = py_op_str {
+                if let Some(py_bin_op) = py_bin_op {
                     return ctx.ast_node(
                         "BinOp",
                         (
                             left.emit_py(ctx)?,
-                            ctx.ast_cls(py_op_str, ())?,
+                            ctx.ast_cls(py_bin_op, ())?,
                             right.emit_py(ctx)?,
+                        ),
+                        &self.tl_span,
+                    );
+                }
+
+                let py_bool_op = match op {
+                    PyBinaryOp::And => Some("And"),
+                    PyBinaryOp::Or => Some("Or"),
+                    _ => None,
+                };
+
+                if let Some(py_bool_op) = py_bool_op {
+                    return ctx.ast_node(
+                        "BoolOp",
+                        (
+                            ctx.ast_cls(py_bool_op, ())?,
+                            [left.emit_py(ctx)?, right.emit_py(ctx)?],
                         ),
                         &self.tl_span,
                     );

@@ -226,7 +226,7 @@
 				},
 				{
 					"name": "keyword.control.flow.tl",
-					"match": "(?x)\n  \\b(?<!\\.)(\n    async | continue | del | assert | break | finally | for\n    | from | elif | else | if | except | pass | raise\n    | return | try | while | with\n  )\\b\n"
+					"match": "(?x)\n  \\b(?<!\\.)(\n    async | continue | del | assert | break | finally | for\n    | from | elif | else | if | match | default | then | except | pass | raise\n    | return | try | while | with\n  )\\b\n"
 				},
 				{
 					"name": "storage.modifier.declaration.tl",

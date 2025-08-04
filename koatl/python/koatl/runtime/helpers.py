@@ -46,6 +46,11 @@ def unpack_record(obj):
 
 
 def ok(obj):
+    try:
+        return obj.ok
+    except AttributeError:
+        pass
+
     if obj is None:
         return False
     if isinstance(obj, BaseException):

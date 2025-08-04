@@ -46,19 +46,7 @@ Using the `memo` keyword automatically constructs a `@Memo.value(id, deps, fn)`,
 
 ## Result
 
-Koatl defines a pseudo-class called Ok, which is used to check that a value is not None and not an error:
-
-```koatl
-None matches Ok() == False
-ValueError() matches Ok() == False
-1 matches Ok() == True
-```
-
-`Err` is the same as `BaseException`:
-
-```koatl
-ValueError() matches Err() == True
-```
+TODO
 
 The Result monad represents error handling and early return - `Ok` is success, while `None` and `Err` types are failure.
 
@@ -73,7 +61,7 @@ f = () =>
 print(f())
 ```
 
-can be thought of as the same as
+can be thought of as
 
 ```python
 def f():
@@ -102,7 +90,7 @@ To explicitly mark an exception or None as an Ok value, simply use `Ok(error)`.
 
 While errors typically aren't returned from functions in Python, the `try` operator (see [Operators](operators)) makes it very easy to use these constructions to interface with external code.
 
-Note that Result provides the default `bind_once` implementation for types that don't otherwise have `bind_once`.
+Note that Result provides the default `bind_once` implementation for all types that don't otherwise define `bind_once`.
 
 ## Async
 

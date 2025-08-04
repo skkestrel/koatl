@@ -14,7 +14,7 @@ use crate::{
 };
 use once_cell::sync::Lazy;
 use parser::ast::*;
-use slotmap::SlotMap;
+use slotmap::{Key, SlotMap};
 use std::hash::{Hash, Hasher};
 
 static PY_KWS: &[&str] = &[
@@ -1404,25 +1404,9 @@ fn prepare_py_fn<'src, 'ast>(
                 decorators.push(a.tl_builtin("do"));
             }
 
-            let mut nonlocals = vec![];
-            let mut globals = vec![];
+            let (py_bindings, _, _) = py_fn_bindings(ctx, fn_info, *span)?;
 
-            for capture in fn_info.captures.iter() {
-                let scope = &ctx.scopes[ctx.declarations[*capture].scope];
-                if scope.is_global || scope.is_class {
-                    globals.push(ctx.decl_py_ident(*capture)?);
-                } else {
-                    nonlocals.push(ctx.decl_py_ident(*capture)?);
-                }
-            }
-
-            if !nonlocals.is_empty() {
-                py_body.push(a.nonlocal(nonlocals.iter().map(|x| x.clone()).collect()));
-            }
-            if !globals.is_empty() {
-                py_body.push(a.global(globals.iter().map(|x| x.clone()).collect()));
-            }
-
+            py_body.extend(py_bindings);
             py_body.extend(body.pre);
             py_body.push(a.return_(body.value));
         }
@@ -2257,24 +2241,9 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 let py_expr = expr.transform(ctx)?;
                 let mut py_body = PyBlock::new();
 
-                let mut nonlocals = vec![];
-                let mut globals = vec![];
+                let (py_bindings, nonlocals, _globals) = py_fn_bindings(ctx, memo_captures, span)?;
 
-                for capture in memo_captures.captures.iter() {
-                    if ctx.scopes[ctx.declarations[*capture].scope].is_global {
-                        globals.push(ctx.decl_py_ident(*capture)?);
-                    } else {
-                        nonlocals.push(ctx.decl_py_ident(*capture)?);
-                    }
-                }
-
-                if !nonlocals.is_empty() {
-                    py_body.push(a.nonlocal(nonlocals.iter().map(|x| x.clone()).collect()));
-                }
-                if !globals.is_empty() {
-                    py_body.push(a.global(globals.iter().map(|x| x.clone()).collect()));
-                }
-
+                py_body.extend(py_bindings);
                 py_body.extend(py_expr.pre);
                 py_body.push(a.return_(py_expr.value));
 
@@ -2428,6 +2397,47 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
 
         Ok(SPyExprWithPre { value, pre })
     }
+}
+
+fn py_fn_bindings<'src, 'ast>(
+    ctx: &mut TlCtx<'src, 'ast>,
+    memo_captures: &FnInfo,
+    span: Span,
+) -> TlResult<(PyBlock<'src>, Vec<PyIdent<'src>>, Vec<PyIdent<'src>>)> {
+    let a = PyAstBuilder::new(span);
+
+    let mut nonlocals = vec![];
+    let mut globals = vec![];
+    let mut py_body = PyBlock::new();
+
+    for capture in memo_captures.captures.iter() {
+        let mut scope = &ctx.scopes[ctx.declarations[*capture].scope];
+        loop {
+            if scope.parent.is_null() {
+                break;
+            }
+
+            if scope.is_fn || scope.is_class || scope.is_global {
+                break;
+            }
+            scope = &ctx.scopes[scope.parent];
+        }
+
+        if scope.is_global || scope.is_class {
+            globals.push(ctx.decl_py_ident(*capture)?);
+        } else {
+            nonlocals.push(ctx.decl_py_ident(*capture)?);
+        }
+    }
+
+    if !nonlocals.is_empty() {
+        py_body.push(a.nonlocal(nonlocals.iter().map(|x| x.clone()).collect()));
+    }
+    if !globals.is_empty() {
+        py_body.push(a.global(globals.iter().map(|x| x.clone()).collect()));
+    }
+
+    Ok((py_body, nonlocals, globals))
 }
 
 pub struct TransformOutput<'src> {

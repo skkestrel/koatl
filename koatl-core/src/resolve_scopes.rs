@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Display;
 
+use slotmap::Key;
 use slotmap::SlotMap;
 use slotmap::new_key_type;
 
@@ -70,10 +71,10 @@ fn top_scope_and_key<'src, 'state>(
 #[allow(dead_code)]
 impl<'src> ResolveState<'src> {
     fn new(source: &'src str) -> Self {
-        let mut root_scope = Scope::new();
+        let mut root_scope = Scope::new(ScopeKey::null());
         root_scope.is_global = true;
 
-        let err_scope = Scope::new();
+        let err_scope = Scope::new(ScopeKey::null());
 
         let mut scopes = SlotMap::with_key();
         let root_scope_key = scopes.insert(root_scope);
@@ -105,6 +106,10 @@ impl<'src> ResolveState<'src> {
 
     fn top_scope(&mut self) -> &mut Scope {
         top_scope(&self.scope_stack, &mut self.scopes)
+    }
+
+    fn top_scope_key(&mut self) -> ScopeKey {
+        *self.scope_stack.last_mut().unwrap()
     }
 
     fn top_scope_and_key(&mut self) -> (&mut Scope, ScopeKey) {
@@ -185,10 +190,10 @@ impl<'src> ResolveState<'src> {
     where
         F: FnOnce(&mut ResolveState<'src>) -> Indirect<SExpr<'src>>,
     {
-        let mut temp_scope = Scope::new();
-        temp_scope.is_fn = true;
+        let mut dummy_scope = Scope::new(ScopeKey::null());
+        dummy_scope.is_fn = true;
 
-        let temp_scope_key = self.scopes.insert(temp_scope);
+        let temp_scope_key = self.scopes.insert(dummy_scope);
 
         let ph_decl = self.declarations.insert_declaration(
             Ident("x".into()).spanned(span),
@@ -460,6 +465,9 @@ impl Display for Declaration<'_> {
 
 #[derive(Debug)]
 pub struct Scope {
+    // TODO make this option
+    pub parent: ScopeKey,
+
     pub locals: Vec<DeclarationKey>,
 
     pub is_class: bool,
@@ -488,8 +496,9 @@ impl Display for Scope {
 }
 
 impl Scope {
-    fn new() -> Scope {
+    fn new(parent: ScopeKey) -> Scope {
         Self {
+            parent,
             locals: Vec::new(),
             lifted_decls: Vec::new(),
 
@@ -797,7 +806,7 @@ fn pattern_scoped<'src>(
     state: &mut ResolveState<'src>,
     pattern: Indirect<SPattern<'src>>,
 ) -> (Indirect<SPattern<'src>>, ScopeKey, PatternMeta<'src>) {
-    let scope = Scope::new();
+    let scope = Scope::new(state.top_scope_key());
     let scope_key = state.scopes.insert(scope);
 
     let (pattern, meta) = pattern.traverse(state);
@@ -946,7 +955,8 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     }
                     new_stmts
                 } else {
-                    let scope = state.scopes.insert(Scope::new());
+                    let parent = state.top_scope_key();
+                    let scope = state.scopes.insert(Scope::new(parent));
                     state
                         .scoped(scope, |state| {
                             let mut new_stmts = Vec::new();
@@ -1040,7 +1050,8 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                             let (pattern, scope, _meta) = pattern_scoped(state, pattern);
                             (Some(pattern), scope)
                         } else {
-                            (None, state.scopes.insert(Scope::new()))
+                            let parent = state.top_scope_key();
+                            (None, state.scopes.insert(Scope::new(parent)))
                         };
 
                         SMatchCase {
@@ -1058,7 +1069,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
             Expr::Class(bases, body) => {
                 let bases = traverse_call_items(state, bases);
 
-                let mut scope = Scope::new();
+                let mut scope = Scope::new(state.top_scope_key());
                 scope.is_class = true;
                 let scope = state.scopes.insert(scope);
 
@@ -1071,7 +1082,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
             Expr::Fn(arg_def_items, body) => {
                 let mut decls = vec![];
 
-                let mut scope = Scope::new();
+                let mut scope = Scope::new(state.top_scope_key());
                 scope.is_fn = true;
                 let scope = state.scopes.insert(scope);
 
@@ -1297,7 +1308,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 let mut fn_ctx = FnInfo::new();
                 fn_ctx.is_memo = true;
 
-                let mut scope = Scope::new();
+                let mut scope = Scope::new(state.top_scope_key());
                 scope.is_fn = true;
 
                 // TODO it's confusing that we need to
@@ -1467,7 +1478,8 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                             let (pattern, scope, _meta) = pattern_scoped(state, pattern);
                             (Some(pattern), scope)
                         } else {
-                            (None, state.scopes.insert(Scope::new()))
+                            let parent = state.top_scope_key();
+                            (None, state.scopes.insert(Scope::new(parent)))
                         };
 
                         let body = state

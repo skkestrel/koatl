@@ -45,10 +45,6 @@
 
 >>> fib(500).run()
 453973694165307953197296969697410619233826
-
->>> import timeit.timeit
->>> timeit(() => fib(200).run(), number=1000000)
-1.097149383975193
 ```
 
 > Note: Koatl is under heavy development. Features may be broken, added, or removed at any time.

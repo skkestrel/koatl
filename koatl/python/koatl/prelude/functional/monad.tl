@@ -1,6 +1,8 @@
 import abc
 
 export Monad = class(abc.ABC):
+    __slots__ = ()
+
     # The default implementation required for `@` syntax that should be overridden by subclasses.
     bind_once = abc.abstractmethod& (self, f) => None
 

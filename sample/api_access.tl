@@ -24,14 +24,14 @@ get_user_details = (data, user_id) =>
 
     let profile = try user.profile
 
-    profile matches not Ok() then:
+    profile matches ... then:
         print(f"Profile not found.")
     else:
         print(f"Name: {try profile.name ?? "N/A"}")
 
         let contact = try profile.contact
 
-        contact matches not Ok() then:
+        contact matches ... then:
             print(f"Contact not found.")
         else:
             print(f"Email: {try contact.email ?? "N/A"}")

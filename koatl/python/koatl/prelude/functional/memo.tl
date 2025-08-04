@@ -1,6 +1,6 @@
 import collections.defaultdict
 import functools.wraps
-import .result.Ok
+import .result.(Result, Ok)
 import .Monad
 
 export Memo = class(Monad):
@@ -11,7 +11,8 @@ export Memo = class(Monad):
         __repr__ = self => f"Memo.Cache({self.cache})"
 
         try_get = (self, name, deps) =>
-            try self.cache[name][deps] except KeyError()
+            # TODO should try operator return a Result directly?
+            Result(try self.cache[name][deps] except KeyError())
 
         update = (self, name, deps, value) =>
             self.cache[name][deps] = value
@@ -23,7 +24,7 @@ export Memo = class(Monad):
 
     value = staticmethod& (id, deps, f) =>
         Memo(ctx =>
-            if ctx.try_get(id, tuple(deps)) matches Ok() as value:
+            if ctx.try_get(id, tuple(deps)) matches Ok(value):
                 return value
 
             ctx.update(id, tuple(deps), f())
@@ -34,7 +35,7 @@ export Memo = class(Monad):
         let deps = (tuple(args), tuple(kwargs.items()))
 
         Memo(ctx =>
-            if ctx.try_get(id, deps) matches Ok() as value:
+            if ctx.try_get(id, deps) matches Ok(value):
                 return value
 
             let v = f(*args, **kwargs)
