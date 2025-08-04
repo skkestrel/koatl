@@ -28,11 +28,6 @@ dependencies = [
     "koatl"
 ]
 
-[project.optional-dependencies]
-test = [
-  "jupyter_kernel_test",
-]
-
 [project.urls]
 Homepage = "https://github.com/skkestrel/koatl"
 
