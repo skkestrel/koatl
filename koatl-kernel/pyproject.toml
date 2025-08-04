@@ -17,7 +17,6 @@ authors = [
 ]
 classifiers = [
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: BSD License",
     "Programming Language :: Python :: 3",
 ]
 requires-python = ">=3.8"
