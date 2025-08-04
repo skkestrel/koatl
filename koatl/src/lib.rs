@@ -79,25 +79,40 @@ struct TraitAttr {
 static VTBL2: Lazy<Mutex<HashMap<String, Vec<TraitAttr>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-#[pyfunction(signature=(obj, name))]
+#[pyfunction(signature=(obj, name, ignore_traits))]
 fn fast_vget<'py, 'ptr>(
     obj: &'ptr Bound<'py, PyAny>,
     name: &'ptr Bound<'py, PyString>,
+    ignore_traits: bool,
 ) -> PyResult<PyObject> {
     let name = name.to_string();
 
     let py = obj.py();
 
-    let vtbl = VTBL.lock().unwrap();
+    {
+        // This block is necessary to ensure the lock is released
+        // before we possibly re-enter fast_vget through __tl__.vget below.
 
-    if let Some(types) = vtbl.get(&name) {
-        let mro = obj.get_type().mro();
+        let vtbl = VTBL.lock().unwrap();
 
-        for typ in mro {
-            if let Some(attr) = types.get(&(typ.as_ptr() as usize)) {
-                return Ok((*attr).clone_ref(py));
+        if let Some(types) = vtbl.get(&name) {
+            let mro = obj.get_type().mro();
+
+            for typ in mro {
+                if let Some(attr) = types.get(&(typ.as_ptr() as usize)) {
+                    return Ok((*attr).clone_ref(py));
+                }
             }
         }
+    }
+
+    if ignore_traits {
+        // This prevents a deadlock from fast_vget being called
+        // *again* from inside __tl_.vget while vtbl2 is locked.
+
+        // Also, prevents a trait from being dependent on other traits,
+        // which might cause an infinite loop sometimes.
+        return Ok(py.None().into_any());
     }
 
     let vtbl2 = VTBL2.lock().unwrap();
@@ -109,7 +124,7 @@ fn fast_vget<'py, 'ptr>(
         for t in traits {
             let mut ok = true;
             for r in t.requirements.iter() {
-                if vget.call1((obj, r)).is_err() {
+                if vget.call1((obj, r, true)).is_err() {
                     ok = false;
                     break;
                 }

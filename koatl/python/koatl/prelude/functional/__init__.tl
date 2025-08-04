@@ -3,9 +3,17 @@ export import .result.*
 export import .async.*
 export import .reader.*
 export import .memo.*
+export import .list.*
 
-export Fn = class:
-    compose = staticmethod& (*args) =>
+named = name => fn =>
+    fn.__name__ = name
+    fn.__qualname__ = name
+    fn
+
+methods = {
+    id: named("id")& x => x
+
+    compose: named("compose")& (*args) =>
         args match:
             [] => raise ValueError("At least one function is required for composition")
             [f] => f
@@ -22,3 +30,8 @@ export Fn = class:
 
                 composed
             default raise ValueError("Invalid arguments for Fn.compose()")
+}
+
+globals().update(methods)
+
+__all__ = methods.keys() | tuple

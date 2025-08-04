@@ -1,16 +1,43 @@
+import itertools
+import builtins
+
 methods = {
-    map: (x, f) =>
-        for i in x:
-            yield f(i)
+    map: (x, f) => builtins.map(f, x.iter)
 
-    filter: (x, f) =>
-        for i in x:
-            if f(i):
-                yield i
+    filter: (x, f) => builtins.filter(f, x.iter)
 
-    flat_map: (x, f) =>
-        for i in x:
-            yield from f(i)
+    flat_map: (x, f) => itertools.chain.from_iterable(x.map(f))
+
+    traverse: (x, f) =>
+        let it = x.iter
+        let v
+        try:
+            v = next(it)
+        except StopIteration():
+            return []
+
+        let m = f(v)
+
+        if not hasattr(m, "apply"):
+            # special case for bare types - slightly more efficient
+            # ...also required since bare types don't have .map
+            if not __tl__.ok(m):
+                return m
+
+            let acc = [m]
+            for v in it:
+                let fv = f(v)
+                if not __tl__.ok(fv):
+                    return fv
+                acc.append(fv)
+            return acc
+
+        let acc = m.map([$])
+        for v in it:
+            m = f(v)
+            # acc = liftA2((list, value) => [*list, value])(acc, f(v))
+            acc = acc.apply(m.map(x => acc => [*acc, x]))
+        acc
 
     fold: (x, init, f) =>
         let acc = init

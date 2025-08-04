@@ -8,6 +8,8 @@ export Result = class(Monad):
         Ok() => f(self)
         default => self
 
+    bind = bind_once
+
     bind_gen = (self, gen) =>
         try:
             while True:
@@ -22,6 +24,28 @@ export Result = class(Monad):
             if value === None:
                 return Ok(None)
             return value
+
+    pure = staticmethod& x => Ok(x)
+
+    apply = (self, f) =>
+        if not __tl__.ok(self):
+            return self
+        if not __tl__.ok(f):
+            return f
+
+        # unwrap the Oks - this is a bit weird
+        # but it allows bare types to be Results
+        if self matches Ok(value):
+            self = self.value
+        if f matches Ok(value):
+            f = f.value
+
+        f(self)
+
+    # Map must not be defined since it will override any special map
+    # implementation for traits, specifically for Iterable -
+    # is there a better way around this (in the vtable implementation)?
+    # map = ...
 
     map_err = (self, f) =>
         if self matches Err():
@@ -44,50 +68,23 @@ export Ok = class(metaclass=OkMeta):
     __init__ = (self, value) =>
         self.value = value
 
-    # Since we are using a custom metaclass, we can't derive from Result
-    # so need to copy the methods over manually from Result
-
-    # We could just use the object fallback methods, but this avoids
-    # the manual __tl__.vget so is slightly faster
-    bind_once = Result.bind_once
-    bind_gen = Result.bind_gen
-    map_err = Result.map_err
-    map_none = Result.map_none
-
     assert = staticmethod& value =>
         value match:
             BaseException() as e => raise e
             None => raise ValueError("Expected a value, got None")
             default value
 
+
+# Since we are using a custom metaclass, we can't derive from Result
+# so need to copy the methods over manually from Result
+
+# We could just use the object fallback methods, but this avoids
+# the vget so is slightly faster
+for name, method in Result.__dict__:
+    if name.startswith("_"):
+        continue
+
+    setattr(Ok, name, method)
+    register_global_attr(object, name, method)
+
 export Err = BaseException
-
-register_global_attr(
-    object,
-    "map_err",
-    Result.map_err
-)
-
-register_global_attr(
-    object,
-    "map_none",
-    Result.map_none
-)
-
-register_global_attr(
-    object,
-    "bind",
-    Result.bind_once
-)
-
-register_global_attr(
-    object,
-    "bind_once",
-    Result.bind_once
-)
-
-register_global_attr(
-    object,
-    "bind_gen",
-    Result.bind_gen
-)

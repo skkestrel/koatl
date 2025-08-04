@@ -640,7 +640,17 @@ where
         .or_not()
         .then_ignore(just(Token::Kw("import")))
         .then(group((
-            symbol(".").repeated().count(),
+            // TODO this looks extremely cursed
+            symbol("..")
+                .to(2)
+                .repeated()
+                .foldr(
+                    symbol(".")
+                        .or_not()
+                        .map(|x| if x.is_some() { 1 } else { 0 }),
+                    |acc, sum| acc + sum,
+                )
+                .boxed(),
             ident
                 .clone()
                 .then_ignore(symbol("."))

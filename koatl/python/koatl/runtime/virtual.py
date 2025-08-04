@@ -9,7 +9,7 @@ def ExtensionProperty(f):
     return f
 
 
-def vget(obj, name):
+def vget(obj, name, ignore_traits=False):
     try:
         return getattr(obj, name)
     except:
@@ -34,7 +34,7 @@ def vget(obj, name):
             except TypeError:
                 pass
 
-        v = fast_vget(obj, name)
+        v = fast_vget(obj, name, ignore_traits)
         if v is not None:
             if hasattr(v, "ext_prop"):
                 return v(obj)
