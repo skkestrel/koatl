@@ -9,39 +9,41 @@
 >>> # |        |
 >>> # |        |        Easy pattern matching expressions
 >>> # v        v        v
->>> let fib = x => x matches (0 | 1) then 1 else fib(x-1) + fib(x-2)
+>>> let fib = x => x matches 0 | 1 then 1 else fib(x-1) + fib(x-2)
 
 >>> # Painlessly define slices and ranges
 >>> # |
->>> # |     Iteration as a first-class abstraction
+>>> # |  Chain iterators directly
 >>> # v     v
 >>> (..10).map(fib).list()
 [1, 1, 2, 3, 5, 8, 13, 21, 34, 55]
 
->>> #         Convenient syntax for defining small functions
+>>> # Convenient syntax for small lambdas
 >>> #         |
->>> #         |                Get errors as values instead of
->>> #         v                v      guarding with try/except
+>>> #         |  Get errors as values instead of using try/except
+>>> #         v                v
 >>> (..5).map($ - 1).map(x => try [1, 2, 3][x]).list()
 [IndexError(...), 1, 2, 3, IndexError(...)]
 
->>> #  Quickly create records with Javascript-like syntax
+>>> #      Quickly create records with Javascript-like syntax
 >>> #                              |
->>> #                              |   Coalesce errors and Nones
+>>> #                              |              Coalesce errors and Nones
 >>> #                              v                           v
 >>> ["key0", "key1"].map(x => try { key0: "Queried value" }[x] ?? "Default").list()
 ["Queried value", "Default"]
 
->>> # Memoization made easy as pie
->>> #            v
+>>> # Memoize functions effortlessly
+>>> #              v
 >>> let fib = Memo.fn& x =>
->>>     if x < 2: return 1
->>>     let a = @fib(x - 1) # Monadic bind syntax with @
->>>     let b = @fib(x - 2)
->>>     memo a + b
->>> #          ^
->>> # pretend this is slow too
->>> fib(200).run()
+>>>     if x < 2: 1
+>>>     else: memo @fib(x - 1) + @fib(x - 2)
+>>> #          ^   ^             ^
+>>> #          |  use monadic bind to nest memo functions
+>>> #          |
+>>> # ...and memoize arbitrary expressions as well,
+>>> #    with automatic dependency detection
+
+>>> fib(500).run()
 453973694165307953197296969697410619233826
 
 >>> import timeit.timeit

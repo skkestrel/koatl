@@ -2280,41 +2280,45 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
 
                 let callback = pre.bind(make_fn_exp(
                     ctx,
-                    FnDef::PyFnDef(vec![], py_body, false, false),
+                    FnDef::PyFnDef(vec![], py_body, memo_captures.is_do, memo_captures.is_async),
                     &span,
                 )?);
 
                 let linecol = ctx.line_cache.linecol(span.start);
 
-                a.yield_(
-                    a.call(
-                        a.tl_builtin("memo"),
-                        vec![
-                            PyCallItem::Arg(a.str(format!(
-                                "{}:{}:{}:{:08x}",
-                                ctx.filename,
-                                linecol.0,
-                                linecol.1,
-                                {
-                                    let mut hasher =
-                                        std::collections::hash_map::DefaultHasher::new();
-                                    ctx.source[span.start..span.end].hash(&mut hasher);
-                                    hasher.finish() as u32
-                                }
-                            ))),
-                            PyCallItem::Arg(
-                                a.tuple(
-                                    nonlocals
-                                        .iter()
-                                        .map(|x| a.list_item(a.load_ident(x.clone())))
-                                        .collect(),
-                                    PyAccessCtx::Load,
-                                ),
+                let memo_call = a.call(
+                    a.tl_builtin("memo"),
+                    vec![
+                        PyCallItem::Arg(a.str(format!(
+                            "{}:{}:{}:{:08x}",
+                            ctx.filename,
+                            linecol.0,
+                            linecol.1,
+                            {
+                                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                                ctx.source[span.start..span.end].hash(&mut hasher);
+                                hasher.finish() as u32
+                            }
+                        ))),
+                        PyCallItem::Arg(
+                            a.tuple(
+                                nonlocals
+                                    .iter()
+                                    .map(|x| a.list_item(a.load_ident(x.clone())))
+                                    .collect(),
+                                PyAccessCtx::Load,
                             ),
-                            PyCallItem::Arg(callback),
-                        ],
-                    ),
-                )
+                        ),
+                        PyCallItem::Arg(callback),
+                    ],
+                );
+
+                if memo_captures.is_do {
+                    // TODO should we really automatically bind a monadic expression for convenience?
+                    a.yield_(a.yield_(memo_call))
+                } else {
+                    a.yield_(memo_call)
+                }
             }
             Expr::Await(expr) => a.await_(pre.bind(expr.transform(ctx)?)),
             Expr::Yield(expr) => a.yield_(pre.bind(expr.transform(ctx)?)),

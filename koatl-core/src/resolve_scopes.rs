@@ -213,13 +213,6 @@ impl<'src> ResolveState<'src> {
         let placeholder_ctx = self.placeholder_stack.pop().unwrap();
 
         if placeholder_ctx.activated {
-            if ph_fn_ctx.is_async || ph_fn_ctx.is_generator || ph_fn_ctx.is_do {
-                self.errors.extend(simple_err(
-                    "Await, bind, and yield are not allowed in placeholder functions",
-                    placeholder_ctx.span,
-                ));
-            }
-
             ph_fn_ctx.is_placeholder = true;
 
             ph_fn_ctx.arg_names.push(placeholder_ctx.arg_decl);
@@ -1322,13 +1315,6 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 let inner = scoped.value;
 
                 let fn_ctx = state.fn_stack.pop().unwrap();
-
-                if fn_ctx.is_async || fn_ctx.is_generator || fn_ctx.is_do {
-                    state.errors.extend(simple_err(
-                        "Memo expressions cannot be async, generator, or do",
-                        span,
-                    ));
-                }
 
                 state.memo_captures.insert(inner.as_ref().into(), fn_ctx);
 

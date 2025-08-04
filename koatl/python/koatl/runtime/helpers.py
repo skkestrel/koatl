@@ -76,7 +76,7 @@ def do(f):
 
         try:
             # TODO: this is a workaround to avoid recursion.
-            # is it possible to get bind_gen directly from bind_once?
+            # is it possible to derive bind_gen directly from bind_once?
 
             return vget(m, "bind_gen")(gen)
         except (NotImplementedError, AttributeError):
