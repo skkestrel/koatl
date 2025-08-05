@@ -2,13 +2,6 @@ import functools.wraps
 import .monad.Monad
 import koatl.runtime.virtual.register_global_attr
 
-ok = x =>
-    if x === None:
-        return False
-    if isinstance(x, BaseException):
-        return False
-    return True
-
 export Result = class:
     __slots__ = ()
     __match_args__ = ("value",)
@@ -105,6 +98,7 @@ export Ok = class(Result):
 
     __repr__ = self => f"Ok({repr(self.value)})"
     unwrap = self => self.value
+    coalesce = (self, f) => self.value
 
 export Err = class(Result):
     __slots__ = ("value",)
@@ -120,6 +114,7 @@ export Err = class(Result):
         if self.value matches BaseException():
             raise self.value
         raise ValueError(f"Expected Ok, got {repr(self.value)}")
+    coalesce = (self, f) => f()
 
 
 # Provide a default implementation for *most* Result methods
@@ -135,16 +130,22 @@ for name, method in Result.__dict__:
 
     register_global_attr(object, name, make_closure(method))
 
-register_global_attr(object, "ok", ExtensionProperty(ok))
-
-__tl__.ok = ok
+register_global_attr(object, "ok", ExtensionProperty(_ => True))
+register_global_attr(type(None), "ok", ExtensionProperty(_ => False))
+register_global_attr(BaseException, "ok", ExtensionProperty(_ => False))
 
 __tl__.op_coal = (x, f) =>
+    if x matches Result():
+        return x.coalesce(f)
+
     if not x.ok:
         return f()
     return x
 
 __tl__.op_map = (x, f) =>
+    if x matches Result():
+        return x.map(f)
+
     if x.ok:
-        return f()
+        return f(x)
     return x

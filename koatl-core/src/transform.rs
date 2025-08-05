@@ -1642,90 +1642,85 @@ fn transform_postfix_expr<'src, 'ast>(
         }
     }
 
-    let mut pre = PyBlock::new();
     let a = PyAstBuilder::new(expr.span);
 
-    let lhs = if mapped {
-        pre.bind(lhs_node.transform_lifted(ctx)?)
-    } else {
-        pre.bind(lhs_node.transform(ctx)?)
-    };
-
-    let mut inner_pre = PyBlock::new();
-    let cloned_lhs = if mapped { Some(lhs.clone()) } else { None };
-
-    let node = match &expr.value {
-        Expr::Call(_, list) | Expr::MappedCall(_, list) => {
-            let t = inner_pre.bind(transform_call_items(ctx, &list, &expr.span)?);
-            a.call(lhs, t)
-        }
-        Expr::Subscript(_, list) | Expr::MappedSubscript(_, list) => {
-            let t = inner_pre.bind(transform_subscript_items(ctx, &list, &expr.span)?);
-            a.subscript(lhs, t, access_ctx)
-        }
-        Expr::ScopedAttribute(_, rhs) | Expr::MappedScopedAttribute(_, rhs) => {
-            let t = inner_pre.bind(rhs.transform(ctx)?);
-            a.call(
-                a.tl_builtin("partial"),
-                vec![PyCallItem::Arg(t), PyCallItem::Arg(lhs)],
-            )
-        }
-        Expr::RawAttribute(_, attr) | Expr::MappedRawAttribute(_, attr) => {
-            a.attribute(lhs, attr.value.escape(), access_ctx)
-        }
-        Expr::Attribute(_, rhs) | Expr::MappedAttribute(_, rhs) => a.call(
-            a.tl_builtin("vget"),
-            vec![a.call_arg(lhs), a.call_arg(a.str(rhs.value.escape()))],
-        ),
-        _ => {
-            panic!()
-        }
-    };
-
-    if mapped {
-        let mapped_expr = match &expr.value {
-            Expr::MappedRawAttribute(..) | Expr::MappedAttribute(..) => a.if_expr(
+    let make_expr = |ctx, lhs| -> TlResult<_> {
+        let mut inner_pre = PyBlock::new();
+        let node = match &expr.value {
+            Expr::Call(_, list) | Expr::MappedCall(_, list) => {
+                let t = inner_pre.bind(transform_call_items(ctx, &list, &expr.span)?);
+                a.call(lhs, t)
+            }
+            Expr::Subscript(_, list) | Expr::MappedSubscript(_, list) => {
+                let t = inner_pre.bind(transform_subscript_items(ctx, &list, &expr.span)?);
+                a.subscript(lhs, t, access_ctx)
+            }
+            Expr::ScopedAttribute(_, rhs) | Expr::MappedScopedAttribute(_, rhs) => {
+                let t = inner_pre.bind(rhs.transform(ctx)?);
                 a.call(
-                    a.tl_builtin("ok"),
-                    vec![a.call_arg(cloned_lhs.clone().unwrap())],
-                ),
-                node,
-                cloned_lhs.unwrap(),
+                    a.tl_builtin("partial"),
+                    vec![PyCallItem::Arg(t), PyCallItem::Arg(lhs)],
+                )
+            }
+            Expr::RawAttribute(_, attr) | Expr::MappedRawAttribute(_, attr) => {
+                a.attribute(lhs, attr.value.escape(), access_ctx)
+            }
+            Expr::Attribute(_, rhs) | Expr::MappedAttribute(_, rhs) => a.call(
+                a.tl_builtin("vget"),
+                vec![a.call_arg(lhs), a.call_arg(a.str(rhs.value.escape()))],
             ),
             _ => {
-                let fn_info = ctx.mapped_fninfo.get(&expr.into()).unwrap();
-                let mut fn_body = inner_pre;
-                fn_body.push(a.return_(node));
-
-                let inner_fn = pre.bind(make_fn_exp(
-                    ctx,
-                    FnDef::PyFnDef(vec![], fn_body, false, fn_info.is_async),
-                    &expr.span,
-                )?);
-
-                let mut call = a.call(
-                    a.tl_builtin("op_map"),
-                    vec![a.call_arg(cloned_lhs.unwrap()), a.call_arg(inner_fn)],
-                );
-
-                if fn_info.is_async {
-                    call = a.await_(call);
-                }
-                if fn_info.is_do || fn_info.is_generator {
-                    call = a.yield_from(call);
-                }
-
-                call
+                panic!()
             }
         };
 
         Ok(SPyExprWithPre {
-            value: mapped_expr,
-            pre,
+            value: node,
+            pre: inner_pre,
         })
+    };
+
+    let mut pre = PyBlock::new();
+
+    if mapped {
+        let arg_name = ctx.create_aux_var("maparg", expr.span.start);
+        let py_expr = make_expr(ctx, a.load_ident(arg_name.clone()))?;
+
+        let fn_info = ctx.mapped_fninfo.get(&expr.into()).unwrap();
+        let mut fn_body = py_expr.pre;
+        fn_body.push(a.return_(py_expr.value));
+
+        let inner_fn = pre.bind(make_fn_exp(
+            ctx,
+            FnDef::PyFnDef(
+                vec![a.arg_def(arg_name, None)],
+                fn_body,
+                false,
+                fn_info.is_async,
+            ),
+            &expr.span,
+        )?);
+
+        let mut call = a.call(
+            a.tl_builtin("op_map"),
+            vec![
+                a.call_arg(pre.bind(lhs_node.transform(ctx)?)),
+                a.call_arg(inner_fn),
+            ],
+        );
+
+        if fn_info.is_async {
+            call = a.await_(call);
+        }
+        if fn_info.is_do || fn_info.is_generator {
+            call = a.yield_from(call);
+        }
+
+        Ok(SPyExprWithPre { value: call, pre })
     } else {
-        pre.extend(inner_pre);
-        Ok(SPyExprWithPre { value: node, pre })
+        let lhs = pre.bind(lhs_node.transform(ctx)?);
+        let expr = pre.bind(make_expr(ctx, lhs)?);
+        Ok(SPyExprWithPre { value: expr, pre })
     }
 }
 

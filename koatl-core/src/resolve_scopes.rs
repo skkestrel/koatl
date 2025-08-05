@@ -41,11 +41,18 @@ pub struct ResolveState<'src> {
     // TODO: these should all be collapsed into the same thing...
     pub functions: HashMap<RefHash, FnInfo>,
     pub memo_fninfo: HashMap<RefHash, FnInfo>,
-
-    // mapped_fninfo is a special case since the RHS of the
-    // mapped AST nodes are not boxed; should they be?
+    // ...but before that, mapped_fninfo needs to be fixed.
+    // CallItems and ListItems nodes inside MappedCall and MappedSubscript
+    // are not boxed, so I've been pointing to the upper-level MappedX nodes
+    // instead, but that will cause a conflict with memo_fninfo, specifically
+    // "memo a?.x" will try to use the same refhash for both.
+    // So, is it safe to just point to the reference of the bare CallItem/ListItem?
+    // Or do we just box it?
     pub mapped_fninfo: HashMap<RefHash, FnInfo>,
     pub while_fninfo: HashMap<RefHash, FnInfo>,
+    // Also, ands and ors don't short circuit properly right now,
+    // so maybe they need a special fninfo to get it working for now.
+    // But we should really just generalize all these cases.
     pub coal_fninfo: HashMap<RefHash, FnInfo>,
 
     pub declarations: SlotMap<DeclarationKey, Declaration<'src>>,
@@ -1296,10 +1303,28 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
             // postfix
             Expr::Attribute(expr, attr) => Expr::Attribute(expr.traverse(state), attr.clone()),
-            Expr::MappedAttribute(expr, attr) => Expr::MappedAttribute(expr.traverse(state), attr),
+            Expr::MappedAttribute(expr, attr) => {
+                let traversed = Expr::MappedAttribute(expr.traverse(state), attr)
+                    .spanned(span)
+                    .indirect();
+
+                state
+                    .mapped_fninfo
+                    .insert(traversed.as_ref().into(), FnInfo::new());
+
+                return traversed;
+            }
             Expr::RawAttribute(expr, attr) => Expr::RawAttribute(expr.traverse(state), attr),
             Expr::MappedRawAttribute(expr, spanned) => {
-                Expr::MappedRawAttribute(expr.traverse(state), spanned)
+                let traversed = Expr::MappedRawAttribute(expr.traverse(state), spanned)
+                    .spanned(span)
+                    .indirect();
+
+                state
+                    .mapped_fninfo
+                    .insert(traversed.as_ref().into(), FnInfo::new());
+
+                return traversed;
             }
             Expr::ScopedAttribute(expr, value) => {
                 Expr::ScopedAttribute(expr.traverse(state), value.traverse_guarded(state))
