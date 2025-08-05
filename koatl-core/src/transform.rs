@@ -2048,7 +2048,10 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
 
                 let expr = try_body.bind(expr.transform(ctx)?);
 
-                try_body.push(a.assign(a.ident(var_name.clone(), PyAccessCtx::Store), expr));
+                try_body.push(a.assign(
+                    a.ident(var_name.clone(), PyAccessCtx::Store),
+                    a.call(a.tl_builtin("Ok"), vec![a.call_arg(expr)]),
+                ));
 
                 let mut cases = vec![];
 
@@ -2060,7 +2063,10 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                         guard: None,
                         body: PyBlock(vec![a.assign(
                             a.ident(var_name.clone(), PyAccessCtx::Store),
-                            a.load_ident(err_name.clone()),
+                            a.call(
+                                a.tl_builtin("Err"),
+                                vec![a.call_arg(a.load_ident(err_name.clone()))],
+                            ),
                         )]),
                     });
 
@@ -2077,7 +2083,10 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                         guard: None,
                         body: PyBlock(vec![a.assign(
                             a.ident(var_name.clone(), PyAccessCtx::Store),
-                            a.load_ident(err_name.clone()),
+                            a.call(
+                                a.tl_builtin("Err"),
+                                vec![a.call_arg(a.load_ident(err_name.clone()))],
+                            ),
                         )]),
                     });
                 }

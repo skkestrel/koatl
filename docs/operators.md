@@ -40,18 +40,18 @@ data
 
 ## Try-expressions
 
-Try-expressions elegantly interface with the outside world without breaking the flow of a program with a try-catch block, instead returning exceptions as a regular value:
+Try-expressions elegantly interface with the outside world without breaking the flow of a program with a try-catch block, instead returning exceptions as a regular value in the Result monad:
 
 ```koatl
 >>> try a
-NameError(...)
+Err(NameError(...))
 >>> try 1
-1
+Ok(1)
 ```
 
 ## If-expressions
 
-In Koatl, if-statements can be expressions too!
+In Koatl, if-statements can be expressions too.
 
 ```koatl
 x =
@@ -80,13 +80,29 @@ Matches-expressions resolve to either True or False, using Python pattern matchi
 
 ## Coalescing operators
 
-We can use coalescing operators to work with try-expressions.
-They coalesce on None and objects deriving from Exception
+We can use coalescing operators to work with try-expressions and the Result monad.
+They lazily evaluate the RHS default value on Err, None, and Exceptions.
 
 ```koatl
 config_option = try get_config_value() ?? default_value
-other_option = list_or_none?[1] ?? default_value
-optional_callback?.()
+```
+
+### Mapping operators:
+
+Mapping operators `?.`, `?()`, `?[]`, work as usual, on both Results and regular values.
+
+```koatl
+>>> None?.prop
+None
+
+>>> Ok([1, 2, 3])?[0]
+Ok[1]
+
+>>> Err(ValueError())?.prop
+Err(ValueError())
+
+>>> Ok(None)?.prop
+<raised AttributeError>
 ```
 
 ## Better slices

@@ -21,16 +21,13 @@ from .record import *
 from .helpers import *
 
 
-def dummy_memo(*args, **kwargs):
-    raise RuntimeError(
-        "memo is not available without the prelude. Please import koatl.prelude."
-    )
+def dummy(name):
+    def wrapper(*args, **kwargs):
+        raise RuntimeError(
+            f"{name} is not available without the prelude. Please import koatl.prelude."
+        )
 
-
-def dummy_op(*args, **kwargs):
-    raise RuntimeError(
-        "??, ?., etc are not available without the prelude. Please import koatl.prelude."
-    )
+    return wrapper
 
 
 __tl__ = SimpleNamespace(
@@ -38,17 +35,21 @@ __tl__ = SimpleNamespace(
     slice=slice,
     vget=virtual.vget,
     vhas=virtual.vhas,
-    memo_value=dummy_memo,
-    bind_memo_value=dummy_memo,
-    op_map=dummy_op,
-    op_coal=dummy_op,
     unpack_record=helpers.unpack_record,
     set_exports=helpers.set_exports,
     do=helpers.do,
     partial=functools.partial,
+    # These require more complex logic and require the prelude.
+    # The runtime provides dummy implementations that raise if used without the prelude.
+    memo_value=dummy("memo"),
+    bind_memo_value=dummy("memo"),
+    op_map=dummy("?"),
+    op_coal=("??"),
+    Ok=dummy("try-expr"),
+    Err=dummy("try-expr"),
     **{name: helpers.__dict__[name] for name in helpers.__all__},
     **{name: record.__dict__[name] for name in record.__all__},
-    **{name: virtual.__dict__[name] for name in virtual.__all__}
+    **{name: virtual.__dict__[name] for name in virtual.__all__},
 )
 
 

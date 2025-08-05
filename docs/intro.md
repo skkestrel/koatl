@@ -20,10 +20,10 @@
 
 >>> # Convenient syntax for small lambdas
 >>> #         |
->>> #         |  Get errors as values instead of using try/except
+>>> #         |  Catch exceptions into a Result with try-expressions
 >>> #         v                v
 >>> (..5).map($ - 1).map(x => try [1, 2, 3][x]).list()
-[IndexError(...), 1, 2, 3, IndexError(...)]
+[Err(IndexError(...)), Ok(1), Ok(2), Ok(3), Err(IndexError(...))]
 
 >>> #      Quickly create records with Javascript-like syntax
 >>> #                              |

@@ -87,6 +87,11 @@ export Ok = class(Result):
             return None
         self.value = value
 
+    __eq__ = (self, other) =>
+        if not isinstance(other, Ok):
+            return False
+        return self.value == other.value
+
     __repr__ = self => f"Ok({repr(self.value)})"
     unwrap = self => self.value
     coalesce = (self, f) => self.value
@@ -99,6 +104,11 @@ export Err = class(Result):
         if hasattr(self, "value"):
             return None
         self.value = value
+
+    __eq__ = (self, other) =>
+        if not isinstance(other, Err):
+            return False
+        return self.value == other.value
 
     __repr__ = self => f"Err({repr(self.value)})"
     unwrap = self =>
@@ -116,6 +126,9 @@ register_global_attr(object, "result", ExtensionProperty(Result))
 
 # Enables @ operator for bare objects.
 register_global_attr(object, "bind_gen", Result.bind_gen)
+
+__tl__.Ok = Ok
+__tl__.Err = Err
 
 __tl__.op_coal = (x, f) =>
     if x matches Result():
