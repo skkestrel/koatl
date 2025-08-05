@@ -680,11 +680,7 @@ fn transform_assignment<'src, 'ast>(
             Ok(PyDecorators(
                 decorators
                     .into_iter()
-                    .map(|x| {
-                        let t = x.transform(ctx)?;
-                        stmts.extend(t.pre);
-                        Ok(t.value)
-                    })
+                    .map(|x| Ok(stmts.bind(x.transform(ctx)?)))
                     .collect::<TlResult<_>>()?,
             ))
         };
@@ -692,23 +688,25 @@ fn transform_assignment<'src, 'ast>(
         if let Expr::Fn(arglist, body) = &cur_node.value {
             let decorators = py_decorators()?;
 
-            let fn_def = make_fn_def(
+            stmts.extend(make_fn_def(
                 ctx,
                 lhs_ident,
                 FnDef::TlFnDef(cur_node, arglist, body),
                 decorators,
                 span,
-            )?;
+            )?);
 
             // TODO give fn and class defs a better __name__ than the mangled ident
 
-            return Ok(fn_def);
+            return Ok(stmts);
         } else if let Expr::Class(bases, body) = &cur_node.value {
             let decorators = py_decorators()?;
 
-            let cls_def = make_class_def(ctx, lhs_ident, &bases, &body, decorators, span)?;
+            stmts.extend(make_class_def(
+                ctx, lhs_ident, &bases, &body, decorators, span,
+            )?);
 
-            return Ok(cls_def);
+            return Ok(stmts);
         };
     };
 

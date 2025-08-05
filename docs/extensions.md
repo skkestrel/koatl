@@ -32,25 +32,10 @@ it always delegates to `items()` if possible (to make dict iteration more sane) 
 
 `koatl.prelude.iterable.Iterable` is automatically registered as an extension trait for all types with an `iter`, and provides common methods for working with iterators.
 
-## The builtin `pure` and `bind_once` extension method
+## The builtin `ok`, `result`, `bind_once` extensions
 
-These extension methods provide default Monad implementations (in the Result monad) to _all_ objects (see [Monads](monads)).
+`bind_once` provides a default Monad implementation in the Result monad to _all_ objects (see [Monads](monads)).
 
-```koatl
+`.ok` is an extension property that is False for Exception types and None, and True for everything else.
 
-# BaseException and NoneType
-bind_once = (self, f) => self
-
-# All other objects (fallback)
-bind_once = (self, f) => f(self)
-pure = staticmethod& v => v
-```
-
-### `map_err` and `map_none`
-
-Like above, these are available on all objects, and roughly equivalent to:
-
-```koatl
-map_err = (self, f) => self matches BaseException() then f(self) else self
-map_none = (self, f) => self matches None then f() else self
-```
+`.result` wraps any object in a `Result`.

@@ -84,8 +84,10 @@ def do(f):
             # TODO: this is a workaround to avoid recursion.
             # is it possible to derive bind_gen directly from bind_once?
 
-            return vget(m, "bind_gen")(gen)
-        except (NotImplementedError, AttributeError):
+            bind_gen = vget(m, "bind_gen")
+        except AttributeError:
             return vget(m, "bind_once")(recurse)
+
+        return bind_gen(gen)
 
     return impl

@@ -14,7 +14,7 @@ export Monad = class(abc.ABC):
 
     # An optional, optimized implementation of `bind` that skips deep recursion.
     # TODO: can this be automatically generated?
-    bind_gen = (self, gen) => raise NotImplementedError()
+    # bind_gen = (self, gen) => ...
 
     # Automatically generated implementations.
     map = (self, f) => self.bind(x => self.pure(f(x)))

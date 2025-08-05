@@ -117,22 +117,14 @@ export Err = class(Result):
     coalesce = (self, f) => f()
 
 
-# Provide a default implementation for *most* Result methods
-# ...we shouldn't provide a default for `map` since that
-# would prevent virtual trait lookup. TODO: fix this?
-for name, method in Result.__dict__:
-    if name.startswith("_"):
-        continue
-    if name == "map":
-        continue
-
-    let make_closure = method => (self, *args, **kwargs) => Result.raw(method(self, *args, **kwargs))
-
-    register_global_attr(object, name, make_closure(method))
-
-register_global_attr(object, "ok", ExtensionProperty(_ => True))
 register_global_attr(type(None), "ok", ExtensionProperty(_ => False))
 register_global_attr(BaseException, "ok", ExtensionProperty(_ => False))
+register_global_attr(object, "ok", ExtensionProperty(_ => True))
+
+register_global_attr(object, "result", ExtensionProperty(Result))
+
+# Enables @ operator for bare objects.
+register_global_attr(object, "bind_gen", Result.bind_gen)
 
 __tl__.op_coal = (x, f) =>
     if x matches Result():

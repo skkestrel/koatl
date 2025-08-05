@@ -46,11 +46,20 @@ Using the `memo` keyword automatically constructs a `@Memo.value(id, deps, fn)`,
 
 ## Result
 
-TODO
+The Result type has two subtypes, Ok and Err. Using the Result constructor will automatically turn a value into one of the two subtypes:
 
-The Result monad represents error handling and early return - `Ok` is success, while `None` and `Err` types are failure.
+```koatl
+>>> Result(1)
+Ok(1)
+>>> Result(0)
+Ok(0)
+>>> Result(None)
+Err(None)
+>>> Result(ValueError())
+Err(ValueError())
+```
 
-> Note: unlike Rust's Result, `None` and `Err` are distinct error-ish types.
+The Result monad represents error handling and early return:
 
 ```koatl
 f = () =>
@@ -86,11 +95,20 @@ fn f() -> Result<T, E> {
 }
 ```
 
-To explicitly mark an exception or None as an Ok value, simply use `Ok(error)`.
+To explicitly mark an exception or None as an Ok value, simply use `Ok(None)`.
 
 While errors typically aren't returned from functions in Python, the `try` operator (see [Operators](operators)) makes it very easy to use these constructions to interface with external code.
 
-Note that Result provides the default `bind_once` implementation for all types that don't otherwise define `bind_once`.
+Important: Result provides a default `bind_once` implementation for ALL types that don't otherwise define it;
+this means that (1).bind_once(...) will work, and therefore, the @ operator will also work with bare non-Result values using Result semantics.
+
+`.result` is also registered as a v-property on all objects, so the following will work:
+
+```koatl
+external_function().result match:
+    Ok(value) => ...
+    Err(value) => ...
+```
 
 ## Async
 

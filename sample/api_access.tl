@@ -20,18 +20,18 @@ API_RESPONSE = {
 
 get_user_details = (data, user_id) =>
     let user = @(try data[user_id] except KeyError())
-        .map_err(e => KeyError(f"User {user_id} not found: {e}"))
+        .result.map_err(e => KeyError(f"User {user_id} not found: {e}"))
 
     let profile = try user.profile
 
-    profile matches ... then:
+    not profile.ok then:
         print(f"Profile not found.")
     else:
         print(f"Name: {try profile.name ?? "N/A"}")
 
         let contact = try profile.contact
 
-        contact matches ... then:
+        not contact.ok then:
             print(f"Contact not found.")
         else:
             print(f"Email: {try contact.email ?? "N/A"}")
@@ -39,7 +39,7 @@ get_user_details = (data, user_id) =>
 
     let orders = try user.orders ?? []
     let n_orders = @(try len(orders))
-        .map_err(e => ValueError("Orders is malformed."))
+        .result.map_err(e => ValueError("Orders is malformed."))
 
     print(
         n_orders > 0 then:
@@ -48,14 +48,11 @@ get_user_details = (data, user_id) =>
             "No orders found."
     )
 
-    ()
-
 ["user_a", "user_b", "user_c", "user_d"]
     .map(id =>
         print(f"Searching for id: {id}")
-        get_user_details(API_RESPONSE, id) match:
-            Err() as e => print(f"Error fetching details: {repr(e)}")
-            None => print("Unexpected return status!")
-            default print("Details fetched successfully.")
+        get_user_details(API_RESPONSE, id).result match:
+            Err(e) => print(f"Error fetching details: {repr(e)}")
+            Ok() => print("Details fetched successfully.")
         print("-" * 20))
     .list()
