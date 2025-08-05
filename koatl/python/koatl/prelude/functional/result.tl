@@ -1,8 +1,8 @@
 import functools.wraps
-import .monad.Monad
 import koatl.runtime.virtual.register_global_attr
+import .algebra.MonadOnce
 
-export Result = class:
+export Result = class(MonadOnce):
     __slots__ = ()
     __match_args__ = ("value",)
 

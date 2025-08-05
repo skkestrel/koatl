@@ -2,9 +2,9 @@ import functools.wraps
 import asyncio
 
 import .async_util
-import .monad.Monad
+import .MonadOnce
 
-export Async = class(Monad):
+export Async = class(MonadOnce):
     __init__ = (self, awaitable) => self.generator = awaitable.__await__()
 
     __await__ = self => self.generator
@@ -39,5 +39,5 @@ export Async = class(Monad):
 
     sleep = staticmethod& x => Async(asyncio.sleep(x))
 
-    #- TODO: Why is asyncio.gather eager? -#
+    # TODO: Why is asyncio.gather eager?
     gather = staticmethod& (*args) => Async.from_generator_fn& () => yield from asyncio.gather(*args)

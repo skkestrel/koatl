@@ -1,7 +1,7 @@
 import collections.UserList
 import itertools
 
-import .monad.Monad
+import .Monad
 import ..iterable.Iterable
 
 export List = class(UserList, Monad):

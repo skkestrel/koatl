@@ -1,9 +1,9 @@
 import collections.defaultdict
 import functools.wraps
 import .result.(Result, Ok)
-import .Monad
+import .MonadOnce
 
-export Memo = class(Monad):
+export Memo = class(MonadOnce):
     Cache = class:
         __init__ = self =>
             self.cache = defaultdict(dict)

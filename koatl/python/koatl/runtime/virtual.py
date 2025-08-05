@@ -1,3 +1,4 @@
+import abc
 from functools import partial
 from itertools import count
 from types import new_class
@@ -105,7 +106,7 @@ def Trait(module, name, methods, *, requires=[]):
 
     meta = type(
         f"{name}Meta",
-        (type,),
+        (abc.ABCMeta,),
         {"__instancecheck__": instancecheck, "__module__": "types"},
     )
 

@@ -1,4 +1,4 @@
-export import .monad.*
+export import .algebra.*
 export import .result.*
 export import .async.*
 export import .reader.*

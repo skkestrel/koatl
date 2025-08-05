@@ -1,7 +1,7 @@
 import functools.wraps
-import .monad.Monad
+import .MonadOnce
 
-export Reader = class(Monad):
+export Reader = class(MonadOnce):
     __init__ = (self, fn) => self.fn = fn
 
     __repr__ = self => "Reader(...)"
