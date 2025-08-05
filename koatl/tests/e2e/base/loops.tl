@@ -12,3 +12,14 @@ while (x => x)(i):
         assert False
 
     i = False
+
+counts = []
+counter = 0
+while (
+    counter = counter + 1
+    counter < 5
+):
+    counts.append(counter)
+
+assert_eq(counter, 5)
+assert_eq(counts, [1, 2, 3, 4])

@@ -30,7 +30,7 @@ impl<T> IntoIndirect<T> for T {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
     Sub,

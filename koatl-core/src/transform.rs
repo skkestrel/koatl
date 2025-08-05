@@ -2205,6 +2205,47 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                     }
 
                     break 'block call;
+                } else if let BinaryOp::And | BinaryOp::Or = op {
+                    let is_and = *op == BinaryOp::And;
+
+                    let py_lhs = pre.bind(lhs.transform(ctx)?);
+                    let py_rhs = rhs.transform(ctx)?;
+
+                    if py_rhs.pre.is_empty() {
+                        // no pre, so we can just use regular python binary
+                        break 'block a.binary(
+                            if is_and {
+                                PyBinaryOp::And
+                            } else {
+                                PyBinaryOp::Or
+                            },
+                            py_lhs,
+                            py_rhs.value,
+                        );
+                    }
+
+                    // rhs has pre, so we need to manually short-circuit
+                    let temp_var = ctx.create_aux_var("bool", span.start);
+                    let (short_condition, short_value) = if is_and {
+                        (a.not(py_lhs), a.bool(false))
+                    } else {
+                        (py_lhs, a.bool(true))
+                    };
+
+                    let mut else_block = PyBlock::new();
+                    let rhs = else_block.bind(py_rhs);
+                    else_block.push(a.assign(a.ident(temp_var.clone(), PyAccessCtx::Store), rhs));
+
+                    pre.push(a.if_(
+                        short_condition,
+                        PyBlock(vec![a.assign(
+                            a.ident(temp_var.clone(), PyAccessCtx::Store),
+                            short_value,
+                        )]),
+                        Some(else_block),
+                    ));
+
+                    break 'block a.load_ident(temp_var);
                 }
 
                 let (lhs, rhs) = (lhs.transform(ctx)?, rhs.transform(ctx)?);
@@ -2221,11 +2262,6 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                     BinaryOp::Exp => PyBinaryOp::Pow,
                     BinaryOp::MatMul => PyBinaryOp::MatMult,
 
-                    // TODO: short circuiting on these doesn't work
-                    // because of pre-stmts...
-                    BinaryOp::And => PyBinaryOp::And,
-                    BinaryOp::Or => PyBinaryOp::Or,
-
                     BinaryOp::Lt => PyBinaryOp::Lt,
                     BinaryOp::Gt => PyBinaryOp::Gt,
                     BinaryOp::Leq => PyBinaryOp::Leq,
@@ -2236,7 +2272,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                     BinaryOp::Nis => PyBinaryOp::Nis,
 
                     BinaryOp::Pipe => break 'block a.call(rhs, vec![PyCallItem::Arg(lhs)]),
-                    BinaryOp::Coalesce => {
+                    BinaryOp::Coalesce | BinaryOp::And | BinaryOp::Or => {
                         panic!()
                     }
                 };
