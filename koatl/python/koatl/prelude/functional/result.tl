@@ -14,24 +14,15 @@ export Result = class:
     __init__ = (self, *args, **kwargs) =>
         raise ValueError("Result should not be instantiated directly, use Ok or Err")
 
-    raw = self =>
+    checked = staticmethod& f =>
         """
-        Unwraps the value from a Result, making it look like
-        a non-monadic Python value.
+        Runs the function in a try block and returns a Result.
+        If the function raises an exception, it will be wrapped in an Err.
         """
-        if self matches not Result():
-            return self
-
-        if self.ok:
-            if self.value.ok:
-                return self.value
-            else:
-                return self
-        else:
-            if self.value.ok:
-                return self
-            else:
-                return self.value
+        try:
+            return Ok(f())
+        except BaseException() as e:
+            return Err(e)
 
     bind_once = (self, f) =>
         self = Result(self)
