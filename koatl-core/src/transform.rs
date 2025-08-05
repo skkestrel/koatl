@@ -64,7 +64,6 @@ struct TlCtx<'src, 'ast> {
     resolutions: &'ast HashMap<RefHash, DeclarationKey>,
     memo_fninfo: &'ast HashMap<RefHash, FnInfo>,
     mapped_fninfo: &'ast HashMap<RefHash, FnInfo>,
-    while_fninfo: &'ast HashMap<RefHash, FnInfo>,
     coal_fninfo: &'ast HashMap<RefHash, FnInfo>,
 
     scopes: &'ast SlotMap<ScopeKey, Scope>,
@@ -94,7 +93,6 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
             resolutions: &resolve_state.resolutions,
             memo_fninfo: &resolve_state.memo_fninfo,
             mapped_fninfo: &resolve_state.mapped_fninfo,
-            while_fninfo: &resolve_state.while_fninfo,
             coal_fninfo: &resolve_state.coal_fninfo,
 
             scopes: &resolve_state.scopes,
@@ -1889,30 +1887,20 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                 let body_block = body.transform(ctx)?.drop_expr(ctx);
 
-                let py_cond: SPyExpr<'src> = if py_cond.pre.is_empty() {
-                    py_cond.value
+                if py_cond.pre.is_empty() {
+                    pre.push(a.while_(py_cond.value, body_block));
                 } else {
-                    let aux_fninfo = ctx.while_fninfo.get(&cond.as_ref().into()).unwrap();
+                    let mut new_body_block = PyBlock::new();
+                    new_body_block.extend(py_cond.pre);
+                    new_body_block.push(a.if_(
+                        a.not(py_cond.value),
+                        PyBlock(vec![a.break_()]),
+                        None,
+                    ));
+                    new_body_block.extend(body_block);
 
-                    let aux_fn = pre.bind(make_fn_exp(
-                        ctx,
-                        FnDef::PyFnDef(vec![], py_cond.pre, false, aux_fninfo.is_async),
-                        &span,
-                    )?);
-
-                    let mut cond = a.call(aux_fn, vec![]);
-
-                    if aux_fninfo.is_async {
-                        cond = a.await_(cond);
-                    }
-                    if aux_fninfo.is_do || aux_fninfo.is_generator {
-                        cond = a.yield_from(cond);
-                    }
-
-                    cond
-                };
-
-                pre.push((PyStmt::While(py_cond, body_block), span).into());
+                    pre.push(a.while_(a.bool(true), new_body_block));
+                }
             }
             Stmt::Try(body, excepts, finally) => {
                 let body_block = body.transform(ctx)?.drop_expr(ctx);

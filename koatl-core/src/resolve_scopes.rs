@@ -49,10 +49,6 @@ pub struct ResolveState<'src> {
     // So, is it safe to just point to the reference of the bare CallItem/ListItem?
     // Or do we just box it?
     pub mapped_fninfo: HashMap<RefHash, FnInfo>,
-    pub while_fninfo: HashMap<RefHash, FnInfo>,
-    // Also, ands and ors don't short circuit properly right now,
-    // so maybe they need a special fninfo to get it working for now.
-    // But we should really just generalize all these cases.
     pub coal_fninfo: HashMap<RefHash, FnInfo>,
 
     pub declarations: SlotMap<DeclarationKey, Declaration<'src>>,
@@ -105,7 +101,6 @@ impl<'src> ResolveState<'src> {
             patterns: HashMap::new(),
             memo_fninfo: HashMap::new(),
             mapped_fninfo: HashMap::new(),
-            while_fninfo: HashMap::new(),
             coal_fninfo: HashMap::new(),
 
             declarations: SlotMap::with_key(),
@@ -1558,12 +1553,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
             Stmt::Expr(expr) => Stmt::Expr(expr.traverse_guarded(state)),
             Stmt::Return(expr) => Stmt::Return(expr.traverse_guarded(state)),
             Stmt::While(cond, body) => {
-                let (cond, fnctx) =
-                    with_phantom_fninfo(state, span, |state| cond.traverse_guarded(state));
-
-                state.while_fninfo.insert(cond.as_ref().into(), fnctx);
-
-                Stmt::While(cond, body.traverse_guarded(state))
+                Stmt::While(cond.traverse_guarded(state), body.traverse_guarded(state))
             }
             Stmt::For(pattern, iter, body) => {
                 let (pattern, scope, _meta) = pattern_scoped(state, pattern);
