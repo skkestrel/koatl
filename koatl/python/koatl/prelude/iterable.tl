@@ -21,13 +21,13 @@ methods = {
         if not hasattr(m, "apply"):
             # special case for bare types - slightly more efficient
             # ...also required since bare types don't have .map
-            if not __tl__.ok(m):
+            if not m.ok:
                 return m
 
             let acc = [m]
             for v in it:
                 let fv = f(v)
-                if not __tl__.ok(fv):
+                if not fv.ok:
                     return fv
                 acc.append(fv)
             return acc

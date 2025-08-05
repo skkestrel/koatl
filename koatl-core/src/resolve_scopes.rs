@@ -36,9 +36,17 @@ pub struct ResolveState<'src> {
     pub export_stars: Vec<SIdent<'src>>,
 
     pub resolutions: HashMap<RefHash, DeclarationKey>,
-    pub functions: HashMap<RefHash, FnInfo>,
     pub patterns: HashMap<RefHash, PatternInfo>,
-    pub memo_captures: HashMap<RefHash, FnInfo>,
+
+    // TODO: these should all be collapsed into the same thing...
+    pub functions: HashMap<RefHash, FnInfo>,
+    pub memo_fninfo: HashMap<RefHash, FnInfo>,
+
+    // mapped_fninfo is a special case since the RHS of the
+    // mapped AST nodes are not boxed; should they be?
+    pub mapped_fninfo: HashMap<RefHash, FnInfo>,
+    pub while_fninfo: HashMap<RefHash, FnInfo>,
+    pub coal_fninfo: HashMap<RefHash, FnInfo>,
 
     pub declarations: SlotMap<DeclarationKey, Declaration<'src>>,
     pub scopes: SlotMap<ScopeKey, Scope>,
@@ -88,7 +96,10 @@ impl<'src> ResolveState<'src> {
             resolutions: HashMap::new(),
             functions: HashMap::new(),
             patterns: HashMap::new(),
-            memo_captures: HashMap::new(),
+            memo_fninfo: HashMap::new(),
+            mapped_fninfo: HashMap::new(),
+            while_fninfo: HashMap::new(),
+            coal_fninfo: HashMap::new(),
 
             declarations: SlotMap::with_key(),
             scopes,
@@ -388,6 +399,7 @@ pub struct FnInfo {
     pub is_generator: bool,
     pub is_placeholder: bool,
     pub is_memo: bool,
+    pub is_mapped_rhs: bool,
 
     pub arg_names: Vec<DeclarationKey>,
     pub captures: HashSet<DeclarationKey>,
@@ -401,6 +413,7 @@ impl FnInfo {
             is_generator: false,
             is_placeholder: false,
             is_memo: false,
+            is_mapped_rhs: false,
             arg_names: Vec::new(),
             captures: HashSet::new(),
         }
@@ -836,6 +849,31 @@ fn pattern_scoped<'src>(
     (pattern, scope_key, meta)
 }
 
+fn with_phantom_fninfo<'src, F, O>(state: &mut ResolveState<'src>, span: Span, f: F) -> (O, FnInfo)
+where
+    F: FnOnce(&mut ResolveState<'src>) -> O,
+{
+    let fn_ctx = FnInfo::new();
+
+    state.fn_stack.push(fn_ctx);
+
+    let ret = f(state);
+
+    let fn_ctx = state.fn_stack.pop().unwrap();
+
+    if fn_ctx.is_async {
+        state.set_async(span);
+    }
+    if fn_ctx.is_generator {
+        state.set_generator(span);
+    }
+    if fn_ctx.is_do {
+        state.set_do(span);
+    }
+
+    (ret, fn_ctx)
+}
+
 trait SExprExt<'src> {
     fn traverse(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>>;
     fn traverse_expecting_scope(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>>;
@@ -1239,14 +1277,19 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
             ),
 
             // special case for pipe
-            Expr::Binary(binary_op, mut x, mut y) => {
-                if let BinaryOp::Pipe = binary_op {
-                    x = x.traverse_guarded(state);
-                    y = y.traverse_guarded(state);
-                } else {
-                    x = x.traverse(state);
-                    y = y.traverse(state);
-                }
+            Expr::Binary(binary_op, x, y) => {
+                let (x, y) = match binary_op {
+                    BinaryOp::Pipe => (x.traverse_guarded(state), y.traverse_guarded(state)),
+                    BinaryOp::Coalesce => {
+                        let (y, fn_ctx) =
+                            with_phantom_fninfo(state, span, |state| y.traverse(state));
+
+                        state.coal_fninfo.insert(y.as_ref().into(), fn_ctx);
+
+                        (x.traverse(state), y)
+                    }
+                    _ => (x.traverse(state), y.traverse(state)),
+                };
 
                 Expr::Binary(binary_op, x, y)
             }
@@ -1262,19 +1305,53 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 Expr::ScopedAttribute(expr.traverse(state), value.traverse_guarded(state))
             }
             Expr::MappedScopedAttribute(expr, value) => {
-                Expr::MappedScopedAttribute(expr.traverse(state), value.traverse_guarded(state))
+                let (rhs, fn_ctx) =
+                    with_phantom_fninfo(state, span, |state| value.traverse_guarded(state));
+
+                let traversed = Expr::MappedScopedAttribute(expr.traverse(state), rhs)
+                    .spanned(span)
+                    .indirect();
+
+                state
+                    .mapped_fninfo
+                    .insert(traversed.as_ref().into(), fn_ctx);
+
+                return traversed;
             }
             Expr::Call(a, items) => {
                 Expr::Call(a.traverse(state), traverse_call_items(state, items))
             }
             Expr::MappedCall(a, call_items) => {
-                Expr::MappedCall(a.traverse(state), traverse_call_items(state, call_items))
+                let (rhs, fn_ctx) = with_phantom_fninfo(state, span, |state| {
+                    traverse_call_items(state, call_items)
+                });
+
+                let traversed = Expr::MappedCall(a.traverse(state), rhs)
+                    .spanned(span)
+                    .indirect();
+
+                state
+                    .mapped_fninfo
+                    .insert(traversed.as_ref().into(), fn_ctx);
+
+                return traversed;
             }
             Expr::Subscript(x, list_items) => {
                 Expr::Subscript(x.traverse(state), traverse_list_items(state, list_items))
             }
             Expr::MappedSubscript(expr, list_items) => {
-                Expr::MappedSubscript(expr.traverse(state), traverse_list_items(state, list_items))
+                let (rhs, fn_ctx) = with_phantom_fninfo(state, span, |state| {
+                    traverse_list_items(state, list_items)
+                });
+                let traversed = Expr::MappedSubscript(expr.traverse(state), rhs)
+                    .spanned(span)
+                    .indirect();
+
+                state
+                    .mapped_fninfo
+                    .insert(traversed.as_ref().into(), fn_ctx);
+
+                return traversed;
             }
             Expr::Tuple(items) => Expr::Tuple(traverse_list_items(state, items)),
             Expr::List(items) => Expr::List(traverse_list_items(state, items)),
@@ -1305,29 +1382,27 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
             Expr::Memo(inner) => {
                 state.set_do(span);
 
-                let mut fn_ctx = FnInfo::new();
-                fn_ctx.is_memo = true;
-
                 let mut scope = Scope::new(state.top_scope_key());
-                scope.is_fn = true;
-
                 // TODO it's confusing that we need to
                 // set scope.is_fn = true all the time in order
                 // for captures to be found properly.
                 // is there any better way?
-
+                scope.is_fn = true;
                 let scope = state.scopes.insert(scope);
-                state.fn_stack.push(fn_ctx);
 
-                let scoped = state.scoped(scope, |state| {
-                    state.placeholder_guarded(span, |state| inner.traverse_expecting_scope(state))
+                let (inner, mut fn_ctx) = with_phantom_fninfo(state, span, |state| {
+                    state
+                        .scoped(scope, |state| {
+                            state.placeholder_guarded(span, |state| {
+                                inner.traverse_expecting_scope(state)
+                            })
+                        })
+                        .value
                 });
 
-                let inner = scoped.value;
+                fn_ctx.is_memo = true;
 
-                let fn_ctx = state.fn_stack.pop().unwrap();
-
-                state.memo_captures.insert(inner.as_ref().into(), fn_ctx);
+                state.memo_fninfo.insert(inner.as_ref().into(), fn_ctx);
 
                 Expr::Memo(inner)
             }
@@ -1458,7 +1533,12 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
             Stmt::Expr(expr) => Stmt::Expr(expr.traverse_guarded(state)),
             Stmt::Return(expr) => Stmt::Return(expr.traverse_guarded(state)),
             Stmt::While(cond, body) => {
-                Stmt::While(cond.traverse_guarded(state), body.traverse_guarded(state))
+                let (cond, fnctx) =
+                    with_phantom_fninfo(state, span, |state| cond.traverse_guarded(state));
+
+                state.while_fninfo.insert(cond.as_ref().into(), fnctx);
+
+                Stmt::While(cond, body.traverse_guarded(state))
             }
             Stmt::For(pattern, iter, body) => {
                 let (pattern, scope, _meta) = pattern_scoped(state, pattern);

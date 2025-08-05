@@ -27,6 +27,12 @@ def dummy_memo(*args, **kwargs):
     )
 
 
+def dummy_op(*args, **kwargs):
+    raise RuntimeError(
+        "??, ?., etc are not available without the prelude. Please import koatl.prelude."
+    )
+
+
 __tl__ = SimpleNamespace(
     Exception=Exception,
     slice=slice,
@@ -34,10 +40,11 @@ __tl__ = SimpleNamespace(
     vhas=virtual.vhas,
     memo_value=dummy_memo,
     bind_memo_value=dummy_memo,
+    op_map=dummy_op,
+    op_coal=dummy_op,
     unpack_record=helpers.unpack_record,
     set_exports=helpers.set_exports,
     do=helpers.do,
-    ok=helpers.ok,
     partial=functools.partial,
     **{name: helpers.__dict__[name] for name in helpers.__all__},
     **{name: record.__dict__[name] for name in record.__all__},

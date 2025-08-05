@@ -62,7 +62,10 @@ struct TlCtx<'src, 'ast> {
     functions: &'ast HashMap<RefHash, FnInfo>,
     patterns: &'ast HashMap<RefHash, PatternInfo>,
     resolutions: &'ast HashMap<RefHash, DeclarationKey>,
-    memo_captures: &'ast HashMap<RefHash, FnInfo>,
+    memo_fninfo: &'ast HashMap<RefHash, FnInfo>,
+    mapped_fninfo: &'ast HashMap<RefHash, FnInfo>,
+    while_fninfo: &'ast HashMap<RefHash, FnInfo>,
+    coal_fninfo: &'ast HashMap<RefHash, FnInfo>,
 
     scopes: &'ast SlotMap<ScopeKey, Scope>,
     declarations: &'ast SlotMap<DeclarationKey, Declaration<'src>>,
@@ -89,7 +92,10 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
             functions: &resolve_state.functions,
             patterns: &resolve_state.patterns,
             resolutions: &resolve_state.resolutions,
-            memo_captures: &resolve_state.memo_captures,
+            memo_fninfo: &resolve_state.memo_fninfo,
+            mapped_fninfo: &resolve_state.mapped_fninfo,
+            while_fninfo: &resolve_state.while_fninfo,
+            coal_fninfo: &resolve_state.coal_fninfo,
 
             scopes: &resolve_state.scopes,
             declarations: &resolve_state.declarations,
@@ -1645,69 +1651,82 @@ fn transform_postfix_expr<'src, 'ast>(
         pre.bind(lhs_node.transform(ctx)?)
     };
 
-    let guard_if_expr = |expr| {
-        a.if_expr(
-            a.call(a.tl_builtin("ok"), vec![a.call_arg(lhs.clone())]),
-            expr,
-            lhs.clone(),
-        )
-    };
+    let mut inner_pre = PyBlock::new();
+    let cloned_lhs = if mapped { Some(lhs.clone()) } else { None };
 
     let node = match &expr.value {
-        Expr::Call(_, list) => {
-            let t = pre.bind(transform_call_items(ctx, &list, &expr.span)?);
+        Expr::Call(_, list) | Expr::MappedCall(_, list) => {
+            let t = inner_pre.bind(transform_call_items(ctx, &list, &expr.span)?);
             a.call(lhs, t)
         }
-        Expr::MappedCall(_, list) => {
-            let t = pre.bind(transform_call_items(ctx, &list, &expr.span)?);
-            guard_if_expr(a.call(lhs.clone(), t))
-        }
-        Expr::Subscript(_, list) => {
-            let t = pre.bind(transform_subscript_items(ctx, &list, &expr.span)?);
+        Expr::Subscript(_, list) | Expr::MappedSubscript(_, list) => {
+            let t = inner_pre.bind(transform_subscript_items(ctx, &list, &expr.span)?);
             a.subscript(lhs, t, access_ctx)
         }
-        Expr::MappedSubscript(_, list) => {
-            let t = pre.bind(transform_subscript_items(ctx, &list, &expr.span)?);
-            guard_if_expr(a.subscript(lhs.clone(), t, access_ctx))
-        }
-        Expr::RawAttribute(_, attr) => a.attribute(lhs, attr.value.escape(), access_ctx),
-        Expr::MappedRawAttribute(_, attr) => {
-            guard_if_expr(a.attribute(lhs.clone(), attr.value.escape(), PyAccessCtx::Load))
-        }
-        Expr::ScopedAttribute(_, rhs) => {
-            let t = pre.bind(rhs.transform(ctx)?);
+        Expr::ScopedAttribute(_, rhs) | Expr::MappedScopedAttribute(_, rhs) => {
+            let t = inner_pre.bind(rhs.transform(ctx)?);
             a.call(
                 a.tl_builtin("partial"),
                 vec![PyCallItem::Arg(t), PyCallItem::Arg(lhs)],
             )
         }
-        Expr::MappedScopedAttribute(_, rhs) => {
-            let t = pre.bind(rhs.transform(ctx)?);
-            guard_if_expr(a.call(
-                a.tl_builtin("partial"),
-                vec![PyCallItem::Arg(t), PyCallItem::Arg(lhs.clone())],
-            ))
+        Expr::RawAttribute(_, attr) | Expr::MappedRawAttribute(_, attr) => {
+            a.attribute(lhs, attr.value.escape(), access_ctx)
         }
-        Expr::Attribute(_, rhs) => a.call(
+        Expr::Attribute(_, rhs) | Expr::MappedAttribute(_, rhs) => a.call(
             a.tl_builtin("vget"),
             vec![a.call_arg(lhs), a.call_arg(a.str(rhs.value.escape()))],
         ),
-        Expr::MappedAttribute(_, rhs) => guard_if_expr(a.call(
-            a.tl_builtin("vget"),
-            vec![
-                a.call_arg(lhs.clone()),
-                a.call_arg(a.str(rhs.value.escape())),
-            ],
-        )),
         _ => {
-            return Err(simple_err(
-                "Internal error: Postfix expressions can only be attributes, subscripts, calls, or extensions",
-                expr.span,
-            ));
+            panic!()
         }
     };
 
-    Ok(SPyExprWithPre { value: node, pre })
+    if mapped {
+        let mapped_expr = match &expr.value {
+            Expr::MappedRawAttribute(..) | Expr::MappedAttribute(..) => a.if_expr(
+                a.call(
+                    a.tl_builtin("ok"),
+                    vec![a.call_arg(cloned_lhs.clone().unwrap())],
+                ),
+                node,
+                cloned_lhs.unwrap(),
+            ),
+            _ => {
+                let fn_info = ctx.mapped_fninfo.get(&expr.into()).unwrap();
+                let mut fn_body = inner_pre;
+                fn_body.push(a.return_(node));
+
+                let inner_fn = pre.bind(make_fn_exp(
+                    ctx,
+                    FnDef::PyFnDef(vec![], fn_body, false, fn_info.is_async),
+                    &expr.span,
+                )?);
+
+                let mut call = a.call(
+                    a.tl_builtin("op_map"),
+                    vec![a.call_arg(cloned_lhs.unwrap()), a.call_arg(inner_fn)],
+                );
+
+                if fn_info.is_async {
+                    call = a.await_(call);
+                }
+                if fn_info.is_do || fn_info.is_generator {
+                    call = a.yield_from(call);
+                }
+
+                call
+            }
+        };
+
+        Ok(SPyExprWithPre {
+            value: mapped_expr,
+            pre,
+        })
+    } else {
+        pre.extend(inner_pre);
+        Ok(SPyExprWithPre { value: node, pre })
+    }
 }
 
 fn matching_except_handler<'src, 'ast>(
@@ -1871,40 +1890,34 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 ));
             }
             Stmt::While(cond, body) => {
-                let cond = cond.transform(ctx)?;
+                let py_cond = cond.transform(ctx)?;
 
                 let body_block = body.transform(ctx)?.drop_expr(ctx);
 
-                let cond: SPyExpr<'src> = if cond.pre.is_empty() {
-                    cond.value
+                let py_cond: SPyExpr<'src> = if py_cond.pre.is_empty() {
+                    py_cond.value
                 } else {
-                    // TODO check if inside a function
-
-                    // if fn_ctx.is_async {
-                    //     // TODO revisit this!
-                    //     return Err(TlErrBuilder::default()
-                    //         .message("Await is not allowed in this complex loop condition")
-                    //         .span(span)
-                    //         .build_errs());
-                    // }
-
-                    // if fn_ctx.is_do {
-                    //     return Err(TlErrBuilder::default()
-                    //         .message("Binding is not allowed in this complex loop condition")
-                    //         .span(span)
-                    //         .build_errs());
-                    // }
+                    let aux_fninfo = ctx.while_fninfo.get(&cond.as_ref().into()).unwrap();
 
                     let aux_fn = pre.bind(make_fn_exp(
                         ctx,
-                        FnDef::PyFnDef(vec![], cond.pre, false, false),
+                        FnDef::PyFnDef(vec![], py_cond.pre, false, aux_fninfo.is_async),
                         &span,
                     )?);
 
-                    a.call(aux_fn, vec![])
+                    let mut cond = a.call(aux_fn, vec![]);
+
+                    if aux_fninfo.is_async {
+                        cond = a.await_(cond);
+                    }
+                    if aux_fninfo.is_do || aux_fninfo.is_generator {
+                        cond = a.yield_from(cond);
+                    }
+
+                    cond
                 };
 
-                pre.push((PyStmt::While(cond, body_block), span).into());
+                pre.push((PyStmt::While(py_cond, body_block), span).into());
             }
             Stmt::Try(body, excepts, finally) => {
                 let body_block = body.transform(ctx)?.drop_expr(ctx);
@@ -2181,15 +2194,37 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 a.load_ident(var.clone())
             }
             Expr::Binary(op, lhs, rhs) => 'block: {
-                let (lhs, rhs) = match op {
-                    BinaryOp::Coalesce => {
-                        let lhs = lhs.transform_lifted(ctx)?;
-                        let rhs = rhs.transform(ctx)?;
+                if let BinaryOp::Coalesce = op {
+                    let py_lhs = pre.bind(lhs.transform_lifted(ctx)?);
 
-                        (lhs, rhs)
+                    let mut fn_body = PyBlock::new();
+                    let py_rhs = fn_body.bind(rhs.transform(ctx)?);
+                    fn_body.push(a.return_(py_rhs));
+
+                    let fn_info = ctx.coal_fninfo.get(&rhs.as_ref().into()).unwrap();
+
+                    let inner_fn = pre.bind(make_fn_exp(
+                        ctx,
+                        FnDef::PyFnDef(vec![], fn_body, false, fn_info.is_async),
+                        &span,
+                    )?);
+
+                    let mut call = a.call(
+                        a.tl_builtin("op_coal"),
+                        vec![a.call_arg(py_lhs), a.call_arg(inner_fn)],
+                    );
+
+                    if fn_info.is_async {
+                        call = a.await_(call);
                     }
-                    _ => (lhs.transform(ctx)?, rhs.transform(ctx)?),
-                };
+                    if fn_info.is_do || fn_info.is_generator {
+                        call = a.yield_from(call);
+                    }
+
+                    break 'block call;
+                }
+
+                let (lhs, rhs) = (lhs.transform(ctx)?, rhs.transform(ctx)?);
 
                 let lhs = pre.bind(lhs);
                 let rhs = pre.bind(rhs);
@@ -2203,6 +2238,8 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                     BinaryOp::Exp => PyBinaryOp::Pow,
                     BinaryOp::MatMul => PyBinaryOp::MatMult,
 
+                    // TODO: short circuiting on these doesn't work
+                    // because of pre-stmts...
                     BinaryOp::And => PyBinaryOp::And,
                     BinaryOp::Or => PyBinaryOp::Or,
 
@@ -2217,11 +2254,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
 
                     BinaryOp::Pipe => break 'block a.call(rhs, vec![PyCallItem::Arg(lhs)]),
                     BinaryOp::Coalesce => {
-                        break 'block a.if_expr(
-                            a.call(a.tl_builtin("ok"), vec![a.call_arg(lhs.clone())]),
-                            lhs,
-                            rhs,
-                        );
+                        panic!()
                     }
                 };
 
@@ -2229,14 +2262,20 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
             }
             Expr::Memo(expr) => {
                 let memo_captures =
-                    ctx.memo_captures
-                        .get(&expr.as_ref().into())
-                        .ok_or_else(|| {
-                            simple_err(
-                                "Internal error: Memo expression not found in memo captures",
-                                expr.span,
-                            )
-                        })?;
+                    ctx.memo_fninfo.get(&expr.as_ref().into()).ok_or_else(|| {
+                        simple_err(
+                            "Internal error: Memo expression not found in memo captures",
+                            expr.span,
+                        )
+                    })?;
+
+                if memo_captures.is_generator {
+                    return Err(simple_err("Cannot yield inside a memo", expr.span));
+                }
+
+                if memo_captures.is_async {
+                    return Err(simple_err("Cannot await inside a memo", expr.span));
+                }
 
                 let py_expr = expr.transform(ctx)?;
                 let mut py_body = PyBlock::new();

@@ -2,6 +2,13 @@ import functools.wraps
 import .monad.Monad
 import koatl.runtime.virtual.register_global_attr
 
+ok = x =>
+    if x === None:
+        return False
+    if isinstance(x, BaseException):
+        return False
+    return True
+
 export Result = class:
     __slots__ = ()
     __match_args__ = ("value",)
@@ -128,4 +135,16 @@ for name, method in Result.__dict__:
 
     register_global_attr(object, name, make_closure(method))
 
-register_global_attr(object, "ok", ExtensionProperty(__tl__.ok))
+register_global_attr(object, "ok", ExtensionProperty(ok))
+
+__tl__.ok = ok
+
+__tl__.op_coal = (x, f) =>
+    if not x.ok:
+        return f()
+    return x
+
+__tl__.op_map = (x, f) =>
+    if x.ok:
+        return f()
+    return x
