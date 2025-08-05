@@ -10,9 +10,7 @@ export Memo = class(Monad):
 
         __repr__ = self => f"Memo.Cache({self.cache})"
 
-        try_get = (self, name, deps) =>
-            # TODO should try operator return a Result directly?
-            Result(try self.cache[name][deps] except KeyError())
+        try_get = (self, name, deps) => try self.cache[name][deps] except KeyError()
 
         update = (self, name, deps, value) =>
             self.cache[name][deps] = value

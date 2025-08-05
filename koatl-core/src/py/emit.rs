@@ -511,7 +511,6 @@ impl SPyExpr<'_> {
                 }
             }
             PyExpr::IfExpr(cond, if_, else_) => {
-                // TODO precedence here?
                 ctx.emit("(");
                 if_.emit_to(ctx, LOW_PREC)?;
                 ctx.emit(" if ");

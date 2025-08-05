@@ -14,7 +14,7 @@ use crate::{
 };
 use once_cell::sync::Lazy;
 use parser::ast::*;
-use slotmap::{Key, SlotMap};
+use slotmap::SlotMap;
 use std::hash::{Hash, Hasher};
 
 static PY_KWS: &[&str] = &[
@@ -845,9 +845,6 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
         ctx: &mut TlCtx<'src, 'ast>,
         info: &PatternInfo,
     ) -> TlResult<WithPre<'src, SPyPattern<'src>>> {
-        // TODO avoid python syntaxerror by verifying that all branches in Or bind the same name
-        // also check for no patterns after default pattern
-
         let mut pre = PyBlock::new();
 
         let pattern = &self.value;
@@ -2322,7 +2319,6 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
 
                 let memo_call = a.call(
                     if memo_captures.is_do {
-                        // TODO is there any better solution?
                         a.tl_builtin("bind_memo_value")
                     } else {
                         a.tl_builtin("memo_value")
@@ -2478,14 +2474,15 @@ fn py_fn_bindings<'src, 'ast>(
     for capture in memo_captures.captures.iter() {
         let mut scope = &ctx.scopes[ctx.declarations[*capture].scope];
         loop {
-            if scope.parent.is_null() {
+            let Some(parent) = scope.parent else {
                 break;
-            }
+            };
 
             if scope.is_fn || scope.is_class || scope.is_global {
                 break;
             }
-            scope = &ctx.scopes[scope.parent];
+
+            scope = &ctx.scopes[parent];
         }
 
         if scope.is_global || scope.is_class {

@@ -210,7 +210,6 @@ where
             if items.len() == 1 && last_comma.is_none() {
                 let item = items.into_iter().next().unwrap();
                 if let PatternSequenceItem::Item(inner) = item {
-                    // TODO ???
                     inner.extract()
                 } else {
                     Pattern::Sequence(vec![item]).spanned(e.span())
