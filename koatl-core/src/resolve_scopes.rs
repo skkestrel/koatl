@@ -141,6 +141,10 @@ impl<'src> ResolveState<'src> {
 
             fn_ctx.captures.insert(found.decl.clone().into());
 
+            for fn_ctx in self.fn_stack.iter_mut().rev().skip(1) {
+                fn_ctx.indirect_captures.insert(found.decl.clone().into());
+            }
+
             return Ok(found.decl);
         }
 
@@ -403,7 +407,17 @@ pub struct FnInfo {
     pub is_mapped_rhs: bool,
 
     pub arg_names: Vec<DeclarationKey>,
+
+    /**
+     * These are captures directly captured by the function.
+     */
     pub captures: HashSet<DeclarationKey>,
+
+    /**
+     * These are captures used by a subscope,
+     * but not directly captured by the function itself.
+     */
+    pub indirect_captures: HashSet<DeclarationKey>,
 }
 
 impl FnInfo {
@@ -417,6 +431,7 @@ impl FnInfo {
             is_mapped_rhs: false,
             arg_names: Vec::new(),
             captures: HashSet::new(),
+            indirect_captures: HashSet::new(),
         }
     }
 }

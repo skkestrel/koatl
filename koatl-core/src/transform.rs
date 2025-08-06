@@ -2303,7 +2303,24 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 let py_expr = expr.transform(ctx)?;
                 let mut py_body = PyBlock::new();
 
-                let (py_bindings, nonlocals, _globals) = py_fn_bindings(ctx, memo_captures, span)?;
+                let (py_bindings, _nonlocals, _globals) = py_fn_bindings(ctx, memo_captures, span)?;
+
+                let deps_set = memo_captures
+                    .indirect_captures
+                    .iter()
+                    .chain(memo_captures.captures.iter())
+                    .collect::<HashSet<_>>();
+
+                let mut nonglobal_deps = vec![];
+
+                for capture in deps_set {
+                    let decl = &ctx.declarations[*capture];
+                    let decl_scope = &ctx.scopes[decl.scope];
+
+                    if !decl_scope.is_global {
+                        nonglobal_deps.push(decl.name.0.clone());
+                    }
+                }
 
                 py_body.extend(py_bindings);
                 py_body.extend(py_expr.pre);
@@ -2337,9 +2354,9 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                         ))),
                         PyCallItem::Arg(
                             a.tuple(
-                                nonlocals
-                                    .iter()
-                                    .map(|x| a.list_item(a.load_ident(x.clone())))
+                                nonglobal_deps
+                                    .into_iter()
+                                    .map(|x| a.list_item(a.load_ident(x)))
                                     .collect(),
                                 PyAccessCtx::Load,
                             ),

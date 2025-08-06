@@ -29,3 +29,20 @@ assert_eq(f(10).run(ctx), 20)
 assert_eq(f(5).run(ctx), 10)
 assert_eq(f(5).run(ctx), 10)
 assert_eq(counts, 2)
+
+# Indirect dependencies should be tracked as well.
+
+counts = 0
+
+f = (x, y) =>
+    memo:
+        counts = counts + 1
+        let other = () => y
+        x * other()
+
+ctx = Memo.Cache()
+assert_eq(f(10, 20).run(ctx), 200)
+assert_eq(f(10, 20).run(ctx), 200)
+assert_eq(f(10, 30).run(ctx), 300)
+assert_eq(f(10, 30).run(ctx), 300)
+assert_eq(counts, 2)
