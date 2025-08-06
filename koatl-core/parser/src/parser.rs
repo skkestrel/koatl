@@ -123,10 +123,9 @@ where
     just(Token::Symbol(symbol))
 }
 
-pub fn match_pattern<'tokens, 'src: 'tokens, TInput, PIdent, PQualIdent, PExpr, PLiteral>(
+pub fn match_pattern<'tokens, 'src: 'tokens, TInput, PIdent, PQualIdent, PLiteral>(
     ident: PIdent,
     qualified_ident: PQualIdent,
-    sexpr: PExpr,
     literal: PLiteral,
 ) -> (
     impl Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone,
@@ -137,7 +136,6 @@ where
     TInput: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
     PIdent: Parser<'tokens, TInput, SIdent<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PQualIdent: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
-    PExpr: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PLiteral: Parser<'tokens, TInput, SLiteral<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
 {
     let mut pattern =
@@ -230,9 +228,9 @@ where
                 .map(|id| Expr::Literal(Literal::Str(id.value.0).spanned(id.span)))
                 .spanned_expr(),
             literal.clone().map(Expr::Literal).spanned_expr(),
-            sexpr
+            qualified_ident
                 .clone()
-                .delimited_by_with_eol(symbol("("), symbol(")")),
+                .delimited_by(symbol("("), symbol(")")),
         ))
         .then_ignore(symbol(":"))
         .then(pattern.clone())
@@ -861,6 +859,25 @@ where
     .boxed();
     // .memoized();
 
+    let tuple = choice((
+        symbol("(")
+            .then(symbol(")"))
+            .map(|_| Expr::Tuple(vec![]))
+            .spanned_expr(),
+        nary_tuple
+            .clone()
+            .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
+    ))
+    .boxed();
+
+    let round_brackets = choice((
+        tuple.clone(),
+        block
+            .clone()
+            .delimited_by_with_eol(symbol("("), symbol(")")),
+    ))
+    .boxed();
+
     let mapping = enumeration(
         choice((
             symbol("**")
@@ -872,7 +889,7 @@ where
                     .map(|id| Expr::Literal(Literal::Str(id.value.0).spanned(id.span)))
                     .spanned_expr(),
                 literal_expr.clone(),
-                expr.clone().delimited_by_with_eol(symbol("("), symbol(")")),
+                round_brackets.clone(),
             ))
             .then_ignore(symbol(":"))
             .then(expr.clone())
@@ -973,12 +990,8 @@ where
         )
         .boxed();
 
-    let (closed_pattern, as_pattern, nary_pattern) = match_pattern(
-        ident.clone(),
-        qualified_ident.clone(),
-        expr.clone(),
-        literal.clone(),
-    );
+    let (closed_pattern, as_pattern, nary_pattern) =
+        match_pattern(ident.clone(), qualified_ident.clone(), literal.clone());
 
     let classic_match = just(Token::Kw("match"))
         .ignore_then(expr.clone())
@@ -989,17 +1002,6 @@ where
         .labelled("classic-match")
         .as_context()
         .boxed();
-
-    let tuple = choice((
-        symbol("(")
-            .then(symbol(")"))
-            .map(|_| Expr::Tuple(vec![]))
-            .spanned_expr(),
-        nary_tuple
-            .clone()
-            .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
-    ))
-    .boxed();
 
     enum ControlKw {
         Await,
@@ -1053,10 +1055,7 @@ where
             list.clone(),
             mapping,
             fstr,
-            tuple.clone(),
-            block
-                .clone()
-                .delimited_by_with_eol(symbol("("), symbol(")")),
+            round_brackets.clone(),
         ))
         .labelled("atom"),
     );
