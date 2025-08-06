@@ -284,7 +284,12 @@ impl<'src> ResolveState<'src> {
         }
     }
 
-    fn declare_in_top_scope(&mut self, name: SIdent<'src>, modifier: DeclType) -> DeclarationKey {
+    fn declare_in_top_scope(
+        &mut self,
+        name: SIdent<'src>,
+        modifier: DeclType,
+        lifted: bool,
+    ) -> DeclarationKey {
         let (class, global) = {
             let scope = self.top_scope();
             (scope.is_class, scope.is_global)
@@ -331,7 +336,11 @@ impl<'src> ResolveState<'src> {
             .declarations
             .insert_declaration(name.clone(), key, modifier);
 
-        self.scopes[key].locals.push(decl);
+        if lifted {
+            self.scopes[key].lifted_decls.push(decl.clone());
+        } else {
+            self.scopes[key].locals.push(decl);
+        }
 
         decl
     }
@@ -1460,20 +1469,24 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 fn traverse_assign_lhs<'src>(
     state: &mut ResolveState<'src>,
     lhs: Indirect<SExpr<'src>>,
-    typ: Option<DeclType>,
+    decl_type: Option<DeclType>,
 ) -> Indirect<SExpr<'src>> {
     match lhs.value {
         Expr::Ident(ident) => {
-            if let Some(decl) = typ {
-                state.declare_in_top_scope(ident.clone(), decl);
+            let mut decl = None;
+            if let Some(decl_type) = decl_type {
+                decl = Some(state.declare_in_top_scope(ident.clone(), decl_type, true));
             }
 
-            let decl = match state.resolve(&ident, true) {
-                Ok(decl) => decl,
-                Err(errs) => {
-                    state.errors.extend(errs);
-                    return error_ident(state, lhs.span);
-                }
+            let decl = match decl {
+                Some(decl) => decl,
+                None => match state.resolve(&ident, true) {
+                    Ok(decl) => decl,
+                    Err(errs) => {
+                        state.errors.extend(errs);
+                        return error_ident(state, lhs.span);
+                    }
+                },
             };
 
             let expr = Expr::Ident(ident).spanned(lhs.span).indirect();
@@ -1486,11 +1499,11 @@ fn traverse_assign_lhs<'src>(
                 .into_iter()
                 .map(|item| match item {
                     ListItem::Item(inner) => {
-                        let inner = traverse_assign_lhs(state, inner, typ);
+                        let inner = traverse_assign_lhs(state, inner, decl_type);
                         ListItem::Item(inner)
                     }
                     ListItem::Spread(inner) => {
-                        let inner = traverse_assign_lhs(state, inner, typ);
+                        let inner = traverse_assign_lhs(state, inner, decl_type);
                         ListItem::Spread(inner)
                     }
                 })
@@ -1502,11 +1515,11 @@ fn traverse_assign_lhs<'src>(
                 .into_iter()
                 .map(|item| match item {
                     ListItem::Item(inner) => {
-                        let inner = traverse_assign_lhs(state, inner, typ);
+                        let inner = traverse_assign_lhs(state, inner, decl_type);
                         ListItem::Item(inner)
                     }
                     ListItem::Spread(inner) => {
-                        let inner = traverse_assign_lhs(state, inner, typ);
+                        let inner = traverse_assign_lhs(state, inner, decl_type);
                         ListItem::Spread(inner)
                     }
                 })
@@ -1519,13 +1532,13 @@ fn traverse_assign_lhs<'src>(
                 .map(|item| match item {
                     MappingItem::Item(key, value) => MappingItem::Item(
                         key.traverse_guarded(state),
-                        traverse_assign_lhs(state, value, typ),
+                        traverse_assign_lhs(state, value, decl_type),
                     ),
                     MappingItem::Spread(inner) => {
-                        MappingItem::Spread(traverse_assign_lhs(state, inner, typ))
+                        MappingItem::Spread(traverse_assign_lhs(state, inner, decl_type))
                     }
                     MappingItem::Ident(inner) => {
-                        MappingItem::Ident(traverse_assign_lhs(state, inner, typ))
+                        MappingItem::Ident(traverse_assign_lhs(state, inner, decl_type))
                     }
                 })
                 .collect::<Vec<_>>();
@@ -1546,7 +1559,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
         let stmt = match self.value {
             Stmt::Decl(idents, typ) => {
                 for ident in idents.iter() {
-                    state.declare_in_top_scope(ident.clone(), typ);
+                    state.declare_in_top_scope(ident.clone(), typ, false);
                 }
 
                 Stmt::Decl(idents, typ)
