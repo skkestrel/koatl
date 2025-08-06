@@ -90,3 +90,15 @@ f = () =>
     A().f()
     assert_eq(A, 2)
 f()
+
+# Shadowing should work
+f = () =>
+    let x = 1
+    let x = x + 1
+    assert_eq(x, 2)
+
+    # but recursion should also work
+    let x = 3
+    let x = () => x.__name__
+    assert_eq(type(x()), str)
+f()
