@@ -230,6 +230,29 @@ fn simple_err(msg: impl Into<String>, span: Span) -> TlErrs {
     TlErrBuilder::new().message(msg.into()).span(span).build()
 }
 
+fn deduplicate<'src, 'ast>(
+    ctx: &mut TlCtx<'src, 'ast>,
+    expr: SPyExpr<'src>,
+    span: Span,
+) -> TlResult<SPyExprWithPre<'src>> {
+    let var_name = ctx.create_aux_var("lhs", span.start);
+    let a = PyAstBuilder::new(span);
+    let mut pre = PyBlock::new();
+
+    let expr = match expr.value {
+        PyExpr::Ident(id, _) => a.load_ident(id),
+        x => {
+            pre.push(a.assign(
+                a.ident(var_name.clone(), PyAccessCtx::Store),
+                (x, expr.tl_span).into(),
+            ));
+            a.load_ident(var_name.clone())
+        }
+    };
+
+    Ok(SPyExprWithPre { value: expr, pre })
+}
+
 impl<'src> BlockExt<'src> for [Indirect<SStmt<'src>>] {
     fn transform<'ast>(
         &'ast self,
@@ -1528,29 +1551,6 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 if let Some(BinaryOp::Coalesce | BinaryOp::Pipe) = op {
                     let lhs = pre.bind(lhs.transform_store(ctx)?);
 
-                    fn deduplicate<'src, 'ast>(
-                        ctx: &mut TlCtx<'src, 'ast>,
-                        expr: SPyExpr<'src>,
-                        span: Span,
-                    ) -> TlResult<SPyExprWithPre<'src>> {
-                        let var_name = ctx.create_aux_var("lhs", span.start);
-                        let a = PyAstBuilder::new(span);
-                        let mut pre = PyBlock::new();
-
-                        let expr = match expr.value {
-                            PyExpr::Ident(id, _) => a.load_ident(id),
-                            x => {
-                                pre.push(a.assign(
-                                    a.ident(var_name.clone(), PyAccessCtx::Store),
-                                    (x, expr.tl_span).into(),
-                                ));
-                                a.load_ident(var_name.clone())
-                            }
-                        };
-
-                        Ok(SPyExprWithPre { value: expr, pre })
-                    }
-
                     // TODO this is a bit hacky. We need to get separate the root node
                     // from the rest of the expression to avoid double evaluation
                     let (safe_lhs_store, safe_lhs_load) = match lhs.value {
@@ -1568,11 +1568,11 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                         }
                         PyExpr::Subscript(left, right, _) => {
                             let left_span = left.tl_span;
-                            // TODO, critical: this leads to double evaluation of subscript indices
                             let dedup = pre.bind(deduplicate(ctx, *left, left_span)?);
+                            let dedup_right = pre.bind(deduplicate(ctx, *right, left_span)?);
                             (
-                                a.subscript(dedup.clone(), *right.clone(), PyAccessCtx::Store),
-                                a.subscript(dedup, *right, PyAccessCtx::Load),
+                                a.subscript(dedup.clone(), dedup_right.clone(), PyAccessCtx::Store),
+                                a.subscript(dedup, dedup_right, PyAccessCtx::Load),
                             )
                         }
                         _ => panic!(),
@@ -1717,17 +1717,6 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 trait SExprExt<'src, 'ast> {
     fn transform(&'ast self, ctx: &mut TlCtx<'src, 'ast>) -> TlResult<SPyExprWithPre<'src>>;
 
-    /**
-     * Transforms
-     * expr
-     * to
-     * x = expr
-     * x
-     *
-     * to avoid evaluating expr multiple times
-     */
-    fn transform_lifted(&'ast self, ctx: &mut TlCtx<'src, 'ast>) -> TlResult<SPyExprWithPre<'src>>;
-
     fn transform_store(&'ast self, ctx: &mut TlCtx<'src, 'ast>) -> TlResult<SPyExprWithPre<'src>>;
 
     fn transform_full(
@@ -1740,25 +1729,6 @@ trait SExprExt<'src, 'ast> {
 impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
     fn transform(&'ast self, ctx: &mut TlCtx<'src, 'ast>) -> TlResult<SPyExprWithPre<'src>> {
         self.transform_full(ctx, PyAccessCtx::Load)
-    }
-
-    fn transform_lifted(&'ast self, ctx: &mut TlCtx<'src, 'ast>) -> TlResult<SPyExprWithPre<'src>> {
-        let mut pre = PyBlock::new();
-        let value = pre.bind(self.transform(ctx)?);
-        let a = PyAstBuilder::new(self.span);
-
-        let expr = match self.value {
-            Expr::Ident(..) | Expr::Literal(..) => value,
-            _ => {
-                let temp_var = ctx.create_aux_var("tmp", self.span.start);
-
-                pre.push(a.assign(a.ident(temp_var.clone(), PyAccessCtx::Store), value));
-
-                a.ident(temp_var, PyAccessCtx::Load)
-            }
-        };
-
-        Ok(SPyExprWithPre { value: expr, pre })
     }
 
     fn transform_store(&'ast self, ctx: &mut TlCtx<'src, 'ast>) -> TlResult<SPyExprWithPre<'src>> {
@@ -1939,8 +1909,9 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
             }
             Expr::Binary(op, lhs, rhs) => 'block: {
                 if let BinaryOp::Coalesce = op {
-                    let py_lhs = pre.bind(lhs.transform_lifted(ctx)?);
-                    let call = pre.bind(create_coalesce(ctx, py_lhs, rhs, span)?);
+                    let py_lhs = pre.bind(lhs.transform(ctx)?);
+                    let dedup_lhs = pre.bind(deduplicate(ctx, py_lhs, span)?);
+                    let call = pre.bind(create_coalesce(ctx, dedup_lhs, rhs, span)?);
                     break 'block call;
                 } else if let BinaryOp::And | BinaryOp::Or = op {
                     let is_and = *op == BinaryOp::And;
