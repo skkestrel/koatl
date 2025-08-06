@@ -279,10 +279,36 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                     .collect();
                 ctx.ast_node("Match", (subject_ast, cases_ast?), &self.tl_span)
             }
-            PyStmt::Assign(target, value) => {
+            PyStmt::Assign(target, value, op) => {
                 let target_ast = target.emit_py(ctx)?;
                 let value_ast = value.emit_py(ctx)?;
-                ctx.ast_node("Assign", ([target_ast], value_ast), &self.tl_span)
+
+                if let Some(op) = op {
+                    let py_op = match op {
+                        PyBinaryOp::Add => "Add",
+                        PyBinaryOp::Sub => "Sub",
+                        PyBinaryOp::Mult => "Mult",
+                        PyBinaryOp::Div => "Div",
+                        _ => {
+                            return Err(PyTlErr {
+                                message: format!(
+                                    "Unsupported augmented assignment operator: {:?}",
+                                    op
+                                ),
+                                py_err: None,
+                                span: Some(self.tl_span),
+                            });
+                        }
+                    };
+
+                    ctx.ast_node(
+                        "AugAssign",
+                        (target_ast, ctx.ast_cls(py_op, ())?, value_ast),
+                        &self.tl_span,
+                    )
+                } else {
+                    ctx.ast_node("Assign", ([target_ast], value_ast), &self.tl_span)
+                }
             }
             PyStmt::Return(expr) => {
                 let expr_ast = expr.emit_py(ctx)?;

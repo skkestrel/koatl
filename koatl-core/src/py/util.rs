@@ -18,7 +18,16 @@ impl PyAstBuilder {
     }
 
     pub fn assign<'src>(&self, target: SPyExpr<'src>, value: SPyExpr<'src>) -> SPyStmt<'src> {
-        (PyStmt::Assign(target, value), self.span).into()
+        (PyStmt::Assign(target, value, None), self.span).into()
+    }
+
+    pub fn assign_modified<'src>(
+        &self,
+        target: SPyExpr<'src>,
+        value: SPyExpr<'src>,
+        op: Option<PyBinaryOp>,
+    ) -> SPyStmt<'src> {
+        (PyStmt::Assign(target, value, op), self.span).into()
     }
 
     pub fn return_<'src>(&self, expr: SPyExpr<'src>) -> SPyStmt<'src> {

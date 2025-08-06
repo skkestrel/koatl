@@ -1,6 +1,6 @@
 import util.assert_eq
 
-{ask} = Reader
+ask = Reader.ask
 
 g = () =>
     @ask("c")

@@ -121,7 +121,9 @@ pub enum DeclType {
 #[derive(Debug, Clone)]
 pub enum Stmt<'a, TTree: Tree> {
     Decl(Vec<SIdent<'a>>, DeclType),
-    Assign(TTree::Expr, TTree::Expr, Option<DeclType>),
+    Assign(TTree::Expr, TTree::Expr, Option<BinaryOp>),
+    PatternAssign(TTree::Pattern, TTree::Expr, Option<DeclType>),
+
     Expr(TTree::Expr),
 
     Return(TTree::Expr),

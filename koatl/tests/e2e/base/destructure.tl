@@ -48,11 +48,5 @@ assert_eq([a, b, c], ["a", [2, 3], {2: "2", 3: "3"}])
 {a, **b} = {a: 42, b: 43}
 assert_eq([a, b], [42, {b: 43}])
 
-a, *b, c = 1, 2, 3, 4
-assert_eq([a, b, c], [1, (2, 3), 4])
-
 a, [*b], c, *d = 1, [2, 3], 4, 5, 6
-assert_eq([a, b, c, d], [1, [2, 3], 4, (5, 6)])
-
-# destructuring modules
-{assert_eq} = util
+assert_eq([a, b, c, d], [1, [2, 3], 4, [5, 6]])

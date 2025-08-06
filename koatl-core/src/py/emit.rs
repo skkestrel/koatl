@@ -572,10 +572,15 @@ impl SPyStmt<'_> {
                 expr.emit_to(ctx, LOW_PREC)?;
                 ctx.emit_endl();
             }
-            PyStmt::Assign(target, value) => {
+            PyStmt::Assign(target, value, op) => {
                 ctx.emit_indent();
                 target.emit_to(ctx, LOW_PREC)?;
-                ctx.emit(" = ");
+                ctx.emit(" ");
+                if let Some(op) = op {
+                    op.emit_to(ctx);
+                } else {
+                }
+                ctx.emit("= ");
                 value.emit_to(ctx, LOW_PREC)?;
                 ctx.emit_endl();
             }

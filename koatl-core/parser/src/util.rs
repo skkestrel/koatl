@@ -33,9 +33,9 @@ impl AstBuilder {
         &self,
         target: impl Into<Indirect<SExpr<'src>>>,
         value: impl Into<Indirect<SExpr<'src>>>,
-        modifier: DeclType,
+        aug_op: Option<BinaryOp>,
     ) -> SStmt<'src> {
-        Stmt::Assign(target.into(), value.into(), Some(modifier)).spanned(self.span)
+        Stmt::Assign(target.into(), value.into(), aug_op).spanned(self.span)
     }
 
     pub fn return_<'src>(&self, expr: impl IntoIndirect<SExpr<'src>>) -> SStmt<'src> {

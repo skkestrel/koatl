@@ -22,7 +22,11 @@ impl<'src, 'ast> SStmtExt<'src, 'ast> for Indirect<SStmt<'src>> {
     fn traverse(&'ast self, ctx: &mut InferenceCtx<'src, '_>) -> Type {
         match &self.value {
             Stmt::Expr(expr) => expr.traverse(ctx),
-            Stmt::Assign(lhs, rhs, _decl_type) => {
+            Stmt::PatternAssign(_lhs, rhs, _decl_type) => {
+                rhs.traverse(ctx);
+                Type::NoReturn
+            }
+            Stmt::Assign(lhs, rhs, _op) => {
                 lhs.traverse(ctx);
                 rhs.traverse(ctx);
                 Type::NoReturn

@@ -66,7 +66,7 @@ pub enum PyStmt<'a> {
     Expr(SPyExpr<'a>),
     If(SPyExpr<'a>, PyBlock<'a>, Option<PyBlock<'a>>),
     Match(SPyExpr<'a>, Vec<PyMatchCase<'a>>),
-    Assign(SPyExpr<'a>, SPyExpr<'a>),
+    Assign(SPyExpr<'a>, SPyExpr<'a>, Option<PyBinaryOp>),
     Return(SPyExpr<'a>),
     Raise(Option<SPyExpr<'a>>),
     Assert(SPyExpr<'a>, Option<SPyExpr<'a>>),

@@ -226,6 +226,10 @@ trait BlockExt<'src> {
     ) -> TlResult<PyBlockExprWithPre<'src>>;
 }
 
+fn simple_err(msg: impl Into<String>, span: Span) -> TlErrs {
+    TlErrBuilder::new().message(msg.into()).span(span).build()
+}
+
 impl<'src> BlockExt<'src> for [Indirect<SStmt<'src>>] {
     fn transform<'ast>(
         &'ast self,
@@ -290,356 +294,17 @@ impl<'src> BlockExt<'src> for [Indirect<SStmt<'src>>] {
     }
 }
 
-fn destructure_list<'src, 'ast>(
-    ctx: &mut TlCtx<'src, 'ast>,
-    target: &'ast SExpr<'src>,
-    items: &'ast [SListItem<'src>],
-    modifier: Option<DeclType>,
-) -> TlResult<DestructureBindings<'src>> {
-    let cursor_var = ctx.create_aux_var("des_curs", target.span.start);
-
-    // a, b, *c = cursor_var
-
-    let a = PyAstBuilder::new(target.span);
-    let mut post = PyBlock::new();
-
-    let mut lhs_items = vec![];
-    let mut seen_spread = false;
-
-    for item in items.iter() {
-        match item {
-            ListItem::Item(expr) => {
-                let item_bindings = destructure(ctx, expr, modifier)?;
-                lhs_items.push(PyListItem::Item(item_bindings.assign_to));
-                post.extend(item_bindings.post);
-            }
-            ListItem::Spread(expr) => {
-                if seen_spread {
-                    return Err(simple_err(
-                        "Destructuring assignment with multiple spreads is not allowed",
-                        target.span,
-                    ));
-                }
-                seen_spread = true;
-
-                let item_bindings = destructure(ctx, expr, modifier)?;
-                lhs_items.push(PyListItem::Spread(item_bindings.assign_to));
-                post.extend(item_bindings.post);
-            }
-        }
-    }
-
-    post.0.insert(
-        0,
-        a.assign(
-            a.list(lhs_items, PyAccessCtx::Store),
-            a.load_ident(cursor_var.clone()),
-        ),
-    );
-
-    Ok(DestructureBindings {
-        post,
-        assign_to: a.ident(cursor_var, PyAccessCtx::Store),
-    })
-}
-
-fn destructure_tuple<'src, 'ast>(
-    ctx: &mut TlCtx<'src, 'ast>,
-    target: &'ast SExpr<'src>,
-    items: &'ast [SListItem<'src>],
-    modifier: Option<DeclType>,
-) -> TlResult<DestructureBindings<'src>> {
-    let cursor_var = ctx.create_aux_var("des_curs", target.span.start);
-    let tuple_var = ctx.create_aux_var("des_tuple", target.span.start);
-    let len_var = ctx.create_aux_var("des_len", target.span.start);
-
-    // list_var = tuple(cursor_var)
-    // len_var = len(list_var)
-
-    let a = PyAstBuilder::new(target.span);
-
-    let mut stmts = PyBlock(vec![
-        a.assign(
-            a.ident(tuple_var.clone(), PyAccessCtx::Store),
-            a.call(
-                a.load_ident("tuple"),
-                vec![a.call_arg(a.load_ident(cursor_var.clone()))],
-            ),
-        ),
-        a.assign(
-            a.ident(len_var.clone(), PyAccessCtx::Store),
-            a.call(
-                a.load_ident("len"),
-                vec![a.call_arg(a.load_ident(tuple_var.clone()))],
-            ),
-        ),
-    ]);
-
-    let mut post_stmts = vec![];
-
-    // a = list_var[0]
-    // b = list_var[1]
-    // c = list_var[i:len_var-n_single_spreads_left]
-
-    let mut seen_spread = false;
-    let mut i = 0;
-
-    for item in items.iter() {
-        match item {
-            ListItem::Item(expr) => {
-                let item_bindings = destructure(ctx, expr, modifier)?;
-                post_stmts.extend(item_bindings.post);
-
-                stmts.push(
-                    a.assign(
-                        item_bindings.assign_to,
-                        a.subscript(
-                            a.load_ident(tuple_var.clone()),
-                            a.num(
-                                (if seen_spread {
-                                    -((items.len() - i - 1) as isize)
-                                } else {
-                                    i as isize
-                                })
-                                .to_string(),
-                            ),
-                            PyAccessCtx::Load,
-                        ),
-                    ),
-                );
-                i += 1;
-            }
-            ListItem::Spread(expr) => {
-                if seen_spread {
-                    return Err(simple_err(
-                        "Destructuring assignment with multiple spreads is not allowed",
-                        target.span,
-                    ));
-                }
-                seen_spread = true;
-
-                // TODO restrict to only idents
-                let item_bindings = destructure(ctx, expr, modifier)?;
-                post_stmts.extend(item_bindings.post);
-
-                stmts.push(a.assign(
-                    item_bindings.assign_to,
-                    a.subscript(
-                        a.load_ident(tuple_var.clone()),
-                        a.slice(
-                            Some(a.num(i.to_string())),
-                            Some(a.binary(
-                                PyBinaryOp::Sub,
-                                a.load_ident(len_var.clone()),
-                                a.num((items.len() - 1 - i).to_string()),
-                            )),
-                            None,
-                        ),
-                        PyAccessCtx::Load,
-                    ),
-                ));
-            }
-        }
-    }
-
-    stmts.extend(post_stmts);
-
-    Ok(DestructureBindings {
-        post: stmts,
-        assign_to: a.ident(cursor_var, PyAccessCtx::Store),
-    })
-}
-
-fn destructure_mapping<'src, 'ast>(
-    ctx: &mut TlCtx<'src, 'ast>,
-    target: &'ast SExpr<'src>,
-    items: &'ast [SMappingItem<'src>],
-    modifier: Option<DeclType>,
-) -> TlResult<DestructureBindings<'src>> {
-    let cursor_var = ctx.create_aux_var("des_curs", target.span.start);
-    let dict_var = ctx.create_aux_var("des_dict", target.span.start);
-
-    // dict_var = dict(cursor_var)
-    let a = PyAstBuilder::new(target.span);
-    let mut stmts = PyBlock(vec![a.assign(
-        a.ident(dict_var.clone(), PyAccessCtx::Store),
-        a.call(
-            a.tl_builtin("unpack_record"),
-            vec![a.call_arg(a.load_ident(cursor_var.clone()))],
-        ),
-    )]);
-
-    let mut post_stmts = PyBlock::new();
-
-    // a = dict_var.pop(a_key)
-    // b = dict_var.pop(b_key)
-    // c = dict_var
-
-    let mut spread_var = None;
-    for item in items.iter() {
-        match item {
-            MappingItem::Ident(ident) => {
-                let lhs = post_stmts.bind(ident.transform_store(ctx)?);
-
-                let Expr::Ident(ident) = &ident.value else {
-                    return Err(simple_err("Internal error: Expected ident", ident.span));
-                };
-
-                stmts.push(a.assign(
-                    lhs,
-                    a.call(
-                        a.attribute(a.load_ident(dict_var.clone()), "pop", PyAccessCtx::Load),
-                        vec![a.call_arg(a.str(ident.value.escape()))],
-                    ),
-                ))
-            }
-            MappingItem::Item(key, expr) => {
-                let key_node = post_stmts.bind(key.transform(ctx)?);
-
-                let item_bindings = destructure(ctx, expr, modifier)?;
-                post_stmts.extend(item_bindings.post);
-
-                stmts.push(a.assign(
-                    item_bindings.assign_to,
-                    a.call(
-                        a.attribute(a.load_ident(dict_var.clone()), "pop", PyAccessCtx::Load),
-                        vec![a.call_arg(key_node)],
-                    ),
-                ));
-            }
-            MappingItem::Spread(expr) => {
-                if spread_var.is_some() {
-                    return Err(simple_err(
-                        "Destructuring assignment with multiple spreads is not allowed",
-                        target.span,
-                    ));
-                }
-
-                spread_var = Some(expr);
-            }
-        }
-    }
-
-    if let Some(spread_var) = spread_var {
-        // TODO restrict to only idents
-        let item_bindings = destructure(ctx, spread_var, modifier)?;
-
-        post_stmts.extend(item_bindings.post);
-
-        stmts.push(a.assign(item_bindings.assign_to, a.load_ident(dict_var.clone())));
-    }
-
-    stmts.extend(post_stmts);
-
-    Ok(DestructureBindings {
-        post: stmts,
-        assign_to: a.ident(cursor_var, PyAccessCtx::Store),
-    })
-}
-
-struct DestructureBindings<'a> {
-    assign_to: SPyExpr<'a>,
-    post: PyBlock<'a>,
-}
-
-fn destructure<'src, 'ast>(
-    ctx: &mut TlCtx<'src, 'ast>,
-    target: &'ast SExpr<'src>,
-    modifier: Option<DeclType>,
-) -> TlResult<DestructureBindings<'src>> {
-    let mut post = PyBlock::new();
-
-    let assign_to: SPyExpr<'src>;
-
-    match &target.value {
-        Expr::Ident(..) | Expr::RawAttribute(..) | Expr::Attribute(..) | Expr::Subscript(..) => {
-            let target_node = match &target.value {
-                Expr::Ident(..) => target.transform_store(ctx)?,
-                Expr::RawAttribute(..) | Expr::Subscript(..) => {
-                    if modifier.is_some() {
-                        return Err(simple_err(
-                            "Only identifiers allowed in this destructuring",
-                            target.span,
-                        ));
-                    }
-                    target.transform_store(ctx)?
-                }
-                Expr::Attribute(lhs, ext) => {
-                    if modifier.is_some() {
-                        return Err(simple_err(
-                            "Only identifiers allowed in this destructuring",
-                            target.span,
-                        ));
-                    }
-
-                    // we need to replace an extension with a regular attribute
-                    // when assigning to it
-
-                    let mut pre = PyBlock::new();
-                    let lhs = pre.bind(lhs.transform(ctx)?);
-
-                    SPyExprWithPre {
-                        pre,
-                        value: (
-                            PyExpr::Attribute(
-                                Box::new(lhs),
-                                ext.clone().value.escape(),
-                                PyAccessCtx::Store,
-                            ),
-                            target.span,
-                        )
-                            .into(),
-                    }
-                }
-                _ => {
-                    panic!();
-                }
-            };
-
-            post.extend(target_node.pre);
-            assign_to = target_node.value;
-        }
-        Expr::List(items) => {
-            let bindings = destructure_list(ctx, target, items, modifier)?;
-
-            post.extend(bindings.post);
-            assign_to = bindings.assign_to;
-        }
-        Expr::Tuple(items) => {
-            let bindings = destructure_tuple(ctx, target, items, modifier)?;
-
-            post.extend(bindings.post);
-            assign_to = bindings.assign_to;
-        }
-        Expr::Mapping(items) => {
-            let bindings = destructure_mapping(ctx, target, items, modifier)?;
-
-            post.extend(bindings.post);
-            assign_to = bindings.assign_to;
-        }
-        _ => {
-            return Err(simple_err("Assignment target is not allowed", target.span));
-        }
-    };
-
-    Ok(DestructureBindings { post, assign_to })
-}
-
-fn simple_err(msg: impl Into<String>, span: Span) -> TlErrs {
-    TlErrBuilder::new().message(msg.into()).span(span).build()
-}
-
 fn transform_assignment<'src, 'ast>(
     ctx: &mut TlCtx<'src, 'ast>,
-    lhs: &'ast SExpr<'src>,
+    lhs: &'ast SPattern<'src>,
     rhs: &'ast SExpr<'src>,
-    modifier: Option<DeclType>,
     span: &Span,
 ) -> TlResult<PyBlock<'src>> {
     let mut stmts = PyBlock::new();
+    let meta = ctx.pattern_info(lhs)?;
     let a = PyAstBuilder::new(*span);
 
-    if let Expr::Ident(_) = &lhs.value {
+    if let Pattern::Capture(..) = &lhs.value {
         let mut decorators: Vec<&SExpr> = vec![];
         let mut cur_node = rhs;
 
@@ -674,7 +339,10 @@ fn transform_assignment<'src, 'ast>(
             }
         }
 
-        let lhs_ident = ctx.py_ident(lhs)?;
+        let lhs_ident = match meta.decls.as_slice() {
+            [first] => ctx.decl_py_ident(*first),
+            _ => Err(simple_err("Internal: No unique identifier for lhs", *span)),
+        }?;
 
         let py_decorators = || -> TlResult<_> {
             Ok(PyDecorators(
@@ -713,9 +381,9 @@ fn transform_assignment<'src, 'ast>(
     let value_node = rhs.transform(ctx)?;
     stmts.extend(value_node.pre);
 
-    let destructure = destructure(ctx, lhs, modifier)?;
-    stmts.push(a.assign(destructure.assign_to, value_node.value));
-    stmts.extend(destructure.post);
+    let (matcher, cursor) = create_throwing_matcher(ctx, lhs, meta)?;
+    stmts.push(a.assign(a.ident(cursor, PyAccessCtx::Store), value_node.value));
+    stmts.extend(matcher);
 
     Ok(stmts)
 }
@@ -1658,10 +1326,16 @@ fn transform_postfix_expr<'src, 'ast>(
             Expr::RawAttribute(_, attr) | Expr::MappedRawAttribute(_, attr) => {
                 a.attribute(lhs, attr.value.escape(), access_ctx)
             }
-            Expr::Attribute(_, rhs) | Expr::MappedAttribute(_, rhs) => a.call(
-                a.tl_builtin("vget"),
-                vec![a.call_arg(lhs), a.call_arg(a.str(rhs.value.escape()))],
-            ),
+            Expr::Attribute(_, rhs) | Expr::MappedAttribute(_, rhs) => {
+                if access_ctx == PyAccessCtx::Load {
+                    a.call(
+                        a.tl_builtin("vget"),
+                        vec![a.call_arg(lhs), a.call_arg(a.str(rhs.value.escape()))],
+                    )
+                } else {
+                    a.attribute(lhs, rhs.value.escape(), access_ctx)
+                }
+            }
             _ => {
                 panic!()
             }
@@ -1845,10 +1519,81 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
             Stmt::Decl(..) => {
                 // no-op
             }
-            Stmt::Assign(target, value, modifier) => {
-                let binding_stmts = transform_assignment(ctx, target, value, *modifier, &span)?;
+            Stmt::PatternAssign(lhs, rhs, _decl_type) => {
+                let binding_stmts = transform_assignment(ctx, lhs, rhs, &span)?;
 
                 pre.extend(binding_stmts);
+            }
+            Stmt::Assign(lhs, rhs, op) => 'block: {
+                if let Some(BinaryOp::Coalesce) = op {
+                    let lhs = pre.bind(lhs.transform_store(ctx)?);
+
+                    fn deduplicate<'src, 'ast>(
+                        ctx: &mut TlCtx<'src, 'ast>,
+                        expr: SPyExpr<'src>,
+                        span: Span,
+                    ) -> TlResult<SPyExprWithPre<'src>> {
+                        let var_name = ctx.create_aux_var("lhs", span.start);
+                        let a = PyAstBuilder::new(span);
+                        let mut pre = PyBlock::new();
+
+                        let expr = match expr.value {
+                            PyExpr::Ident(id, _) => a.load_ident(id),
+                            x => {
+                                pre.push(a.assign(
+                                    a.ident(var_name.clone(), PyAccessCtx::Store),
+                                    (x, expr.tl_span).into(),
+                                ));
+                                a.load_ident(var_name.clone())
+                            }
+                        };
+
+                        Ok(SPyExprWithPre { value: expr, pre })
+                    }
+
+                    // TODO this is a bit hacky. We need to get separate the root node
+                    // from the rest of the expression to avoid double evaluation
+                    let (safe_lhs_store, safe_lhs_load) = match lhs.value {
+                        PyExpr::Ident(id, _) => (
+                            a.ident(id.clone(), PyAccessCtx::Store),
+                            a.load_ident(id.clone()),
+                        ),
+                        PyExpr::Attribute(left, right, _) => {
+                            let left_span = left.tl_span;
+                            let dedup = pre.bind(deduplicate(ctx, *left, left_span)?);
+                            (
+                                a.attribute(dedup.clone(), right.clone(), PyAccessCtx::Store),
+                                a.attribute(dedup, right, PyAccessCtx::Load),
+                            )
+                        }
+                        PyExpr::Subscript(left, right, _) => {
+                            let left_span = left.tl_span;
+                            // TODO, critical: this leads to double evaluation of subscript indices
+                            let dedup = pre.bind(deduplicate(ctx, *left, left_span)?);
+                            (
+                                a.subscript(dedup.clone(), *right.clone(), PyAccessCtx::Store),
+                                a.subscript(dedup, *right, PyAccessCtx::Load),
+                            )
+                        }
+                        _ => panic!(),
+                    };
+
+                    let rhs = pre.bind(create_coalesce(ctx, safe_lhs_load, rhs, span)?);
+
+                    pre.push(a.assign(safe_lhs_store, rhs));
+
+                    break 'block;
+                }
+
+                let py_op = match op {
+                    Some(op) => Some(map_py_binary_op(*op, span)?),
+                    None => None,
+                };
+
+                let rhs = pre.bind(rhs.transform(ctx)?);
+                let lhs = pre.bind(lhs.transform_store(ctx)?);
+
+                pre.push(a.assign_modified(lhs, rhs, py_op))
             }
             Stmt::Raise(expr) => {
                 if let Some(expr) = expr {
@@ -2023,7 +1768,10 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
         let mut pre = PyBlock::<'src>::new();
 
         match &expr {
-            Expr::RawAttribute(..) | Expr::Subscript(..) | Expr::Ident(..) => {}
+            Expr::Attribute(..)
+            | Expr::RawAttribute(..)
+            | Expr::Subscript(..)
+            | Expr::Ident(..) => {}
             _ => {
                 if access_ctx != PyAccessCtx::Load {
                     return Err(simple_err(
@@ -2183,31 +1931,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
             Expr::Binary(op, lhs, rhs) => 'block: {
                 if let BinaryOp::Coalesce = op {
                     let py_lhs = pre.bind(lhs.transform_lifted(ctx)?);
-
-                    let mut fn_body = PyBlock::new();
-                    let py_rhs = fn_body.bind(rhs.transform(ctx)?);
-                    fn_body.push(a.return_(py_rhs));
-
-                    let fn_info = ctx.coal_fninfo.get(&rhs.as_ref().into()).unwrap();
-
-                    let inner_fn = pre.bind(make_fn_exp(
-                        ctx,
-                        FnDef::PyFnDef(vec![], fn_body, false, fn_info.is_async),
-                        &span,
-                    )?);
-
-                    let mut call = a.call(
-                        a.tl_builtin("op_coal"),
-                        vec![a.call_arg(py_lhs), a.call_arg(inner_fn)],
-                    );
-
-                    if fn_info.is_async {
-                        call = a.await_(call);
-                    }
-                    if fn_info.is_do || fn_info.is_generator {
-                        call = a.yield_from(call);
-                    }
-
+                    let call = pre.bind(create_coalesce(ctx, py_lhs, rhs, span)?);
                     break 'block call;
                 } else if let BinaryOp::And | BinaryOp::Or = op {
                     let is_and = *op == BinaryOp::And;
@@ -2258,27 +1982,11 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 let rhs = pre.bind(rhs);
 
                 let py_op = match op {
-                    BinaryOp::Add => PyBinaryOp::Add,
-                    BinaryOp::Sub => PyBinaryOp::Sub,
-                    BinaryOp::Mul => PyBinaryOp::Mult,
-                    BinaryOp::Div => PyBinaryOp::Div,
-                    BinaryOp::Mod => PyBinaryOp::Mod,
-                    BinaryOp::Exp => PyBinaryOp::Pow,
-                    BinaryOp::MatMul => PyBinaryOp::MatMult,
-
-                    BinaryOp::Lt => PyBinaryOp::Lt,
-                    BinaryOp::Gt => PyBinaryOp::Gt,
-                    BinaryOp::Leq => PyBinaryOp::Leq,
-                    BinaryOp::Geq => PyBinaryOp::Geq,
-                    BinaryOp::Eq => PyBinaryOp::Eq,
-                    BinaryOp::Neq => PyBinaryOp::Neq,
-                    BinaryOp::Is => PyBinaryOp::Is,
-                    BinaryOp::Nis => PyBinaryOp::Nis,
-
                     BinaryOp::Pipe => break 'block a.call(rhs, vec![PyCallItem::Arg(lhs)]),
                     BinaryOp::Coalesce | BinaryOp::And | BinaryOp::Or => {
                         panic!()
                     }
+                    _ => map_py_binary_op(*op, span)?,
                 };
 
                 a.binary(py_op, lhs, rhs)
@@ -2475,6 +2183,65 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
 
         Ok(SPyExprWithPre { value, pre })
     }
+}
+
+fn create_coalesce<'src, 'ast>(
+    ctx: &mut TlCtx<'src, 'ast>,
+    py_lhs: PySpanned<PyExpr<'src>>,
+    rhs: &'ast SExpr<'src>,
+    span: Span,
+) -> TlResult<SPyExprWithPre<'src>> {
+    let a = PyAstBuilder::new(span);
+    let mut pre = PyBlock::new();
+    let mut fn_body = PyBlock::new();
+
+    let py_rhs = fn_body.bind(rhs.transform(ctx)?);
+    fn_body.push(a.return_(py_rhs));
+
+    let fn_info = ctx.coal_fninfo.get(&rhs.into()).unwrap();
+
+    let inner_fn = pre.bind(make_fn_exp(
+        ctx,
+        FnDef::PyFnDef(vec![], fn_body, false, fn_info.is_async),
+        &span,
+    )?);
+
+    let mut call = a.call(
+        a.tl_builtin("op_coal"),
+        vec![a.call_arg(py_lhs), a.call_arg(inner_fn)],
+    );
+
+    if fn_info.is_async {
+        call = a.await_(call);
+    }
+    if fn_info.is_do || fn_info.is_generator {
+        call = a.yield_from(call);
+    }
+
+    Ok(SPyExprWithPre { value: call, pre })
+}
+
+fn map_py_binary_op(op: BinaryOp, span: Span) -> TlResult<PyBinaryOp> {
+    Ok(match op {
+        BinaryOp::Add => PyBinaryOp::Add,
+        BinaryOp::Sub => PyBinaryOp::Sub,
+        BinaryOp::Mul => PyBinaryOp::Mult,
+        BinaryOp::Div => PyBinaryOp::Div,
+        BinaryOp::Mod => PyBinaryOp::Mod,
+        BinaryOp::Exp => PyBinaryOp::Pow,
+        BinaryOp::MatMul => PyBinaryOp::MatMult,
+
+        BinaryOp::Lt => PyBinaryOp::Lt,
+        BinaryOp::Gt => PyBinaryOp::Gt,
+        BinaryOp::Leq => PyBinaryOp::Leq,
+        BinaryOp::Geq => PyBinaryOp::Geq,
+        BinaryOp::Eq => PyBinaryOp::Eq,
+        BinaryOp::Neq => PyBinaryOp::Neq,
+        BinaryOp::Is => PyBinaryOp::Is,
+        BinaryOp::Nis => PyBinaryOp::Nis,
+
+        _ => return Err(simple_err("Internal error: Unsupported binary op", span)),
+    })
 }
 
 fn py_fn_bindings<'src, 'ast>(

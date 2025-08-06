@@ -151,24 +151,16 @@ where
         if id.value.0 == "_" { None } else { Some(id) }
     }
 
+    let capture_pattern = ident
+        .clone()
+        .map(to_wildcard)
+        .map(Pattern::Capture)
+        .spanned_pattern()
+        .boxed();
+
     let value_pattern = symbol(".")
-        .to(1)
-        .or_not()
-        .then(qualified_ident.clone())
-        .try_map(|(q, value), _e| {
-            Ok(if let Expr::RawAttribute(..) = value.value {
-                Pattern::Value(value.indirect())
-            } else if q.is_some() {
-                Pattern::Value(value.indirect())
-            } else if let Expr::Ident(id) = value.value {
-                Pattern::Capture(to_wildcard(id))
-            } else {
-                return Err(Rich::custom(
-                    value.span,
-                    "Internal error: value pattern must be an identifier or attribute",
-                ));
-            })
-        })
+        .ignore_then(qualified_ident.clone())
+        .map(|value| Pattern::Value(value.indirect()))
         .spanned_pattern()
         .boxed();
 
@@ -273,6 +265,7 @@ where
     let closed_pattern = choice((
         literal_pattern,
         class_pattern,
+        capture_pattern,
         value_pattern.clone(),
         group_pattern,
         sequence_pattern,
@@ -474,12 +467,23 @@ where
     })
 }
 
-pub fn statement<'tokens, 'src: 'tokens, TInput, PBody, PTuple, PExpr, PIdent, PPattern>(
+pub fn statement<
+    'tokens,
+    'src: 'tokens,
+    TInput,
+    PBody,
+    PTuple,
+    PExpr,
+    PIdent,
+    PNaryPattern,
+    PPattern,
+>(
     expr_or_inline_stmt_or_block: PBody,
     nary_tuple: PTuple,
     expr: PExpr,
     ident: PIdent,
-    nary_pattern: PPattern,
+    nary_pattern: PNaryPattern,
+    pattern: PPattern,
 ) -> (
     impl Parser<'tokens, TInput, SStmt<'src>, TExtra<'tokens, 'src>> + Clone,
     impl Parser<'tokens, TInput, SStmt<'src>, TExtra<'tokens, 'src>> + Clone,
@@ -490,6 +494,7 @@ where
     PTuple: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PExpr: Parser<'tokens, TInput, SExpr<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PIdent: Parser<'tokens, TInput, SIdent<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
+    PNaryPattern: Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PPattern: Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
 {
     let mut stmt = Recursive::<chumsky::recursive::Indirect<TInput, SStmt, TExtra>>::declare();
@@ -509,33 +514,55 @@ where
         .map(|(decl, idents)| SStmtInner::Decl(idents, decl))
         .boxed();
 
-    let assign_lhs = nary_tuple.clone();
-    let inline_assign_lhs = expr.clone();
-
-    let assign_stmt = group((
+    let pattern_assign_stmt = group((
         decl_mod.clone().or_not(),
-        assign_lhs.clone(),
+        nary_pattern.clone(),
         symbol("=").ignore_then(nary_tuple.clone()),
     ))
-    .map(|(decl, lhs, rhs)| SStmtInner::Assign(lhs.indirect(), rhs.indirect(), decl))
+    .map(|(decl, pat, rhs)| SStmtInner::PatternAssign(pat.indirect(), rhs.indirect(), decl))
     .boxed();
 
-    let inline_assign_stmt = group((
+    let inline_pattern_assign_stmt = group((
         decl_mod.clone().or_not(),
-        inline_assign_lhs.clone(),
+        pattern.clone(),
         symbol("=").ignore_then(expr.clone()),
     ))
-    .map(|(decl, lhs, rhs)| SStmtInner::Assign(lhs.indirect(), rhs.indirect(), decl))
+    .map(|(decl, pat, rhs)| SStmtInner::PatternAssign(pat.indirect(), rhs.indirect(), decl))
     .boxed();
 
-    let expr_stmt = assign_lhs
-        .clone()
-        .map(|x| SStmtInner::Expr(x.indirect()))
-        .boxed();
+    let aug_op = choice((
+        symbol("+=").to(BinaryOp::Add),
+        symbol("-=").to(BinaryOp::Sub),
+        symbol("*=").to(BinaryOp::Mul),
+        symbol("/=").to(BinaryOp::Div),
+        symbol("|=").to(BinaryOp::Pipe),
+        symbol("??=").to(BinaryOp::Coalesce),
+    ))
+    .map(Some);
 
-    let inline_expr_stmt = inline_assign_lhs
-        .clone()
-        .map(|x| SStmtInner::Expr(x.indirect()))
+    let assign_op = choice((aug_op, symbol("=").to(None)));
+
+    let assign_stmt = group((
+        nary_tuple.clone(),
+        assign_op.clone().then(nary_tuple.clone()).or_not(),
+    ))
+    .map(|(lhs, rhs)| {
+        if let Some((op, rhs)) = rhs {
+            SStmtInner::Assign(lhs.indirect(), rhs.indirect(), op)
+        } else {
+            SStmtInner::Expr(lhs.indirect())
+        }
+    })
+    .boxed();
+
+    let inline_assign_stmt = group((expr.clone(), assign_op.clone().then(expr.clone()).or_not()))
+        .map(|(lhs, rhs)| {
+            if let Some((op, rhs)) = rhs {
+                SStmtInner::Assign(lhs.indirect(), rhs.indirect(), op)
+            } else {
+                SStmtInner::Expr(lhs.indirect())
+            }
+        })
         .boxed();
 
     let while_stmt = just(Token::Kw("while"))
@@ -687,8 +714,8 @@ where
     stmt.define(
         choice((
             decl_stmt.then_ignore(just(Token::Eol)),
+            pattern_assign_stmt.then_ignore(just(Token::Eol)),
             assign_stmt.then_ignore(just(Token::Eol)),
-            expr_stmt.then_ignore(just(Token::Eol)),
             while_stmt.clone().then_ignore(just(Token::Eol)),
             for_stmt.clone().then_ignore(just(Token::Eol)),
             return_stmt.then_ignore(just(Token::Eol)),
@@ -706,8 +733,8 @@ where
 
     inline_stmt.define(
         choice((
+            inline_pattern_assign_stmt,
             inline_assign_stmt,
-            inline_expr_stmt,
             while_stmt,
             for_stmt,
             inline_return_stmt,
@@ -1437,6 +1464,7 @@ where
         expr.clone(),
         ident.clone(),
         nary_pattern.clone(),
+        as_pattern.clone(),
     );
 
     stmt.define(stmt_.labelled("statement").boxed());

@@ -605,7 +605,10 @@ struct ScopedOutput<T> {
     pub scope_key: ScopeKey,
 }
 
-fn error_ident<'src>(state: &mut ResolveState<'src>, span: Span) -> Indirect<SExpr<'src>> {
+fn error_ident_and_decl<'src>(
+    state: &mut ResolveState<'src>,
+    span: Span,
+) -> (Indirect<SExpr<'src>>, DeclarationKey) {
     let ident = Ident("_".into()).spanned(span);
     let expr = Expr::Ident(ident.clone()).spanned(span).indirect();
 
@@ -615,7 +618,7 @@ fn error_ident<'src>(state: &mut ResolveState<'src>, span: Span) -> Indirect<SEx
 
     state.resolutions.insert(expr.as_ref().into(), decl);
 
-    expr
+    (expr, decl)
 }
 
 fn traverse_placeholder<'src>(state: &mut ResolveState<'src>, span: Span) -> Indirect<SExpr<'src>> {
@@ -643,6 +646,7 @@ trait SPatternExt<'src> {
     fn traverse(
         self,
         state: &mut ResolveState<'src>,
+        allow_uppercase_capture: bool,
     ) -> (Indirect<SPattern<'src>>, PatternMeta<'src>);
 }
 
@@ -650,6 +654,7 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
     fn traverse(
         self,
         state: &mut ResolveState<'src>,
+        allow_uppercase_capture: bool,
     ) -> (Indirect<SPattern<'src>>, PatternMeta<'src>) {
         let mut default = false;
         let mut captures = vec![];
@@ -660,14 +665,15 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
                 // Make sure that capture patterns do not start with an uppercase letter to
                 // prevent unexpectedly shadowing a type
 
-                if cap
-                    .as_ref()
-                    .is_some_and(|x| char::is_uppercase(x.value.0.chars().nth(0).unwrap_or('_')))
-                {
-                    state.errors.extend(simple_err(
-                        "Capture patterns must start with a lowercase letter; to match a type, add '()'",
+                if !allow_uppercase_capture {
+                    if cap.as_ref().is_some_and(|x| {
+                        char::is_uppercase(x.value.0.chars().nth(0).unwrap_or('_'))
+                    }) {
+                        state.errors.extend(simple_err(
+                        "Capture patterns here must start with a lowercase letter; to match a type, add '()'",
                         self.span,
                     ));
+                    }
                 }
 
                 if let Some(cap) = cap.clone() {
@@ -679,7 +685,7 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
                 Pattern::Capture(cap)
             }
             Pattern::As(pattern, name) => {
-                let (pattern, meta) = pattern.traverse(state);
+                let (pattern, meta) = pattern.traverse(state, allow_uppercase_capture);
                 captures.extend(meta.captures);
                 captures.push(name.value.clone());
                 default |= meta.default;
@@ -699,7 +705,7 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
 
                 let mut items = vec![];
 
-                let (pattern, meta) = initial.traverse(state);
+                let (pattern, meta) = initial.traverse(state, allow_uppercase_capture);
                 items.push(pattern);
                 default = meta.default;
                 captures.extend(meta.captures);
@@ -716,7 +722,7 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
                     }
 
                     default |= meta.default;
-                    let (pattern, mut meta) = item.traverse(state);
+                    let (pattern, mut meta) = item.traverse(state, allow_uppercase_capture);
 
                     meta.captures.sort_by_key(|x| x.0.clone());
 
@@ -738,7 +744,7 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
                     .into_iter()
                     .map(|item| match item {
                         PatternSequenceItem::Item(inner) => {
-                            let (pattern, meta) = inner.traverse(state);
+                            let (pattern, meta) = inner.traverse(state, allow_uppercase_capture);
                             captures.extend(meta.captures);
                             PatternSequenceItem::Item(pattern)
                         }
@@ -762,7 +768,7 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
                             PatternMappingItem::Ident(id)
                         }
                         PatternMappingItem::Item(key, value) => {
-                            let (pattern, meta) = value.traverse(state);
+                            let (pattern, meta) = value.traverse(state, allow_uppercase_capture);
                             captures.extend(meta.captures);
 
                             PatternMappingItem::Item(key, pattern)
@@ -784,12 +790,12 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
                     .into_iter()
                     .map(|item| match item {
                         PatternClassItem::Item(inner) => {
-                            let (pattern, meta) = inner.traverse(state);
+                            let (pattern, meta) = inner.traverse(state, allow_uppercase_capture);
                             captures.extend(meta.captures);
                             PatternClassItem::Item(pattern)
                         }
                         PatternClassItem::Kw(key, inner) => {
-                            let (pattern, meta) = inner.traverse(state);
+                            let (pattern, meta) = inner.traverse(state, allow_uppercase_capture);
                             captures.extend(meta.captures);
                             PatternClassItem::Kw(key, pattern)
                         }
@@ -846,7 +852,7 @@ fn pattern_scoped<'src>(
     let scope = Scope::new(Some(state.top_scope_key()));
     let scope_key = state.scopes.insert(scope);
 
-    let (pattern, meta) = pattern.traverse(state);
+    let (pattern, meta) = pattern.traverse(state, false);
 
     let decls = meta
         .captures
@@ -944,7 +950,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     Ok(decl) => decl,
                     Err(errs) => {
                         state.errors.extend(errs);
-                        return error_ident(state, span);
+                        return error_ident_and_decl(state, span).0;
                     }
                 };
 
@@ -955,7 +961,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
             }
             Expr::Checked(expr, pattern) => {
                 let pattern = if let Some(pattern) = pattern {
-                    let (pattern, meta) = pattern.traverse(state);
+                    let (pattern, meta) = pattern.traverse(state, false);
 
                     if !meta.captures.is_empty() {
                         state.errors.extend(
@@ -989,7 +995,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 vec![CallItem::Arg(expr.traverse(state))],
             ),
             Expr::Matches(x, pattern) => {
-                let (pattern, meta) = pattern.traverse(state);
+                let (pattern, meta) = pattern.traverse(state, false);
                 if !meta.captures.is_empty() {
                     state.errors.extend(simple_err(
                         "Non-'_' capture patterns are not allowed in bare 'matches'-expressions",
@@ -1152,7 +1158,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     .into_iter()
                     .map(|item| match item {
                         ArgDefItem::Arg(arg, default) => {
-                            let (pattern, meta) = arg.traverse(state);
+                            let (pattern, meta) = arg.traverse(state, false);
 
                             let mut arg_decls = vec![];
 
@@ -1466,88 +1472,6 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
     }
 }
 
-fn traverse_assign_lhs<'src>(
-    state: &mut ResolveState<'src>,
-    lhs: Indirect<SExpr<'src>>,
-    decl_type: Option<DeclType>,
-) -> Indirect<SExpr<'src>> {
-    match lhs.value {
-        Expr::Ident(ident) => {
-            let mut decl = None;
-            if let Some(decl_type) = decl_type {
-                decl = Some(state.declare_in_top_scope(ident.clone(), decl_type, true));
-            }
-
-            let decl = match decl {
-                Some(decl) => decl,
-                None => match state.resolve(&ident, true) {
-                    Ok(decl) => decl,
-                    Err(errs) => {
-                        state.errors.extend(errs);
-                        return error_ident(state, lhs.span);
-                    }
-                },
-            };
-
-            let expr = Expr::Ident(ident).spanned(lhs.span).indirect();
-
-            state.resolutions.insert(expr.as_ref().into(), decl.clone());
-            expr
-        }
-        Expr::Tuple(items) => {
-            let items = items
-                .into_iter()
-                .map(|item| match item {
-                    ListItem::Item(inner) => {
-                        let inner = traverse_assign_lhs(state, inner, decl_type);
-                        ListItem::Item(inner)
-                    }
-                    ListItem::Spread(inner) => {
-                        let inner = traverse_assign_lhs(state, inner, decl_type);
-                        ListItem::Spread(inner)
-                    }
-                })
-                .collect::<Vec<_>>();
-            Expr::Tuple(items).spanned(lhs.span).indirect()
-        }
-        Expr::List(items) => {
-            let items = items
-                .into_iter()
-                .map(|item| match item {
-                    ListItem::Item(inner) => {
-                        let inner = traverse_assign_lhs(state, inner, decl_type);
-                        ListItem::Item(inner)
-                    }
-                    ListItem::Spread(inner) => {
-                        let inner = traverse_assign_lhs(state, inner, decl_type);
-                        ListItem::Spread(inner)
-                    }
-                })
-                .collect::<Vec<_>>();
-            Expr::List(items).spanned(lhs.span).indirect()
-        }
-        Expr::Mapping(items) => {
-            let items = items
-                .into_iter()
-                .map(|item| match item {
-                    MappingItem::Item(key, value) => MappingItem::Item(
-                        key.traverse_guarded(state),
-                        traverse_assign_lhs(state, value, decl_type),
-                    ),
-                    MappingItem::Spread(inner) => {
-                        MappingItem::Spread(traverse_assign_lhs(state, inner, decl_type))
-                    }
-                    MappingItem::Ident(inner) => {
-                        MappingItem::Ident(traverse_assign_lhs(state, inner, decl_type))
-                    }
-                })
-                .collect::<Vec<_>>();
-            Expr::Mapping(items).spanned(lhs.span).indirect()
-        }
-        _ => lhs.traverse(state),
-    }
-}
-
 trait SStmtExt<'src> {
     fn traverse(self, state: &mut ResolveState<'src>) -> Indirect<SStmt<'src>>;
 }
@@ -1564,9 +1488,33 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 
                 Stmt::Decl(idents, typ)
             }
-            Stmt::Assign(lhs, rhs, typ) => {
-                // LHS will create lifted decls
-                let lhs = traverse_assign_lhs(state, lhs, typ);
+            Stmt::PatternAssign(lhs, rhs, decl) => {
+                let (lhs_pat, pat_meta) = lhs.traverse(state, true);
+
+                let mut decls = vec![];
+                for capture in pat_meta.captures {
+                    if let Some(decl) = decl {
+                        decls.push(state.declare_in_top_scope(capture.spanned(span), decl, true));
+                    } else {
+                        let decl = match state.resolve(&capture.spanned(span), true) {
+                            Ok(decl) => decl,
+                            Err(errs) => {
+                                state.errors.extend(errs);
+                                error_ident_and_decl(state, span).1
+                            }
+                        };
+
+                        decls.push(decl);
+                    }
+                }
+
+                state.patterns.insert(
+                    lhs_pat.as_ref().into(),
+                    PatternInfo {
+                        default: pat_meta.default,
+                        decls,
+                    },
+                );
 
                 let rhs = rhs.traverse_guarded(state);
 
@@ -1574,7 +1522,24 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                 let scope = state.top_scope();
                 scope.locals.extend(scope.lifted_decls.drain(..));
 
-                Stmt::Assign(lhs, rhs, typ)
+                Stmt::PatternAssign(lhs_pat, rhs, decl)
+            }
+            Stmt::Assign(lhs, rhs, op) => {
+                // Assign should never create new declarations,
+                // so it's safe to use regular r-value traversal.
+
+                let lhs = lhs.traverse_guarded(state);
+
+                let rhs = if let Some(BinaryOp::Coalesce) = op {
+                    let (rhs, fn_ctx) =
+                        with_phantom_fninfo(state, span, |state| rhs.traverse(state));
+                    state.coal_fninfo.insert(rhs.as_ref().into(), fn_ctx);
+                    rhs
+                } else {
+                    rhs.traverse_guarded(state)
+                };
+
+                Stmt::Assign(lhs, rhs, op)
             }
             Stmt::Expr(expr) => Stmt::Expr(expr.traverse_guarded(state)),
             Stmt::Return(expr) => Stmt::Return(expr.traverse_guarded(state)),
