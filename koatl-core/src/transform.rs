@@ -1525,7 +1525,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 pre.extend(binding_stmts);
             }
             Stmt::Assign(lhs, rhs, op) => 'block: {
-                if let Some(BinaryOp::Coalesce) = op {
+                if let Some(BinaryOp::Coalesce | BinaryOp::Pipe) = op {
                     let lhs = pre.bind(lhs.transform_store(ctx)?);
 
                     fn deduplicate<'src, 'ast>(
@@ -1578,9 +1578,18 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                         _ => panic!(),
                     };
 
-                    let rhs = pre.bind(create_coalesce(ctx, safe_lhs_load, rhs, span)?);
+                    let new_rhs = match op {
+                        Some(BinaryOp::Pipe) => a.call(
+                            pre.bind(rhs.transform(ctx)?),
+                            vec![a.call_arg(safe_lhs_load)],
+                        ),
+                        Some(BinaryOp::Coalesce) => {
+                            pre.bind(create_coalesce(ctx, safe_lhs_load, rhs, span)?)
+                        }
+                        _ => panic!(),
+                    };
 
-                    pre.push(a.assign(safe_lhs_store, rhs));
+                    pre.push(a.assign(safe_lhs_store, new_rhs));
 
                     break 'block;
                 }
