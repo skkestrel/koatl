@@ -178,11 +178,15 @@ fn fast_vset_trait<'py, 'ptr>(
         vtbl.insert(name.clone(), Vec::new());
     }
 
-    vtbl.get_mut(&name).unwrap().push(TraitAttr {
-        name: trait_name.to_string(),
-        requirements: reqs,
-        value: value.clone().unbind(),
-    });
+    // TODO: what about conflicting traits?
+    vtbl.get_mut(&name).unwrap().insert(
+        0,
+        TraitAttr {
+            name: trait_name.to_string(),
+            requirements: reqs,
+            value: value.clone().unbind(),
+        },
+    );
 
     Ok(())
 }

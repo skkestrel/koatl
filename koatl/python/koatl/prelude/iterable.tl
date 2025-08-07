@@ -1,15 +1,17 @@
 import itertools
 import builtins
 
-methods = {
-    map: (x, f) => builtins.map(f, x.iter)
+export Iterable = ExtensionTrait& class(Trait):
+    iter = Abstract
 
-    filter: (x, f) => builtins.filter(f, x.iter)
+    map = (self, f) => builtins.map(f, self.iter)
 
-    flat_map: (x, f) => itertools.chain.from_iterable(x.map(f))
+    filter = (self, f) => builtins.filter(f, self.iter)
 
-    traverse: (x, f) =>
-        let it = x.iter
+    flat_map = (self, f) => itertools.chain.from_iterable(self.map(f))
+
+    traverse = (self, f) =>
+        let it = self.iter
         let v
         try:
             v = next(it)
@@ -39,45 +41,39 @@ methods = {
             acc = acc.apply(m.map(x => acc => [*acc, x]))
         acc
 
-    fold: (x, init, f) =>
+    fold = (self, init, f) =>
         let acc = init
-        for i in x:
+        for i in self:
             acc = f(acc, i)
         acc
 
-    first: (x, f) =>
-        for i in x:
+    first = (self, f) =>
+        for i in self:
             if f(i):
                 return i
         return None
 
-    last: (x, f) =>
+    last = (self, f) =>
         let result = None
-        for i in x:
+        for i in self:
             if f(i):
                 result = i
         return result
 
-    at: (x, index) =>
-        for i in x:
+    at = (self, index) =>
+        for i in self:
             if i == index:
                 return i
         raise IndexError("Index out of range")
 
-    sum: x =>
+    sum = self =>
         let acc = 0
-        for i in x:
+        for i in self:
             acc = acc + i
         acc
 
-    list: x =>
-        list(x.iter)
+    list = self =>
+        list(self.iter)
 
-    record: x =>
-        Record(x.iter)
-}
-
-# TODO merge this with typing.Iterable?
-
-export Iterable = Trait(__name__, "Iterable", methods, requires=["iter"])
-register_global_trait(Iterable)
+    record = self =>
+        Record(self.iter)

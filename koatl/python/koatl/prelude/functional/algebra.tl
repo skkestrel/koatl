@@ -1,6 +1,4 @@
-import abc
-
-export Monad = class(abc.ABC):
+export Monad = class(Trait):
     """
     Abstract base class for monads.
 
@@ -9,17 +7,16 @@ export Monad = class(abc.ABC):
     """
     __slots__ = ()
 
-    bind = abc.abstractmethod& (self, f) => None
+    bind = Abstract& (self, f) => None
 
-    pure = staticmethod& abc.abstractmethod& value => None
+    pure = staticmethod& Abstract& value => None
 
     # Automatically generated implementations.
     map = (self, f) => self.bind(x => self.pure(f(x)))
     apply = (self, f) => self.bind(x => f.map(fn => fn(x)))
 
 
-# TODO: should this inherit from Monad?
-export MonadOnce = class(abc.ABC):
+export MonadOnce = class(Monad, Trait):
     """
     Abstract base class for single-use monads.
 
@@ -32,9 +29,7 @@ export MonadOnce = class(abc.ABC):
     __slots__ = ()
 
     # The default implementation required for `@` syntax that should be overridden by subclasses.
-    bind_once = abc.abstractmethod& (self, f) => None
-
-    pure = staticmethod& abc.abstractmethod& value => None
+    bind_once = Abstract& (self, f) => None
 
     # An optional, optimized implementation of `bind` that skips deep recursion.
     # TODO: can this be automatically generated from bind_once?

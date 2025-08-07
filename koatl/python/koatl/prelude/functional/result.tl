@@ -1,5 +1,4 @@
 import functools.wraps
-import koatl.runtime.virtual.register_global_attr
 import .algebra.MonadOnce
 
 export Result = class(MonadOnce):
@@ -118,14 +117,14 @@ export Err = class(Result):
     coalesce = (self, f) => f()
 
 
-register_global_attr(type(None), "ok", ExtensionProperty(_ => False))
-register_global_attr(BaseException, "ok", ExtensionProperty(_ => False))
-register_global_attr(object, "ok", ExtensionProperty(_ => True))
+ExtensionProperty(type(None), "ok")& _ => False
+ExtensionProperty(BaseException, "ok")& _ => False
+ExtensionProperty(object, "ok")& _ => True
 
-register_global_attr(object, "result", ExtensionProperty(Result))
+ExtensionProperty(object, "result")& Result
 
 # Enables @ operator for bare objects.
-register_global_attr(object, "bind_gen", Result.bind_gen)
+ExtensionMethod(object, "bind_gen")& Result.bind_gen
 
 __tl__.Ok = Ok
 __tl__.Err = Err

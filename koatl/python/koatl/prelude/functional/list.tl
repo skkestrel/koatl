@@ -1,10 +1,9 @@
-import collections.UserList
 import itertools
 
 import .Monad
 import ..iterable.Iterable
 
-export List = class(UserList, Monad):
+export List = class(Monad):
     bind_once = (self, f) =>
         raise NotImplementedError(
             "Binding List in a do-block doesn't work in Koatl " +
@@ -23,4 +22,4 @@ for name, method in List.__dict__:
     if name.startswith("_"):
         continue
 
-    register_global_attr(list, name, method)
+    ExtensionMethod(list, name)& method
