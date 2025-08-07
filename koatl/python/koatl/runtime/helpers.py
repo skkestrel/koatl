@@ -35,16 +35,6 @@ def set_exports(package_name, globals_dict, exports, module_star_exports):
     globals_dict["__all__"] = tuple(set(globals_dict["__all__"]) | exports)
 
 
-def unpack_record(obj):
-    """
-    used in record unpacking
-    """
-    if hasattr(obj, "items"):
-        return Record(obj.items())
-    else:
-        return Record(obj.__dict__)
-
-
 def ok(obj):
     try:
         return obj.ok

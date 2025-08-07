@@ -93,7 +93,7 @@ def Trait(module, name, methods, *, requires=[]):
 
     def instancecheck(cls, instance):
         if cls != typ:
-            # if not checking for the trait itself, use the default behavior
+            # if not checking for the exact trait, use the default behavior
             return type.__instancecheck__(cls, instance)
 
         for req in requires:
@@ -107,7 +107,10 @@ def Trait(module, name, methods, *, requires=[]):
     meta = type(
         f"{name}Meta",
         (abc.ABCMeta,),
-        {"__instancecheck__": instancecheck, "__module__": "types"},
+        {
+            "__instancecheck__": instancecheck,
+            "__module__": "types",
+        },
     )
 
     def populate(ns):

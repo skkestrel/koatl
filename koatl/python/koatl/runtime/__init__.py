@@ -33,9 +33,9 @@ def dummy(name):
 __tl__ = SimpleNamespace(
     Exception=Exception,
     slice=slice,
+    type=type,
     vget=virtual.vget,
     vhas=virtual.vhas,
-    unpack_record=helpers.unpack_record,
     set_exports=helpers.set_exports,
     do=helpers.do,
     partial=functools.partial,

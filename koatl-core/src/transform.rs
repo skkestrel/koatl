@@ -738,10 +738,16 @@ fn create_throwing_matcher<'src, 'ast>(
     let fail = PyBlock(vec![a.raise(Some(a.call(
         a.load_ident("MatchError"),
         vec![a.call_arg(a.fstr(vec![
-            a.fstr_str("failed to match value "),
-            a.fstr_expr(a.load_ident(cursor.clone()), None),
+            a.fstr_str("failed to match value of type "),
+            a.fstr_expr(
+                a.call(
+                    a.tl_builtin("type"),
+                    vec![a.call_arg(a.load_ident(cursor.clone()))],
+                ),
+                None,
+            ),
             a.fstr_str(format!(
-                " to pattern {}",
+                " to pattern \"{}\"",
                 &ctx.source[pattern.span.start..pattern.span.end]
             )),
         ]))],
