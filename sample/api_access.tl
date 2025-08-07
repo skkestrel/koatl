@@ -24,18 +24,18 @@ get_user_details = (data, user_id) =>
 
     let profile = try user.profile
 
-    not profile.ok then:
-        print(f"Profile not found.")
-    else:
+    profile matches Ok(profile) then:
         print(f"Name: {try profile.name ?? "N/A"}")
 
         let contact = try profile.contact
 
-        not contact.ok then:
-            print(f"Contact not found.")
-        else:
+        contact matches Ok(contact) then:
             print(f"Email: {try contact.email ?? "N/A"}")
             print(f"Phone: {try contact.phone ?? "N/A"}")
+        else:
+            print(f"Contact not found.")
+    else:
+        print(f"Profile not found.")
 
     let orders = try user.orders ?? []
     let n_orders = @(try len(orders))
