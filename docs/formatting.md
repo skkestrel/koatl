@@ -31,7 +31,7 @@ x = #- this is a #- nested -# comment -# 2
 Blocks-in-expressions allow long inline things in expressions.
 Like Rust, the final expression of a block is treated as its value.
 
-Opening round parentheses on at the end of a line starts a block-expression on the next line.
+Opening round parentheses at the end of a line starts a block-expression on the next line.
 
 ```koatl
 x = (

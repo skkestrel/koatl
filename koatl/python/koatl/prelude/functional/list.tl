@@ -6,9 +6,9 @@ import ..iterable.Iterable
 export List = class(Monad):
     bind_once = (self, f) =>
         raise NotImplementedError(
-            "Binding List in a do-block doesn't work in Koatl " +
-                "due to generator limitations. " +
-                "Wrap in Ok to use the regular Result monad."
+            "List may not be bound using @ "
+                "due to generator limitations. "
+                "Wrap in Ok to use the Result monad."
         )
 
     bind = (self, f) => List(self.flat_map(f))

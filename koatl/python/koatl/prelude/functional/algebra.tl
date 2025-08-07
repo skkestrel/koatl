@@ -16,6 +16,7 @@ export Monad = class(Trait):
     apply = (self, f) => self.bind(x => f.map(fn => fn(x)))
 
 
+# TODO: enforce binding only once?
 export MonadOnce = class(Monad, Trait):
     """
     Abstract base class for single-use monads.

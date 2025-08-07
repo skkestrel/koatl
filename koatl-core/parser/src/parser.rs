@@ -795,15 +795,28 @@ where
     ))
     .boxed();
 
-    let literal = select! {
+    let other_literal = select! {
         Token::Num(s) => Literal::Num(Cow::Borrowed(s)),
-        Token::Str(s) => Literal::Str(Cow::Owned(s)),
         Token::Bool(s) => Literal::Bool(s),
         Token::None => Literal::None
     }
     .map_with(|x, e| x.spanned(e.span()))
     .labelled("literal")
     .boxed();
+
+    let literal_str = select! {
+        Token::Str(s) => s
+    }
+    .repeated()
+    .at_least(1)
+    .collect::<Vec<_>>()
+    .map_with(|x, e| Literal::Str(Cow::Owned(x.join(""))).spanned(e.span()))
+    .labelled("string-literal")
+    .boxed();
+
+    let literal = choice((literal_str, other_literal))
+        .labelled("literal")
+        .boxed();
 
     let literal_expr = literal
         .clone()
