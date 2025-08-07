@@ -17,3 +17,12 @@ assert_eq(1?.($ + 1)(), 2)
 
 assert_eq(None ?? 1, 1)
 assert_eq(int(5) ?? 1, 5)
+
+counts = 0
+f = () =>
+    counts = counts + 1
+
+f() ?? 1
+
+# should only call once
+assert_eq(counts, 1)

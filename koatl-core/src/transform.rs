@@ -1910,10 +1910,11 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
             Expr::Binary(op, lhs, rhs) => 'block: {
                 if let BinaryOp::Coalesce = op {
                     let py_lhs = pre.bind(lhs.transform(ctx)?);
-                    let dedup_lhs = pre.bind(deduplicate(ctx, py_lhs, span)?);
-                    let call = pre.bind(create_coalesce(ctx, dedup_lhs, rhs, span)?);
+                    let call = pre.bind(create_coalesce(ctx, py_lhs, rhs, span)?);
                     break 'block call;
                 } else if let BinaryOp::And | BinaryOp::Or = op {
+                    // handle short-circuiting manually
+
                     let is_and = *op == BinaryOp::And;
 
                     let py_lhs = pre.bind(lhs.transform(ctx)?);
