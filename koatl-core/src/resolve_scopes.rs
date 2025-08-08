@@ -455,6 +455,7 @@ pub struct Declaration<'src> {
     pub is_fn_arg: bool,
     pub is_exported: bool,
     pub is_const: bool,
+    pub is_import: bool,
 }
 
 trait DeclSlotMapExt<'src> {
@@ -482,6 +483,7 @@ impl<'src> DeclSlotMapExt<'src> for SlotMap<DeclarationKey, Declaration<'src>> {
 
             is_const: matches!(modifier, DeclType::Const),
             is_exported: matches!(modifier, DeclType::Export),
+            is_import: false,
         };
 
         self.insert(decl)
@@ -1631,6 +1633,8 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                                     DeclType::Let
                                 },
                             );
+
+                            state.declarations[decl].is_import = true;
 
                             scope.locals.push(decl);
                         }

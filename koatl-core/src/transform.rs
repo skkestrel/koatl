@@ -131,7 +131,8 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
         let decl = &self.declarations[decl_key];
         let scope = &self.scopes[decl.scope];
 
-        if scope.is_class || scope.is_global || decl.is_fn_arg {
+        // Some idents must not be mangled.
+        if scope.is_class || scope.is_global || decl.is_fn_arg || decl.is_import {
             return Ok(decl.name.escape());
         }
 

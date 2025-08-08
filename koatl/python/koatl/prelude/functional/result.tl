@@ -98,8 +98,8 @@ export Ok = class(Result):
 export Err = class(Result):
     __slots__ = ("value",)
     ok = False
-    __new__ = (cls, value) => object.__new__(cls)
-    __init__ = (self, value) =>
+    __new__ = (cls, value=None) => object.__new__(cls)
+    __init__ = (self, value=None) =>
         if hasattr(self, "value"):
             return None
         self.value = value

@@ -3,7 +3,8 @@ export Monad = class(Trait):
     Abstract base class for monads.
 
     Subclasses must implement `bind` and `pure`.
-    Automatically provides standard monadic operations: bind_once, map, and apply.
+    Automatically provides (likely suboptimal) standard
+    functor operations: map, apply, lift.
     """
     __slots__ = ()
 
@@ -13,7 +14,7 @@ export Monad = class(Trait):
 
     # Automatically generated implementations.
     map = (self, f) => self.bind(x => self.pure(f(x)))
-    apply = (self, f) => self.bind(x => f.map(fn => fn(x)))
+    apply = (self, mf) => self.bind(x => mf.map(f => f(x)))
 
 
 # TODO: enforce binding only once?
@@ -25,7 +26,6 @@ export MonadOnce = class(Monad, Trait):
     use with Python generators that cannot be cloned or reused.
 
     Subclasses must implement `bind_once` and `pure`.
-    Automatically provides (likely suboptimal) standard monadic operations: bind, map, and apply.
     """
     __slots__ = ()
 
@@ -38,5 +38,3 @@ export MonadOnce = class(Monad, Trait):
 
     # Automatically generated implementations.
     bind = (self, f) => self.bind_once(f)
-    map = (self, f) => self.bind(x => self.pure(f(x)))
-    apply = (self, f) => self.bind(x => f.map(fn => fn(x)))

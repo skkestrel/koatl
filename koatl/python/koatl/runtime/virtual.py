@@ -14,12 +14,12 @@ def vget(obj, name, ignore_traits=False):
                 start = obj.start if obj.start is not None else 0
                 step = obj.step if obj.step is not None else 1
                 if obj.stop is None:
-                    return count(start, step)
+                    return iter(count(start, step))
                 else:
-                    return range(start, obj.stop, step)
+                    return iter(range(start, obj.stop, step))
 
             try:
-                return obj.items()
+                return iter(obj.items())
             except AttributeError:
                 pass
 

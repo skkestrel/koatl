@@ -11,6 +11,8 @@ export Iterable = ExtensionTrait& class(Trait):
     flat_map = (self, f) => itertools.chain.from_iterable(self.map(f))
 
     traverse = (self, f) =>
+        import .functional.(Async, Result)
+
         let it = self.iter
         let v
         try:
@@ -20,9 +22,11 @@ export Iterable = ExtensionTrait& class(Trait):
 
         let m = f(v)
 
-        if not hasattr(m, "apply"):
-            # special case for bare types - slightly more efficient
-            # ...also required since bare types don't have .map
+        # TODO: can special case traversals be generalized?
+
+        # The Result traversal of a list is short-circuiting.
+        # Fall back to Result semantics for bare types.
+        if m matches Result() or not hasattr(m, "apply"):
             if not m.ok:
                 return m
 
@@ -34,6 +38,14 @@ export Iterable = ExtensionTrait& class(Trait):
                 acc.append(fv)
             return acc
 
+        # The Async traversal of a list is gather.
+        if m matches Async():
+            let acc = [m]
+            for v in it:
+                acc.append(f(v))
+            return Async.gather(*acc)
+
+        # Fall back to default applicative semantics.
         let acc = m.map([$])
         for v in it:
             m = f(v)
