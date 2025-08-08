@@ -1,14 +1,109 @@
 import itertools
 import builtins
+import .functional.Traversable
+import .functional.(Ok, Err)
 
-export Iterable = ExtensionTrait& class(Trait):
+export Iterable = ExtensionTrait& class(Traversable, Trait):
     iter = Abstract
+
+    skip = (self, n) =>
+        let it = self.iter
+        for _ in range(n):
+            next(it, None)
+        it
+
+    chain = (self, *others) =>
+        itertools.chain(self.iter, *others.map($.iter))
+
+    zip = (self, *others) =>
+        zip(self.iter, *others.map($.iter))
+
+    enumerate = (self, start=0) =>
+        enumerate(self.iter, start)
 
     map = (self, f) => builtins.map(f, self.iter)
 
     filter = (self, f) => builtins.filter(f, self.iter)
 
     flat_map = (self, f) => itertools.chain.from_iterable(self.map(f))
+
+    reverse = self => reversed(list(self.iter))
+
+    sort = (self, key=None, reverse=False) =>
+        sorted(self.iter, key=key, reverse=reverse)
+
+    copy = self => itertools.tee(self.iter)
+
+
+    count = self => len(self.iter)
+
+    fold = (self, init, f) =>
+        let acc = init
+        for i in self:
+            acc = f(acc, i)
+        acc
+
+    associate = (self, f) =>
+        let acc = {}
+        for i in self:
+            let value = f(i)
+            acc[i] = value
+        acc
+
+    group_by = (self, f) =>
+        let acc = {}
+        for i in self:
+            let key = f(i)
+            if not acc.__contains__(key):
+                acc[key] = []
+            acc[key].append(i)
+        acc
+
+    all = (self, f) =>
+        for i in self:
+            if not f(i):
+                return False
+        return True
+
+    any = (self, f) =>
+        for i in self:
+            if f(i):
+                return True
+        return False
+
+    find = (self, f) =>
+        for i in self:
+            if f(i):
+                return Ok(i)
+        return Err()
+
+    first = self =>
+        (try next(self.iter)).map_err(_ => None)
+
+    last = (self, f) =>
+        let result = Err()
+        for i in self:
+            if f(i):
+                result = Ok(i)
+        return result
+
+    at = (self, index) =>
+        for i in self:
+            if i == index:
+                return Ok(i)
+        return Err()
+
+    sum = self =>
+        let acc = 0
+        for i in self:
+            acc = acc + i
+        acc
+
+    list = self =>
+        list(self.iter)
+
+    record = self =>
+        Record(self.iter)
 
     traverse = (self, f) =>
         import .functional.(Async, Result)
@@ -52,40 +147,3 @@ export Iterable = ExtensionTrait& class(Trait):
             # acc = liftA2((list, value) => [*list, value])(acc, f(v))
             acc = acc.apply(m.map(x => acc => [*acc, x]))
         acc
-
-    fold = (self, init, f) =>
-        let acc = init
-        for i in self:
-            acc = f(acc, i)
-        acc
-
-    first = (self, f) =>
-        for i in self:
-            if f(i):
-                return i
-        return None
-
-    last = (self, f) =>
-        let result = None
-        for i in self:
-            if f(i):
-                result = i
-        return result
-
-    at = (self, index) =>
-        for i in self:
-            if i == index:
-                return i
-        raise IndexError("Index out of range")
-
-    sum = self =>
-        let acc = 0
-        for i in self:
-            acc = acc + i
-        acc
-
-    list = self =>
-        list(self.iter)
-
-    record = self =>
-        Record(self.iter)

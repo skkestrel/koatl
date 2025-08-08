@@ -38,3 +38,12 @@ export MonadOnce = class(Monad, Trait):
 
     # Automatically generated implementations.
     bind = (self, f) => self.bind_once(f)
+
+export Traversable = class(Trait):
+    """
+    Abstract base class for traversable data structures.
+    Subclasses must implement `traverse`.
+    """
+    __slots__ = ()
+
+    traverse = Abstract& (self, f) => None

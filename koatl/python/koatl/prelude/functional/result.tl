@@ -109,7 +109,7 @@ export Err = class(Result):
             return False
         return self.value == other.value
 
-    __repr__ = self => f"Err({repr(self.value)})"
+    __repr__ = self => f"Err({self.value === None then "" else repr(self.value)})"
     unwrap = self =>
         if self.value matches BaseException():
             raise self.value
