@@ -26,6 +26,18 @@ export Iterable = ExtensionTrait& class(Traversable, Trait):
 
         impl()
 
+    take_while = (self, f) =>
+        let impl = () =>
+            for i in self.iter:
+                if not f(i):
+                    return None
+                yield i
+
+        impl.__name__ = f"take_while"
+        impl.__qualname__ = f"Iterable.take_while"
+
+        impl()
+
     chain = (self, *others) =>
         itertools.chain(self.iter, *others.map($.iter))
 
@@ -128,6 +140,9 @@ export Iterable = ExtensionTrait& class(Traversable, Trait):
 
     list = self =>
         list(self.iter)
+
+    dict = self =>
+        dict(self.iter)
 
     record = self =>
         Record(self.iter)

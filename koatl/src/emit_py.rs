@@ -496,19 +496,23 @@ trait PyLiteralExt<'src> {
 impl<'src> PyLiteralExt<'src> for PyLiteral<'src> {
     fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>, span: &Span) -> PyTlResult<PyObject> {
         Ok(match self {
-            PyLiteral::Num(num) => match num.parse::<i128>() {
-                Ok(i) => ctx.ast_node("Constant", (i,), span)?,
-                Err(_) => match num.parse::<f64>() {
-                    Ok(f) => ctx.ast_node("Constant", (f,), span)?,
-                    Err(_) => {
-                        return Err(PyTlErr {
-                            message: format!("Invalid number literal: {}", num),
-                            py_err: None,
-                            span: Some(*span),
-                        })
-                    }
-                },
-            },
+            PyLiteral::Num(num) => {
+                let num = num.replace('_', "");
+
+                match num.parse::<i128>() {
+                    Ok(i) => ctx.ast_node("Constant", (i,), span)?,
+                    Err(_) => match num.parse::<f64>() {
+                        Ok(f) => ctx.ast_node("Constant", (f,), span)?,
+                        Err(_) => {
+                            return Err(PyTlErr {
+                                message: format!("Invalid number literal: {}", num),
+                                py_err: None,
+                                span: Some(*span),
+                            });
+                        }
+                    },
+                }
+            }
             PyLiteral::Bool(b) => ctx.ast_node("Constant", (b,), span)?,
             PyLiteral::Str(s) => ctx.ast_node("Constant", (s,), span)?,
             PyLiteral::None => ctx.ast_node("Constant", (ctx.py.None(),), span)?,
