@@ -3,9 +3,9 @@ import json
 import re
 
 word_count = url =>
-    let result = @Async
-        .from_sync(() => try requests.get(url))
-        .fuse()
+    let result = @Result.T(
+        Async.from_sync(() => try requests.get(url))
+    )
 
     let counts = result
         .text
@@ -27,4 +27,4 @@ books = {
 let rec = books.map([key, value] => (key, @word_count(value))).traverse().run()
     | Record
 
-print(rec)
+rec.for_each(print)

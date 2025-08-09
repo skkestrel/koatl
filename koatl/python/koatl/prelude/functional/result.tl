@@ -1,7 +1,7 @@
 import functools.wraps
-import .algebra.(Identity, FusableMonadOnce)
+import .algebra.(Identity, MonadOnce)
 
-export Result = class(FusableMonadOnce):
+export Result = class(MonadOnce):
     __slots__ = ()
     __match_args__ = ("value",)
 
@@ -23,10 +23,10 @@ export Result = class(FusableMonadOnce):
         except BaseException() as e:
             return Err(e)
 
-    fused_bind_once = (self, f, outer_type) =>
+    bind_once = (self, f) =>
         self = Result(self)
         if not self.ok:
-            return outer_type.pure(self)
+            return self
 
         f(self.value)
 
@@ -72,6 +72,29 @@ export Result = class(FusableMonadOnce):
             return Err(f())
         return self
 
+    T = class(MonadOnce):
+        __slots__ = ("value",)
+        __init__ = (self, value) =>
+            if not hasattr(value, "bind_once"):
+                raise TypeError("Expected a MonadOnce value")
+
+            self.value = value
+
+        __repr__ = self => f"Result.T({repr(self.value)})"
+
+        pure = (self, x) => self.value.pure(Result.pure(x))
+
+        bind_once = (self, f) =>
+            self.value.bind_once(x =>
+                x = Result(x)
+
+                if not x.ok:
+                    return self.value.pure(x)
+
+                f(x.value)
+            )
+
+
 export Ok = class(Result):
     __slots__ = ("value",)
     ok = True
@@ -92,6 +115,7 @@ export Ok = class(Result):
     __repr__ = self => f"Ok({repr(self.value)})"
     unwrap = self => self.value
     coalesce = (self, f) => self.value
+
 
 export Err = class(Result):
     __slots__ = ("value",)

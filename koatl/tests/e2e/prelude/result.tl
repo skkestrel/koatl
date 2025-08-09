@@ -29,13 +29,13 @@ fn()
 assert_eq(v, [123, None])
 
 
-# Result fusion
+# Result transformer with Result
 
 v = []
 fn = () =>
-    v.append(@Ok(Ok(123)).fuse())
-    v.append(@Ok(Err()).fuse())
-    v.append(@Ok(Ok(321)).fuse())
+    v.append(@Result.T(Ok(Ok(123))))
+    v.append(@Result.T(Ok(Err())))
+    v.append(@Result.T(Ok(Ok(321))))
 
 assert_eq(
     fn()
@@ -49,9 +49,9 @@ assert_eq(
 
 v = []
 fn = () =>
-    v.append(@Ok(Ok(123)).fuse())
-    v.append(@Err().fuse())
-    v.append(@Ok(Ok(123)).fuse())
+    v.append(@Result.T(Ok(Ok(123))))
+    v.append(@Result.T(Err()))
+    v.append(@Result.T(Ok(Ok(123))))
 
 assert_eq(
     fn()
@@ -63,13 +63,13 @@ assert_eq(
     [123]
 )
 
-# Await fusion
+# Result transformer with Async
 
 v = []
 fn = () =>
-    v.append(@Async(Async.from_sync(() => Ok(123))).fuse())
-    v.append(@Async(Async.from_sync(() => Err())).fuse())
-    v.append(@Async(Async.from_sync(() => Ok(321))).fuse())
+    v.append(@Result.T(Async(Async.from_sync(() => Ok(123)))))
+    v.append(@Result.T(Async(Async.from_sync(() => Err()))))
+    v.append(@Result.T(Async(Async.from_sync(() => Ok(321)))))
 
 assert_eq(
     fn().run()
@@ -84,9 +84,9 @@ assert_eq(
 
 v = []
 fn = () =>
-    v.append(@Async(Async.from_sync(() => Ok(123))).fuse())
-    v.append(@Async(Async.from_sync(() => Ok(321))).fuse())
-    v.append(@Async(Async.from_sync(() => Err())).fuse())
+    v.append(@Result.T(Async(Async.from_sync(() => Ok(123)))))
+    v.append(@Result.T(Async(Async.from_sync(() => Ok(321)))))
+    v.append(@Result.T(Async(Async.from_sync(() => Err()))))
 
 assert_eq(
     fn().run()

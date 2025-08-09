@@ -122,6 +122,10 @@ export Iterable = ExtensionTrait& class(Traversable, Trait):
             acc = acc + i
         acc
 
+    for_each = (self, f) =>
+        for i in self:
+            f(i)
+
     list = self =>
         list(self.iter)
 
