@@ -1,7 +1,7 @@
 import functools.wraps
-import .algebra.MonadOnce
+import .algebra.(Identity, FusableMonadOnce)
 
-export Result = class(MonadOnce):
+export Result = class(FusableMonadOnce):
     __slots__ = ()
     __match_args__ = ("value",)
 
@@ -23,14 +23,12 @@ export Result = class(MonadOnce):
         except BaseException() as e:
             return Err(e)
 
-    bind_once = (self, f) =>
+    fused_bind_once = (self, f, outer_type) =>
         self = Result(self)
         if not self.ok:
-            return self
+            return outer_type.pure(self)
 
-        let v = Result(f(self.value))
-
-    bind = bind_once
+        f(self.value)
 
     bind_gen = (self, gen) =>
         self = Result(self)
@@ -123,11 +121,9 @@ ExtensionProperty(object, "ok")& _ => True
 
 ExtensionProperty(object, "result")& Result
 
-# Enables @ operator for bare objects.
-ExtensionMethod(object, "bind_gen")& Result.bind_gen
-
 __tl__.Ok = Ok
 __tl__.Err = Err
+__tl__.Result = Result
 
 __tl__.op_coal = (x, f) =>
     if x matches Result():

@@ -1,4 +1,5 @@
 import re
+from .virtual import vget
 
 __all__ = ["Record"]
 
@@ -11,9 +12,7 @@ class Record(dict):
         try:
             return self[name]
         except KeyError:
-            raise AttributeError(
-                f"'{type(self).__name__}' object has no attribute '{name}'"
-            ) from None
+            return super().__getattr__(name)
 
     def _repr_with_visited(self, visited):
         # Handle cycles by checking if this object is already being processed
@@ -46,9 +45,11 @@ class Record(dict):
             visited.remove(obj_id)
 
     def _format_key(self, key):
-        if isinstance(key, str) and self._is_identifier(key):
-            # If key is an identifier, drop the quotes
-            return key
+        if isinstance(key, str):
+            if self._is_identifier(key):
+                # If key is an identifier, drop the quotes
+                return key
+            return f'"{key}"'
 
         elif isinstance(key, (int, float, bool, type(None))):
             # If key is a literal like 0, 1, True, False, None, use repr

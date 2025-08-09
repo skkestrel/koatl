@@ -19,6 +19,8 @@ export List = class(Monad):
 
     pure = staticmethod& x => [x]
 
+    len = TraitProperty& self => len(self)
+
 
 for name, method in List.__dict__:
     if name.startswith("_"):

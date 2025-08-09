@@ -8,9 +8,23 @@ export Iterable = ExtensionTrait& class(Traversable, Trait):
 
     skip = (self, n) =>
         let it = self.iter
-        for _ in range(n):
+        for _ in ..n:
             next(it, None)
         it
+
+    take = (self, n) =>
+        let impl = () =>
+            let it = self.iter
+            for _ in ..n:
+                try:
+                    yield next(it)
+                except StopIteration(value=value):
+                    return value
+
+        impl.__name__ = f"take"
+        impl.__qualname__ = f"Iterable.take"
+
+        impl()
 
     chain = (self, *others) =>
         itertools.chain(self.iter, *others.map($.iter))
@@ -44,19 +58,28 @@ export Iterable = ExtensionTrait& class(Traversable, Trait):
         acc
 
     associate = (self, f) =>
-        let acc = {}
+        let acc = dict() # Don't use Record here.
         for i in self:
             let value = f(i)
             acc[i] = value
         acc
 
     group_by = (self, f) =>
-        let acc = {}
+        let acc = dict()
         for i in self:
             let key = f(i)
             if not acc.__contains__(key):
                 acc[key] = []
             acc[key].append(i)
+        acc
+
+    count_by = (self, f) =>
+        let acc = dict()
+        for i in self:
+            let key = f(i)
+            if not acc.__contains__(key):
+                acc[key] = 0
+            acc[key] += 1
         acc
 
     all = (self, f) =>
@@ -105,8 +128,11 @@ export Iterable = ExtensionTrait& class(Traversable, Trait):
     record = self =>
         Record(self.iter)
 
-    traverse = (self, f) =>
+    traverse = (self, f=None) =>
         import .functional.(Async, Result)
+
+        if f === None:
+            f = x => x
 
         let it = self.iter
         let v

@@ -16,6 +16,9 @@ export Async = class(MonadOnce):
         m.generator = generator_fn(*args, **kwargs)
         return m
 
+    from_sync = staticmethod& (f, *args, **kwargs) => Async.from_generator_fn& () =>
+        yield from asyncio.get_running_loop().run_in_executor(None, () => f(*args, **kwargs))
+
     run = self => asyncio.run(async_util.to_coro(self))
 
     bind_once = (self, f) => Async.from_generator_fn& () =>

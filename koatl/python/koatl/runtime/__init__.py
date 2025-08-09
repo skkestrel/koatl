@@ -48,6 +48,7 @@ __tl__ = SimpleNamespace(
     op_coal=("??"),
     Ok=dummy("try-expr"),
     Err=dummy("try-expr"),
+    Result=dummy("do"),
     **{name: helpers.__dict__[name] for name in helpers.__all__},
     **{name: record.__dict__[name] for name in record.__all__},
     **{name: virtual.__dict__[name] for name in virtual.__all__},

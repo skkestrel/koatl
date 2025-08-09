@@ -1,6 +1,5 @@
 from functools import wraps
 from .virtual import vget
-from .record import Record
 
 
 __all__ = ["MatchError"]
@@ -76,7 +75,13 @@ def do(f):
 
             bind_gen = vget(m, "bind_gen")
         except AttributeError:
-            return vget(m, "bind_once")(recurse)
+            try:
+                return vget(m, "bind_once")(recurse)
+            except AttributeError:
+                # Fallback to Result if m is not a monadic type
+                from . import __tl__
+
+                bind_gen = __tl__.Result(m).bind_gen
 
         return bind_gen(gen)
 
