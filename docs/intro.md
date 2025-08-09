@@ -32,13 +32,13 @@
 >>> ["key0", "key1"].map(x => try { key0: "Queried value" }[x] ?? "Default").list()
 ["Queried value", "Default"]
 
->>> let fib = x => x < 2 then Memo.pure(1) else memo @fib(x - 1) + @fib(x - 2)
->>> #                                           ^    ^             ^
->>> #                                           |    use monadic bind to nest
->>> #          Memoize arbitrary expressions    |              memo functions
->>> #    in functions with automatic dependency detection
+>>> let fib = x => x < 2 then @Memo.pure(1) else memo @fib(x - 1) + @fib(x - 2)
+>>> #                                            ^    ^             ^
+>>> #                                            |    use monadic bind to nest
+>>> #           Memoize arbitrary expressions    |              memo functions
+>>> #     in functions with automatic dependency detection
 
->>> fib(500).run()
+>>> fib(200).run()
 453973694165307953197296969697410619233826
 
 >>> # ...and much, much more!

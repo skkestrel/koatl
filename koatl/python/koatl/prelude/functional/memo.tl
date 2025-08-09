@@ -64,7 +64,7 @@ export Memo = class(MonadOnce):
     bind_once = (self, f) => Memo(ctx =>
         let value = f(self.f(ctx))
         if value matches Memo():
-            value = value.f(ctx)
+            return value.f(ctx)
         value
     )
 

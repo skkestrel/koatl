@@ -99,10 +99,13 @@ export FusedMonadOnce = class(MonadOnce):
                 f"Expected {self.inner_type}, got {type(inner)}"
             )
 
+        if not hasattr(inner, "fused_bind_once"):
+            raise TypeError(
+                f"Inner monad {self.inner_type} is not fusable."
+            )
+
         inner.fused_bind_once(f, type(self.outer))
     )
-
-    # TODO: how to implement bind_gen?
 
 export Identity = class(MonadOnce):
     __init__ = (self, *args, **kwargs) => raise ValueError(

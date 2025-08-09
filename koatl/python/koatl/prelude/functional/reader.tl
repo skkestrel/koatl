@@ -11,9 +11,8 @@ export Reader = class(MonadOnce):
     bind_once = (self, f) => Reader& ctx =>
         let v = f(self.fn(ctx))
         if v matches Reader():
-            v.fn(ctx)
-        else:
-            v
+            return v.fn(ctx)
+        v
 
     bind_gen = (self, gen) => Reader& ctx =>
         try:

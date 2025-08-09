@@ -55,11 +55,10 @@ def do(f):
         try:
             m = gen.send(None)
         except StopIteration as e:
-            if not hasattr(e.value, "bind_once"):
-                raise ValueError(
-                    "This do-block returned a bare value before it could infer the monadic type. Wrap the value in pure()."
-                ) from None
-            return e.value
+            raise ValueError(
+                "Returning before `@` is not allowed. "
+                "Use `return @MonadType.pure(value)` instead."
+            ) from None
 
         def recurse(v):
             nonlocal m

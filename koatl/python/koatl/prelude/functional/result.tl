@@ -39,7 +39,7 @@ export Result = class(FusableMonadOnce):
 
                 self = Result(gen.send(self.value))
         except StopIteration(value=value):
-            return Result.pure(value)
+            return Result(value)
 
     pure = staticmethod& x => Ok(x)
 
