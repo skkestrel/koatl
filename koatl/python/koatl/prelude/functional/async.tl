@@ -20,15 +20,17 @@ export Async = class(MonadOnce):
     bind_once = (self, f) => Async.from_generator_fn& () =>
         let result = f(yield from self.__await__())
 
-        if hasattr(result, "__await__"):
-            return yield from result.__await__()
+        if not hasattr(result, "__await__"):
+            raise ValueError(f"Expected the binder to return an Awaitable, but got {type(result).__name__}")
 
-        result
+        yield from result.__await__()
 
     bind_gen = (self, gen) => Async.from_generator_fn& () =>
         try:
             while True:
                 self = gen.send(yield from self.__await__())
+                if not hasattr(self, "__await__"):
+                    raise ValueError(f"Expected the binder to return an Awaitable, but got {type(self).__name__}")
         except StopIteration(value=value):
             return value
 

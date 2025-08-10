@@ -19,6 +19,7 @@ def f():
 
 Due to limitations of generators (they can't be copied), `@` specifically requires `bind_once(self, f)` instead of the usual `bind(self, f)`;
 the difference is that `f` should called at most once in `bind_once(self, f)`.
+This represents a deterministic monad, ruling out the List monad.
 
 ## Memo
 
@@ -63,22 +64,22 @@ The Result monad represents error handling and early return:
 
 ```koatl
 f = () =>
-    x = @get_some_value_or_none()
-    y = @get_some_other_value_or_error(x)
+    x = @get_some_value()
+    y = @get_some_other_value(x)
     x + y
 
 print(f())
 ```
 
-can be thought of as
+is similar to
 
 ```python
 def f():
-    x = get_some_value_or_none()
+    x = get_some_value()
     if isinstance(x, (NoneType, BaseException)):
-        return
+        return x
 
-    y = get_some_other_value_or_error(x)
+    y = get_some_other_value(x)
     if isinstance(x, (NoneType, BaseException)):
         return y
 
