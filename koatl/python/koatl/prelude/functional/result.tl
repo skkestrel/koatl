@@ -102,8 +102,8 @@ export Ok = class(Result):
     __init__ = (self, value) =>
         if hasattr(self, "value"):
             # This is necessary to prevent overwriting the value
-            # since Python's Result.__new__ will call Ok.__init__ again
-            # if the object is already created.
+            # since Python's Result.__new__ will call Ok.__init__ again,
+            # in the case we call Result(Ok(value))
             return None
         self.value = value
 

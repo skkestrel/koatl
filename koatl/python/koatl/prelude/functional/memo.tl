@@ -2,7 +2,7 @@ import collections.defaultdict
 import functools.wraps
 
 import .algebra.(MonadOnce, Identity)
-import .result.(Result, Ok)
+import .result.(Result, Ok, Err)
 import .env.Env
 
 export Memo = class(Env):
@@ -16,6 +16,9 @@ export Memo = class(Env):
     """
 
     Cache = class:
+        """
+        Basic implementation of a cache without any eviction policy.
+        """
         __init__ = self =>
             self.cache = defaultdict(dict)
 
@@ -26,6 +29,19 @@ export Memo = class(Env):
         update = (self, name, deps, value) =>
             self.cache[name][deps] = value
             value
+
+    NullCache = class:
+        """
+        A cache that does not store any values.
+        Useful for testing or when memoization is not needed.
+        """
+        __init__ = self => None
+
+        __repr__ = self => "Memo.NullCache()"
+
+        try_get = (self, name, deps) => Err()
+
+        update = (self, name, deps, value) => value
 
     __init__ = (self, f) => self.f = f
 
@@ -75,16 +91,9 @@ export Memo = class(Env):
         let id = f"{f.__module__}.{f.__qualname__}"
         let deps = (tuple(args), tuple(kwargs.items()))
 
-        Memo(ctx =>
-            if ctx.try_get(id, deps) matches Ok(value):
-                return value
+        # Same semantics as fused_value.
+        Memo.fused_value(id, deps, () => f(*args, **kwargs))
 
-            let v = f(*args, **kwargs)
-            if v matches Memo():
-                v = v.f(ctx)
-
-            ctx.update(id, deps, v)
-        )
 
     run = (self, ctx=None) =>
         if ctx === None:
@@ -110,42 +119,6 @@ export Memo = class(Env):
         except StopIteration(value=value):
             return value
     )
-
-    T = class(MonadOnce):
-        __slots__ = ("value", "inner_type")
-
-        __init__ = (self, value, inner_type=None) =>
-            if not isinstance(value, Memo):
-                raise TypeError("Expected a Memo<MonadOnce<T>> value")
-
-            self.value = value
-            self.inner_type = inner_type
-
-        __repr__ = self => f"Memo.T({repr(self.value)})"
-
-        pure = (self, x) =>
-            if self.inner_type === None:
-                raise ValueError("Cannot call pure on Memo.T before the inner type could be inferred.")
-
-            Memo.pure(self.inner_type.pure(x))
-
-        bind_once = (self, f) =>
-            Memo(ctx =>
-                let inner = self.value.f()
-
-                if self.inner_type === None:
-                    self.inner_type = type(inner)
-
-                if not isinstance(inner, MonadOnce):
-                    raise TypeError(f"Expected a Memo<MonadOnce<T>> value, but got Memo<{self.inner_type}>")
-
-                if isinstance(inner, Memo):
-                    return inner.f(ctx)
-
-                inner.bind_once(x =>
-                    f(x)(ctx)
-                )
-            )
 
 
 __tl__.memo_value = Memo.value

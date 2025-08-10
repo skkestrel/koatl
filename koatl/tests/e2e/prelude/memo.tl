@@ -55,3 +55,23 @@ fib(35).run()
 
 # Improperly memoized fib will take much longer to run.
 assert_eq(time.time() - now < 0.1, True)
+
+
+# Memo.fn with nested monad
+
+f = Memo.fn& () =>
+    @Async.sleep(0.1)
+    123
+
+now = time.time()
+ctx = Memo.Cache()
+assert_eq(f().run(ctx).run(), 123)
+assert_eq(f().run(ctx).run(), 123)
+assert_eq(time.time() - now < 0.12, True)
+
+
+now = time.time()
+ctx = Memo.NullCache()
+assert_eq(f().run(ctx).run(), 123)
+assert_eq(f().run(ctx).run(), 123)
+assert_eq(time.time() - now > 0.19, True)
