@@ -20,6 +20,7 @@ export Monad = class(Trait):
 export MonadOnce = class(Monad, Trait):
     """
     Abstract base class for monads that don't require branching.
+    In other words, a deterministic monad.
 
     A MonadOnce only calls `f` in `bind_once` once, which is suitable for
     use with Python generators that cannot be cloned or reused.
@@ -43,11 +44,20 @@ export MonadOnce = class(Monad, Trait):
 
 
 export Identity = class(MonadOnce):
-    __init__ = (self, *args, **kwargs) => raise ValueError(
-        "Identity should not be instantiated directly. "
-    )
+    """
+    A utility class for preventing `@` from wrapping the function output.
 
-    bind_once = (self, f) => f(self)
+    The semantics are unusual:
+        - pure returns the value directly, NOT wrapped in Identity.
+        - bind_once can be called on either Identity(value) or a bare value directly.
+    """
+
+    __slots__ = ("value",)
+    __match_args__ = ("value",)
+
+    __init__ = (self, value) => self.value = value
+
+    bind_once = (self, f) => self matches Identity(value) then f(value) else f(self)
 
     pure = staticmethod& x => x
 

@@ -1,10 +1,13 @@
 import collections.defaultdict
 import functools.wraps
+
+import .algebra.(MonadOnce, Identity)
 import .result.(Result, Ok)
 import .env.Env
-import .MonadOnce
 
 export Memo = class(Env):
+    __slots__ = ("f",)
+
     """
     The Memo monad is a specialization of Env, where
     the environment is a cache that stores previously computed values.
@@ -28,15 +31,36 @@ export Memo = class(Env):
 
     __repr__ = self => f"Memo(...)"
 
-    # This needs to be special cased because if we try to use Memo.value
-    # directly, the *generator* itself gets memoized. We want to memoize
-    # the thing that that comes out of the generator.
-    bind_value = staticmethod& (id, deps, f) =>
+    # We need to handle
+    # memo @value
+    # separately, because we *don't* want to memoize the monad itself
+    # but rather the value it produces.
+    # Another way to think about it is that
+    # fused_value produces a Memo.T<MonadOnce<T>> value.
+    fused_value = staticmethod& (id, deps, f) =>
         Memo(ctx =>
-            if ctx.try_get(id, tuple(deps)) matches Ok(value):
-                return value
+            if ctx.try_get(id, tuple(deps)) matches Ok((inner_type, value)):
+                if inner_type === Memo:
+                    # This enables nesting Memo inside a memo block.
+                    # The issue is that this do-block expects a value to be bound,
+                    # but we don't want to use @Memo.pure(value) because that would
+                    # produce a Memo<Memo<T>> value.
+                    # It's very hacky, but it works.
+                    return @Identity(value)
+                else:
+                    # This gives us a Memo<MonadOnce<T>> value as normal.
+                    return @inner_type.pure(value)
 
-            ctx.update(id, tuple(deps), f().f(ctx))
+            let inner = f()
+            let inner_type = type(inner)
+
+            if isinstance(inner, Memo):
+                inner = @Identity(inner.f(ctx))
+            else:
+                inner = @inner
+
+            ctx.update(id, tuple(deps), (inner_type, inner))
+            inner
         )
 
     value = staticmethod& (id, deps, f) =>
@@ -87,5 +111,42 @@ export Memo = class(Env):
             return value
     )
 
+    T = class(MonadOnce):
+        __slots__ = ("value", "inner_type")
+
+        __init__ = (self, value, inner_type=None) =>
+            if not isinstance(value, Memo):
+                raise TypeError("Expected a Memo<MonadOnce<T>> value")
+
+            self.value = value
+            self.inner_type = inner_type
+
+        __repr__ = self => f"Memo.T({repr(self.value)})"
+
+        pure = (self, x) =>
+            if self.inner_type === None:
+                raise ValueError("Cannot call pure on Memo.T before the inner type could be inferred.")
+
+            Memo.pure(self.inner_type.pure(x))
+
+        bind_once = (self, f) =>
+            Memo(ctx =>
+                let inner = self.value.f()
+
+                if self.inner_type === None:
+                    self.inner_type = type(inner)
+
+                if not isinstance(inner, MonadOnce):
+                    raise TypeError(f"Expected a Memo<MonadOnce<T>> value, but got Memo<{self.inner_type}>")
+
+                if isinstance(inner, Memo):
+                    return inner.f(ctx)
+
+                inner.bind_once(x =>
+                    f(x)(ctx)
+                )
+            )
+
+
 __tl__.memo_value = Memo.value
-__tl__.bind_memo_value = Memo.bind_value
+__tl__.bind_memo_value = Memo.fused_value

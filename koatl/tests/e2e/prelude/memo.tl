@@ -1,4 +1,5 @@
 import util.assert_eq
+import time
 
 counts = 0
 
@@ -46,3 +47,11 @@ assert_eq(f(10, 20).run(ctx), 200)
 assert_eq(f(10, 30).run(ctx), 300)
 assert_eq(f(10, 30).run(ctx), 300)
 assert_eq(counts, 2)
+
+fib = x => x < 2 then @Memo.pure(1) else memo @fib(x - 1) + @fib(x - 2)
+
+now = time.time()
+fib(35).run()
+
+# Improperly memoized fib will take much longer to run.
+assert_eq(time.time() - now < 0.1, True)
