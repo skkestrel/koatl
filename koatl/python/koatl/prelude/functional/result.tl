@@ -1,6 +1,12 @@
 import functools.wraps
 import .algebra.(Identity, MonadOnce)
 
+infer_ok = x =>
+    x match:
+        None => False
+        BaseException() => False
+        default True
+
 export Result = class(MonadOnce):
     __slots__ = ()
     __match_args__ = ("value",)
@@ -8,7 +14,7 @@ export Result = class(MonadOnce):
     __new__ = (cls, value) =>
         if isinstance(value, Result):
             return value
-        value.ok then Ok(value) else Err(value)
+        infer_ok(value) then Ok(value) else Err(value)
 
     __init__ = (self, *args, **kwargs) =>
         raise ValueError("Result should not be instantiated directly, use Ok or Err")
@@ -24,29 +30,29 @@ export Result = class(MonadOnce):
             return Err(e)
 
     bind_once = (self, f) =>
-        self = Result(self)
         if not self.ok:
             return self
 
-        f(self.value)
+        let value = f(self.value)
+        if value matches not Result():
+            raise ValueError(f"Expected the binder to return a Result, but got {type(value)}")
+        value
 
     bind_gen = (self, gen) =>
-        self = Result(self)
         try:
             while True:
                 if not self.ok:
                     return self
 
-                self = Result(gen.send(self.value))
+                self = gen.send(self.value)
+                if self matches not Result():
+                    raise ValueError(f"Expected the binder to return a Result, but got {type(self)}")
         except StopIteration(value=value):
             return Result(value)
 
     pure = staticmethod& x => Ok(x)
 
     apply = (self, f) =>
-        self = Result(self)
-        f = Result(f)
-
         if not self.ok:
             return self
         if not f.ok:
@@ -55,44 +61,60 @@ export Result = class(MonadOnce):
         Ok(f(self))
 
     map = (self, f) =>
-        self = Result(self)
         if self.ok:
             return Ok(f(self.value))
         return self
 
     map_err = (self, f) =>
-        self = Result(self)
         if not self.ok:
             return Err(f(self.value))
         return self
 
     map_none = (self, f) =>
-        self = Result(self)
         if not self.ok and self.value === None:
             return Err(f())
         return self
 
-    T = class(MonadOnce):
-        __slots__ = ("value",)
-        __init__ = (self, value) =>
-            if not hasattr(value, "bind_once"):
-                raise TypeError("Expected a MonadOnce value")
+    T = (typ) =>
+        """
+        TODO: cache the Result.T class to avoid creating it every time?
+        """
+        if not isinstance(typ, type):
+            raise ValueError(f"Expected a type, but got {type(typ).__name__}")
 
-            self.value = value
+        let cls = class(MonadOnce):
+            __slots__ = ("value",)
+            __init__ = (self, value) =>
+                if not isinstance(value, typ):
+                    raise ValueError(f"Expected a {typ}, but got {type(value).__name__}")
 
-        __repr__ = self => f"Result.T({repr(self.value)})"
+                self.value = value
 
-        pure = (self, x) => self.value.pure(Result.pure(x))
+            __repr__ = self => f"Result.T({typ.__name__})({repr(self.value)})"
 
-        bind_once = (self, f) =>
-            self.value.bind_once(x =>
-                x = Result(x)
+            pure = (self, x) => cls(typ.pure(Result.pure(x)))
 
-                if not x.ok:
-                    return self.value.pure(x)
+            bind_once = (self, f) =>
+                cls(self.value.bind_once(x =>
+                    if not isinstance(x, Result):
+                        raise ValueError(f"Expected the inner type to be a Result, but got {type(x).__name__}")
 
-                f(x.value)
-            )
+                    if not x.ok:
+                        return typ.pure(x)
+
+                    let value = f(x.value)
+                    if not hasattr(value, "value"):
+                        raise ValueError(
+                            f"Expected the binder to return a {cls.__name__}, " +
+                                f"but got a {type(value).__name__}"
+                        )
+
+                    value.value
+                ))
+
+        cls.__name__ = f"Result.T({typ.__name__})"
+        cls.__qualname__ = f"Result.T({typ.__name__})"
+        cls
 
 
 export Ok = class(Result):
@@ -135,13 +157,8 @@ export Err = class(Result):
     unwrap = self =>
         if self.value matches BaseException():
             raise self.value
-        raise ValueError(f"Expected Ok, got {repr(self.value)}")
+        raise ValueError(f"Expected Ok, got {repr(self)}")
     coalesce = (self, f) => f()
-
-
-ExtensionProperty(type(None), "ok")& _ => False
-ExtensionProperty(BaseException, "ok")& _ => False
-ExtensionProperty(object, "ok")& _ => True
 
 ExtensionProperty(object, "result")& Result
 
@@ -153,7 +170,7 @@ __tl__.op_coal = (x, f) =>
     if x matches Result():
         return x.coalesce(f)
 
-    if not x.ok:
+    if not infer_ok(x):
         return f()
     return x
 
@@ -161,6 +178,6 @@ __tl__.op_map = (x, f) =>
     if x matches Result():
         return x.map(f)
 
-    if x.ok:
+    if infer_ok(x):
         return f(x)
     return x

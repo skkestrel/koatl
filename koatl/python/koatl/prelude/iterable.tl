@@ -163,9 +163,11 @@ export Iterable = ExtensionTrait& class(Traversable, Trait):
 
         # TODO: can special case traversals be generalized?
 
+        if not hasattr(m, "apply"):
+            raise ValueError(f"Can only traverse with an Applicative type.")
+
         # The Result traversal of a list is short-circuiting.
-        # Fall back to Result semantics for bare types.
-        if m matches Result() or not hasattr(m, "apply"):
+        if m matches Result():
             if not m.ok:
                 return m
 

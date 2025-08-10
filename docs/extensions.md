@@ -45,10 +45,6 @@ it always delegates to `items()` if possible (to make dict iteration more sane) 
 
 `koatl.prelude.iterable.Iterable` is automatically registered as an extension trait for all types with an `iter`, and provides common methods for working with iterators.
 
-## The builtin `ok`, `result`, `bind` extensions
-
-`bind` provides a default Monad implementation in the Result monad to _all_ objects (see [Monads](monads)).
-
-`.ok` is an extension property that is False for Exception types and None, and True for everything else.
+## The builtin `result` extension property
 
 `.result` wraps any object in a `Result`.

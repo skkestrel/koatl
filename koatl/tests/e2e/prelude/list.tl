@@ -20,8 +20,8 @@ assert_eq(time.time() - now < 0.3, True)
 # Bare Result traversal should not be wrapped in Ok.
 
 assert_eq(
-    [1, 2, 3].traverse(x => x + 1)
-    [2, 3, 4]
+    [1, 2, 3].traverse(x => Ok(x + 1))
+    [2, 3, 4].map(Ok).list()
 )
 
 counts = 0
