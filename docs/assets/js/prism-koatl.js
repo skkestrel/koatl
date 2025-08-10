@@ -32,7 +32,7 @@
 	keyword:
 		/\b(?:_(?=\s*:)|memo|let|const|export|matches|default|then|and|as|assert|break|case|class|continue|else|except|exec|finally|for|from|global|if|import|in|is|match|not|or|pass|print|raise|return|try|while|with|yield)\b/,
 	builtin:
-		/\b(?:__import__|Async|Reader|Memo|Ok|Err|Record|abs|callable|classmethod|complex|dict|eval|float|format|frozenset|getattr|globals|hasattr|hash|help|hex|int|iter|len|list|locals|long|max|min|next|object|property|repr|round|set|setattr|staticmethod|str|super|tuple|type)\b/,
+		/\b(?:__import__|Async|Env|Memo|Ok|Err|Result|Record|abs|callable|classmethod|complex|dict|eval|float|format|frozenset|getattr|globals|hasattr|hash|help|hex|int|iter|len|list|locals|long|max|min|next|object|property|repr|round|set|setattr|staticmethod|str|super|tuple|type)\b/,
 	boolean: /\b(?:False|None|True)\b/,
 	number: /\b0(?:b(?:_?[01])+|o(?:_?[0-7])+|x(?:_?[a-f0-9])+)\b|(?:\b\d+(?:_\d+)*(?:\.(?:\d+(?:_\d+)*)?)?|\B\.\d+(?:_\d+)*)(?:e[+-]?\d+(?:_\d+)*)?j?(?!\w)/i,
 	operator: /[-+%=]=?|!=|:=|\*\*?=?|\/\/?=?|<[<=>]?|>[=>]?|[&|^~]/,

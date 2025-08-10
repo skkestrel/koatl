@@ -1,9 +1,17 @@
 import collections.defaultdict
 import functools.wraps
 import .result.(Result, Ok)
+import .env.Env
 import .MonadOnce
 
-export Memo = class(MonadOnce):
+export Memo = class(Env):
+    """
+    The Memo monad is a specialization of Env, where
+    the environment is a cache that stores previously computed values.
+    It is used to memoize computations, allowing for efficient reuse of results
+    without recomputing them.
+    """
+
     Cache = class:
         __init__ = self =>
             self.cache = defaultdict(dict)

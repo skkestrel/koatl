@@ -130,9 +130,9 @@ refreshed!
 >>> await f()
 ```
 
-## Reader
+## Env
 
-The Reader monad allows interfacing with an external context object.
+The Env monad allows interfacing with an external context object.
 Instead of having to pass around a context object as an explicit parameter:
 
 ```koatl
@@ -145,16 +145,14 @@ f = ctx =>
 f(ctx)
 ```
 
-We can use the Reader monad:
+We can use the Env monad:
 
 ```koatl
-{ ask } = Reader
-
 g = () =>
-    @ask("third_num")
+    @Env.item("third_num")
 
 f = () =>
-    @ask("first_num") + @ask("second_num") + @g()
+    @Env.item("first_num") + @Env.item("second_num") + @g()
 
 f().run(ctx)
 ```
