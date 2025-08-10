@@ -155,7 +155,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
                 b.traverse(ctx);
                 Type::Any
             }
-            Expr::Await(expr) | Expr::Yield(expr) | Expr::Memo(expr) | Expr::YieldFrom(expr) => {
+            Expr::Await(expr) | Expr::Yield(expr) | Expr::Memo(expr, _) | Expr::YieldFrom(expr) => {
                 expr.traverse(ctx);
                 Type::Any
             }

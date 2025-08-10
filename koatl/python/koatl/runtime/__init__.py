@@ -43,6 +43,7 @@ __tl__ = SimpleNamespace(
     # These require more complex logic and require the prelude.
     # The runtime provides dummy implementations that raise if used without the prelude.
     memo_value=dummy("memo"),
+    async_memo_value=dummy("memo"),
     op_map=dummy("?"),
     op_coal=("??"),
     Ok=dummy("try-expr"),

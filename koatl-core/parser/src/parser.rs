@@ -1074,10 +1074,19 @@ where
     })
     .labelled("control-expression");
 
+    let async_memo_expr = just(Token::Ident("async"))
+        .then(just(Token::Ident("memo")))
+        .then(just(START_BLOCK).or_not())
+        .ignore_then(expr_or_inline_stmt_or_block.clone())
+        .map(|x| Expr::Memo(x.indirect(), true))
+        .spanned_expr()
+        .labelled("async-memo-expression")
+        .boxed();
+
     let memo_expr = just(Token::Ident("memo"))
         .then(just(START_BLOCK).or_not())
         .ignore_then(expr_or_inline_stmt_or_block.clone())
-        .map(|x| Expr::Memo(x.indirect()))
+        .map(|x| Expr::Memo(x.indirect(), false))
         .spanned_expr()
         .labelled("memo-expression")
         .boxed();
@@ -1085,6 +1094,7 @@ where
     atom.define(
         choice((
             memo_expr,
+            async_memo_expr,
             ident_expr.clone(),
             classic_if,
             classic_match,

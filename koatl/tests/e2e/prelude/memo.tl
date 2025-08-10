@@ -57,21 +57,34 @@ fib(35).run()
 assert_eq(time.time() - now < 0.1, True)
 
 
-# Memo.fn with nested monad
+# async memo
 
-f = Memo.fn& () =>
+f = () =>
+    async memo:
+        @Async.sleep(0.1)
+        123
+
+now = time.time()
+ctx = Memo.Cache()
+assert_eq(f().run(ctx), 123)
+assert_eq(f().run(ctx), 123)
+assert_eq(time.time() - now < 0.12, True)
+
+# AsyncMemo.fn
+
+f = AsyncMemo.fn& () =>
     @Async.sleep(0.1)
     123
 
 now = time.time()
 ctx = Memo.Cache()
-assert_eq(f().run(ctx).run(), 123)
-assert_eq(f().run(ctx).run(), 123)
+assert_eq(f().run(ctx), 123)
+assert_eq(f().run(ctx), 123)
 assert_eq(time.time() - now < 0.12, True)
 
 
 now = time.time()
 ctx = Memo.NullCache()
-assert_eq(f().run(ctx).run(), 123)
-assert_eq(f().run(ctx).run(), 123)
+assert_eq(f().run(ctx), 123)
+assert_eq(f().run(ctx), 123)
 assert_eq(time.time() - now > 0.19, True)

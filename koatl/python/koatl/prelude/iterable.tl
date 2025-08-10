@@ -1,7 +1,6 @@
 import itertools
 import builtins
-import .functional.Traversable
-import .functional.(Ok, Err, Memo)
+import .functional.(Traversable, Ok, Err, Memo, Async, AsyncMemo)
 
 export Iterable = ExtensionTrait& class(Traversable, Trait):
     iter = Abstract
@@ -185,23 +184,14 @@ export Iterable = ExtensionTrait& class(Traversable, Trait):
                 acc.append(f(v))
             return Async.gather(*acc)
 
-        # Need to special case Memo here, because Memo<Async<T>> has unusual
-        # fusion semantics, which is treated as Memo.T<Async<T>>.
-        # Ideally, Memo.T<Async<T>> would be a distinct type,
-        # but the `memo` keyword is currently not able to figure that out.
-        # (I think this kind of special casing is unavoidable without strong typing.)
-        if m matches Memo():
-            return Memo(ctx =>
+        if m matches AsyncMemo():
+            return AsyncMemo(ctx =>
                 let acc = [m.f(ctx)]
-                let is_async = acc[0] matches Async()
 
                 for v in it:
                     acc.append(f(v).f(ctx))
 
-                if is_async:
-                    return Async.gather(*acc)
-                else:
-                    return acc
+                return Async.gather(*acc)
             )
 
         # Fall back to default applicative semantics.

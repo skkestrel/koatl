@@ -1134,7 +1134,7 @@ fn make_fn_exp<'src, 'ast>(
     } = pre.bind(prepare_py_fn(ctx, def, span)?);
     let a = PyAstBuilder::new(*span);
 
-    if body.0.len() == 1 {
+    if body.0.len() == 1 && !async_ {
         // TODO maybe refactor prepare_py_fn to return body_stmts as PyExprWithPre instead of pattern matching Return
 
         if let PyStmt::Return(_) = &body.0[0].value {
@@ -1979,7 +1979,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
 
                 a.binary(py_op, lhs, rhs)
             }
-            Expr::Memo(expr) => {
+            Expr::Memo(expr, is_async) => {
                 let memo_captures =
                     ctx.memo_fninfo.get(&expr.as_ref().into()).ok_or_else(|| {
                         simple_err(
@@ -2031,7 +2031,11 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 let linecol = ctx.line_cache.linecol(span.start);
 
                 let memo_call = a.call(
-                    a.tl_builtin("memo_value"),
+                    if *is_async {
+                        a.tl_builtin("async_memo_value")
+                    } else {
+                        a.tl_builtin("memo_value")
+                    },
                     vec![
                         PyCallItem::Arg(a.str(format!(
                             "{}:{}:{}:{:08x}",

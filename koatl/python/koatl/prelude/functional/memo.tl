@@ -13,11 +13,6 @@ export Memo = class(MonadOnce):
     the environment is a cache that stores previously computed values.
     It is used to memoize computations, allowing for efficient reuse of results
     without recomputing them.
-
-    As a special case, memoized Async computations are fused together
-    with the Memo, behaving like a Memo.T<Async<T>>.
-    (However, the type is still Memo<Async<T>>.)
-    Unfortunately, this is a source of much confusion...
     """
 
     Cache = class:
@@ -62,38 +57,26 @@ export Memo = class(MonadOnce):
         If the value is not cached, it will compute the value using f and cache it.
         """
         Memo(ctx =>
-            if ctx.try_get(id, tuple(deps)) matches Ok((inner_type, value)):
-                if inner_type === None or inner_type === Memo:
-                    # Non-monadic cached values, or Memo cached values, shouldn't
-                    # wrap the output in a monadic type.
-                    return @Identity(value)
-                else:
-                    return @inner_type.pure(value)
+            if ctx.try_get(id, tuple(deps)) matches Ok(value):
+                return value
 
             let inner = f()
             let inner_type
 
             if isinstance(inner, Memo):
-                # Fuse Memo<Memo<T>> into Memo<T>.
-                inner_type = None
-                inner = @Identity(inner.f(ctx))
-            else if isinstance(inner, Async):
-                # Fuse Memo<Async<T>>.
-                inner_type = Async
-                inner = @inner
-            else:
-                inner_type = None
-                inner = @Identity(inner)
+                # Collapse Memo<Memo<T>> into Memo<T>.
+                # Usually, this should only happen inside .flat(),
+                # but since we don't have type inference,
+                # we need to do it here to nesting memo inside memo.
+                inner = inner.f(ctx)
 
-            ctx.update(id, tuple(deps), (inner_type, inner))
-            inner
+            ctx.update(id, tuple(deps), inner)
         )
 
     fn = staticmethod& f => wraps(f)& (*args, **kwargs) =>
         let id = f"{f.__module__}.{f.__qualname__}"
         let deps = (tuple(args), tuple(kwargs.items()))
         Memo.value(id, deps, () => f(*args, **kwargs))
-
 
     run = (self, ctx=None) =>
         if ctx === None:
@@ -103,14 +86,7 @@ export Memo = class(MonadOnce):
     pure = staticmethod& value => Memo(ctx => value)
 
     bind_once = (self, f) => Memo(ctx =>
-        let inner = self.f(ctx)
-
-        if isinstance(inner, Async):
-            inner = @inner
-        else:
-            inner = @Identity(inner)
-
-        let value = f(inner)
+        let value = f(self.f(ctx))
 
         if value matches not Memo():
             raise ValueError(f"Expected the binder to return a Memo, but got {type(value)}")
@@ -122,11 +98,6 @@ export Memo = class(MonadOnce):
         try:
             while True:
                 let inner = self.f(ctx)
-                if isinstance(inner, Async):
-                    inner = @inner
-                else:
-                    inner = @Identity(inner)
-
                 self = gen.send(inner)
 
                 if self matches not Memo():
@@ -137,4 +108,80 @@ export Memo = class(MonadOnce):
     )
 
 
+
+export AsyncMemo = class(MonadOnce):
+    """
+    Like Memo, but fuses Async computations with the Memo itself.
+    """
+
+    __slots__ = ("f",)
+
+    __init__ = (self, f) => self.f = f
+
+    __repr__ = self => f"AsyncMemo(...)"
+
+    value = staticmethod& (id, deps, f) =>
+        """
+        Like Memo.value, but we need to cache the result of the Async.
+        """
+        AsyncMemo(ctx =>
+            # This pauses the generator to wait for an Async context.
+            # This allows with_ctx to work a little bit better with memoization,
+            # deferring the cache lookup until we are in an async context.
+            @Async.pure(None)
+
+            if ctx.try_get(id, tuple(deps)) matches Ok(value):
+                return value
+
+            let inner = f()
+            let inner_type
+
+            if isinstance(inner, Memo):
+                inner = inner.f(ctx)
+
+            if not isinstance(inner, Async):
+                raise ValueError(f"Expected the inner computation to be Async, but got {type(inner)}")
+
+            inner = @inner
+
+            ctx.update(id, tuple(deps), inner)
+        )
+
+    fn = staticmethod& f => wraps(f)& (*args, **kwargs) =>
+        let id = f"{f.__module__}.{f.__qualname__}"
+        let deps = (tuple(args), tuple(kwargs.items()))
+        AsyncMemo.value(id, deps, () => f(*args, **kwargs))
+
+    run = (self, ctx=None) =>
+        if ctx === None:
+            ctx = Memo.Cache()
+        self.f(ctx).run()
+
+    with_ctx = (self, ctx) => self.f(ctx)
+
+    pure = staticmethod& value => AsyncMemo(ctx => Async.pure(value))
+
+    bind_once = (self, f) => AsyncMemo(ctx =>
+        let value = f(@self.f(ctx))
+
+        if value matches not AsyncMemo():
+            raise ValueError(f"Expected the binder to return a Memo, but got {type(value)}")
+
+        return value.f(ctx)
+    )
+
+    bind_gen = (self, gen) => AsyncMemo(ctx =>
+        try:
+            while True:
+                let inner = @self.f(ctx)
+                self = gen.send(inner)
+
+                if self matches not AsyncMemo():
+                    raise ValueError(f"Expected the binder to return a Memo, but got {type(value)}")
+
+        except StopIteration(value=value):
+            return value
+    )
+
 __tl__.memo_value = Memo.value
+__tl__.async_memo_value = AsyncMemo.value

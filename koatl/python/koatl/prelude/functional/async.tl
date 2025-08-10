@@ -1,7 +1,6 @@
 import functools.wraps
 import asyncio
 
-import .async_util
 import .MonadOnce
 
 export Async = class(MonadOnce):
@@ -16,7 +15,7 @@ export Async = class(MonadOnce):
         m.generator = generator_fn(*args, **kwargs)
         return m
 
-    run = self => asyncio.run(async_util.to_coro(self))
+    run = self => asyncio.run((() => await self)())
 
     bind_once = (self, f) => Async.from_generator_fn& () =>
         let result = f(yield from self.__await__())

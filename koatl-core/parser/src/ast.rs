@@ -204,7 +204,7 @@ pub enum Expr<'a, TTree: Tree> {
     Await(TTree::Expr),
     Yield(TTree::Expr),
     YieldFrom(TTree::Expr),
-    Memo(TTree::Expr),
+    Memo(TTree::Expr, bool),
 
     If(TTree::Expr, TTree::Expr, Option<TTree::Expr>),
     Match(TTree::Expr, Vec<MatchCase<TTree>>),

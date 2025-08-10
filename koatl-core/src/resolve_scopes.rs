@@ -1429,7 +1429,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 Expr::Unary(unary_op, expr.traverse(state))
             }
-            Expr::Memo(inner) => {
+            Expr::Memo(inner, is_async) => {
                 state.set_do(span);
 
                 let mut scope = Scope::new(Some(state.top_scope_key()));
@@ -1454,7 +1454,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 state.memo_fninfo.insert(inner.as_ref().into(), fn_ctx);
 
-                Expr::Memo(inner)
+                Expr::Memo(inner, is_async)
             }
             Expr::Await(x) => {
                 state.set_async(span);
