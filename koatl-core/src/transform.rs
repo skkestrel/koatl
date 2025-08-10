@@ -2031,11 +2031,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 let linecol = ctx.line_cache.linecol(span.start);
 
                 let memo_call = a.call(
-                    if memo_captures.is_do {
-                        a.tl_builtin("bind_memo_value")
-                    } else {
-                        a.tl_builtin("memo_value")
-                    },
+                    a.tl_builtin("memo_value"),
                     vec![
                         PyCallItem::Arg(a.str(format!(
                             "{}:{}:{}:{:08x}",

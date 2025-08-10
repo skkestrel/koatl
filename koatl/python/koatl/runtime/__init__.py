@@ -43,12 +43,11 @@ __tl__ = SimpleNamespace(
     # These require more complex logic and require the prelude.
     # The runtime provides dummy implementations that raise if used without the prelude.
     memo_value=dummy("memo"),
-    bind_memo_value=dummy("memo"),
     op_map=dummy("?"),
     op_coal=("??"),
     Ok=dummy("try-expr"),
     Err=dummy("try-expr"),
-    Result=dummy("do"),
+    Result=dummy("Result"),
     **{name: helpers.__dict__[name] for name in helpers.__all__},
     **{name: record.__dict__[name] for name in record.__all__},
     **{name: virtual.__dict__[name] for name in virtual.__all__},

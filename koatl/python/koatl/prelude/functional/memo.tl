@@ -53,15 +53,17 @@ export Memo = class(Env):
     # but rather the value it produces.
     # Another way to think about it is that
     # fused_value produces a Memo.T<MonadOnce<T>> value.
-    fused_value = staticmethod& (id, deps, f) =>
+    value = staticmethod& (id, deps, f) =>
         Memo(ctx =>
             if ctx.try_get(id, tuple(deps)) matches Ok((inner_type, value)):
-                if inner_type === Memo:
-                    # This enables nesting Memo inside a memo block.
-                    # The issue is that this do-block expects a value to be bound,
+                if inner_type === None or inner_type === Memo:
+                    # Non-monadic cached values, or Memo cached values, shouldn't
+                    # wrap the output in a monadic type.
+
+                    # The issue is that the present do-block expects a value to be bound,
                     # but we don't want to use @Memo.pure(value) because that would
                     # produce a Memo<Memo<T>> value.
-                    # It's very hacky, but it works.
+                    # It's hacky, but it works for now.
                     return @Identity(value)
                 else:
                     # This gives us a Memo<MonadOnce<T>> value as normal.
@@ -72,6 +74,9 @@ export Memo = class(Env):
 
             if isinstance(inner, Memo):
                 inner = @Identity(inner.f(ctx))
+            else if not hasattr(inner, "bind_once"):
+                inner_type = None
+                inner = @Identity(inner)
             else:
                 inner = @inner
 
@@ -79,20 +84,12 @@ export Memo = class(Env):
             inner
         )
 
-    value = staticmethod& (id, deps, f) =>
-        Memo(ctx =>
-            if ctx.try_get(id, tuple(deps)) matches Ok(value):
-                return value
-
-            ctx.update(id, tuple(deps), f())
-        )
-
     fn = staticmethod& f => wraps(f)& (*args, **kwargs) =>
         let id = f"{f.__module__}.{f.__qualname__}"
         let deps = (tuple(args), tuple(kwargs.items()))
 
-        # Same semantics as fused_value.
-        Memo.fused_value(id, deps, () => f(*args, **kwargs))
+        # Same semantics as Memo.value above.
+        Memo.value(id, deps, () => f(*args, **kwargs))
 
 
     run = (self, ctx=None) =>
@@ -122,4 +119,3 @@ export Memo = class(Env):
 
 
 __tl__.memo_value = Memo.value
-__tl__.bind_memo_value = Memo.fused_value
