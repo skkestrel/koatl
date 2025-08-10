@@ -1,13 +1,13 @@
 import requests
-import json
 import re
 
 word_count = url =>
-    let result = @Result.T(
-        Async.from_sync(() => try requests.get(url))
-    )
+    let result = @Result.T(Async.from_sync(() =>
+        print("Fetching URL:", url)
+        try requests.get(url)
+    ))
 
-    let counts = result
+    result
         .text
         .split()
         .map(re.sub("[^a-zA-Z]", "", $))
@@ -15,8 +15,6 @@ word_count = url =>
         .sort([_, value] => value, reverse=True)
         .take(10)
         .list()
-
-    counts
 
 books = {
     r_and_j: "https://www.gutenberg.org/cache/epub/1513/pg1513.txt"

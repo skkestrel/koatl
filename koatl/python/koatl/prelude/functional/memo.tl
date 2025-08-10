@@ -3,16 +3,21 @@ import functools.wraps
 
 import .algebra.(MonadOnce, Identity)
 import .result.(Result, Ok, Err)
-import .env.Env
+import .async.(Async)
 
-export Memo = class(Env):
+export Memo = class(MonadOnce):
     __slots__ = ("f",)
 
     """
-    The Memo monad is a specialization of Env, where
+    The Memo monad is like a a specialization of Env, where
     the environment is a cache that stores previously computed values.
     It is used to memoize computations, allowing for efficient reuse of results
     without recomputing them.
+
+    As a special case, memoized Async computations are fused together
+    with the Memo, behaving like a Memo.T<Async<T>>.
+    (However, the type is still Memo<Async<T>>.)
+    Unfortunately, this is a source of much confusion...
     """
 
     Cache = class:
@@ -47,38 +52,38 @@ export Memo = class(Env):
 
     __repr__ = self => f"Memo(...)"
 
-    # We need to handle
-    # memo @value
-    # separately, because we *don't* want to memoize the monad itself
-    # but rather the value it produces.
-    # Another way to think about it is that
-    # fused_value produces a Memo.T<MonadOnce<T>> value.
     value = staticmethod& (id, deps, f) =>
+        """
+        Create a memoized value with the given id and dependencies.
+        f should be a function taking no arguments that returns the value to be memoized.
+        The id is a unique identifier for the memoized value, and deps are the dependencies
+        that determine when the value should be recomputed.
+        If the value is already cached, it will return the cached value.
+        If the value is not cached, it will compute the value using f and cache it.
+        """
         Memo(ctx =>
             if ctx.try_get(id, tuple(deps)) matches Ok((inner_type, value)):
                 if inner_type === None or inner_type === Memo:
                     # Non-monadic cached values, or Memo cached values, shouldn't
                     # wrap the output in a monadic type.
-
-                    # The issue is that the present do-block expects a value to be bound,
-                    # but we don't want to use @Memo.pure(value) because that would
-                    # produce a Memo<Memo<T>> value.
-                    # It's hacky, but it works for now.
                     return @Identity(value)
                 else:
-                    # This gives us a Memo<MonadOnce<T>> value as normal.
                     return @inner_type.pure(value)
 
             let inner = f()
-            let inner_type = type(inner)
+            let inner_type
 
             if isinstance(inner, Memo):
+                # Fuse Memo<Memo<T>> into Memo<T>.
+                inner_type = None
                 inner = @Identity(inner.f(ctx))
-            else if not hasattr(inner, "bind_once"):
+            else if isinstance(inner, Async):
+                # Fuse Memo<Async<T>>.
+                inner_type = Async
+                inner = @inner
+            else:
                 inner_type = None
                 inner = @Identity(inner)
-            else:
-                inner = @inner
 
             ctx.update(id, tuple(deps), (inner_type, inner))
             inner
@@ -87,8 +92,6 @@ export Memo = class(Env):
     fn = staticmethod& f => wraps(f)& (*args, **kwargs) =>
         let id = f"{f.__module__}.{f.__qualname__}"
         let deps = (tuple(args), tuple(kwargs.items()))
-
-        # Same semantics as Memo.value above.
         Memo.value(id, deps, () => f(*args, **kwargs))
 
 
@@ -100,19 +103,35 @@ export Memo = class(Env):
     pure = staticmethod& value => Memo(ctx => value)
 
     bind_once = (self, f) => Memo(ctx =>
-        let value = f(self.f(ctx))
-        if value matches Memo():
-            return value.f(ctx)
-        value
+        let inner = self.f(ctx)
+
+        if isinstance(inner, Async):
+            inner = @inner
+        else:
+            inner = @Identity(inner)
+
+        let value = f(inner)
+
+        if value matches not Memo():
+            raise ValueError(f"Expected the binder to return a Memo, but got {type(value)}")
+
+        return value.f(ctx)
     )
 
     bind_gen = (self, gen) => Memo(ctx =>
-        self = self.f(ctx)
         try:
             while True:
-                self = gen.send(self)
-                if self matches Memo():
-                    self = self.f(ctx)
+                let inner = self.f(ctx)
+                if isinstance(inner, Async):
+                    inner = @inner
+                else:
+                    inner = @Identity(inner)
+
+                self = gen.send(inner)
+
+                if self matches not Memo():
+                    raise ValueError(f"Expected the binder to return a Memo, but got {type(value)}")
+
         except StopIteration(value=value):
             return value
     )
