@@ -43,6 +43,8 @@ export Regex = class:
         __len__ = self => len(self._match.groups())
         __getitem__ = (self, index) => self._match[index]
 
+        match = property& self => self._match.group(0)
+
         __repr__ = self => f"Match({self._match})"
 
 
