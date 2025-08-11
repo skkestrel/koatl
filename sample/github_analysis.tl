@@ -6,7 +6,6 @@ import json
 import re
 import datetime.(datetime, timedelta)
 
-# Repository data structure with validation
 create_repo = data =>
     {
         name: data["name"]
@@ -32,8 +31,7 @@ create_repo = data =>
             (self.stars + self.forks * 2 + (100 - self.issues) * 0.1) * recent_factor
     }
 
-# Memoized API fetcher with rate limiting awareness
-let fetch_repos = query =>
+fetch_repos = query =>
     async memo @Async.from_sync(() =>
         print(f"🔍 Searching for: {query}")
         let url = f"https://api.github.com/search/repositories?q={query}&sort=stars&per_page=30"
@@ -41,7 +39,6 @@ let fetch_repos = query =>
         try requests.get(url).json()
     )
 
-# Language classification with pattern matching
 classify_language = lang =>
     lang.lower() match:
         "python" | "javascript" | "typescript" | "java" | "c#" | "go" | "rust" => "Backend/System"
@@ -52,7 +49,6 @@ classify_language = lang =>
         "" | "unknown" => "Unknown"
         _ => "Other"
 
-# Repository analysis pipeline
 analyze_repos = query =>
     let result = @fetch_repos(query)
 
@@ -68,7 +64,6 @@ analyze_repos = query =>
             .sort(repo => repo.activity, reverse=True)
     )
 
-# Statistical analysis with monadic composition
 compute_stats = repos =>
     let by_language = repos.group_by($.language)
     let by_category = repos.group_by($.category)
@@ -104,7 +99,6 @@ compute_stats = repos =>
         })
     }
 
-# Results formatting with advanced pattern matching
 display_results = (query, result) =>
     print(f"\n📊 Analysis Results for '{query}'")
     print("=" * 50)
@@ -139,22 +133,14 @@ display_results = (query, result) =>
         Err(error) =>
             print(f"💥 Error: {error}")
 
-# Interactive query processor
 process_queries = queries =>
-    let memo_ctx = Memo.Cache()
-
     queries
         .map(query =>
-            query
-                | analyze_repos($)
-                | (query, $)
-        )
-        .for_each([query, result] =>
-            display_results(query, result.run(memo_ctx))
+            display_results(query, @analyze_repos(query))
             print("\n" + "-" * 50)
         )
+        .traverse()
 
-# Main execution
 main = () =>
     print("🚀 GitHub Repository Analyzer")
     print("Powered by Koatl functional programming\n")
@@ -166,7 +152,7 @@ main = () =>
         "cli tools go"
     ]
 
-    process_queries(search_queries)
+    process_queries(search_queries).run()
 
     print("\n✨ Analysis complete!")
 
