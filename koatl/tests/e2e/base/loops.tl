@@ -9,7 +9,7 @@ assert_eq(x, [1, 2, 3])
 i = True
 while (x => x)(i):
     if i === False:
-        assert False
+        raise
 
     i = False
 

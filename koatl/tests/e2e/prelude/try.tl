@@ -19,7 +19,7 @@ assert_eq(try a except (ValueError() | NameError()) ?? 2, 2)
 
 try:
     try a except (ValueError() | StopIteration())
-    assert False
+    raise
 except:
     None
 

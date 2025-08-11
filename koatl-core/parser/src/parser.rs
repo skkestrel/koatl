@@ -1,5 +1,12 @@
 #![allow(dead_code)]
 
+/**
+ * TODO:
+ * - Cascade operator
+ * - With-expressions
+ * - Regex match
+ * - Semicolon statement terminator
+ */
 use std::borrow::Cow;
 
 use crate::ast::*;
@@ -96,10 +103,7 @@ where
             )))
             .allow_trailing()
             .collect()
-            .delimited_by(
-                just(Token::Symbol("BEGIN_BLOCK")),
-                just(Token::Symbol("END_BLOCK")),
-            )
+            .delimited_by(just(Token::Indent), just(Token::Dedent))
             .labelled("block enumeration"),
         item_parser
             .separated_by(optional_separator)
@@ -367,10 +371,7 @@ where
             .repeated()
             .collect::<Vec<_>>()
             .then(default_case.clone().then_ignore(just(Token::Eol)).or_not())
-            .delimited_by(
-                just(Token::Symbol("BEGIN_BLOCK")),
-                just(Token::Symbol("END_BLOCK")),
-            ),
+            .delimited_by(just(Token::Indent), just(Token::Dedent)),
         case_
             .separated_by(just(Token::Kw("else")))
             .allow_trailing()
@@ -497,10 +498,6 @@ where
     PNaryPattern: Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
     PPattern: Parser<'tokens, TInput, SPattern<'src>, TExtra<'tokens, 'src>> + Clone + 'tokens,
 {
-    let mut stmt = Recursive::<chumsky::recursive::Indirect<TInput, SStmt, TExtra>>::declare();
-    let mut inline_stmt =
-        Recursive::<chumsky::recursive::Indirect<TInput, SStmt, TExtra>>::declare();
-
     let decl_mod = choice((
         just(Token::Kw("export")).to(DeclType::Export),
         just(Token::Kw("global")).to(DeclType::Global),
@@ -630,13 +627,6 @@ where
         .labelled("inline return statement")
         .boxed();
 
-    let assert_stmt = just(Token::Ident("assert"))
-        .ignore_then(expr.clone())
-        .then(symbol(",").ignore_then(expr.clone()).or_not())
-        .map(|(x, y)| SStmtInner::Assert(x.indirect(), y.map(|y| y.indirect())))
-        .labelled("assert statement")
-        .boxed();
-
     let raise_stmt = just(Token::Kw("raise"))
         .ignore_then(nary_tuple.clone().or_not())
         .map(|x| SStmtInner::Raise(x.map(|x| x.indirect())))
@@ -711,41 +701,36 @@ where
         .labelled("import statement")
         .boxed();
 
-    stmt.define(
-        choice((
-            decl_stmt.then_ignore(just(Token::Eol)),
-            pattern_assign_stmt.then_ignore(just(Token::Eol)),
-            assign_stmt.then_ignore(just(Token::Eol)),
-            while_stmt.clone().then_ignore(just(Token::Eol)),
-            for_stmt.clone().then_ignore(just(Token::Eol)),
-            return_stmt.then_ignore(just(Token::Eol)),
-            assert_stmt.then_ignore(just(Token::Eol)),
-            raise_stmt.then_ignore(just(Token::Eol)),
-            break_stmt.clone().then_ignore(just(Token::Eol)),
-            continue_stmt.clone().then_ignore(just(Token::Eol)),
-            import_stmt.then_ignore(just(Token::Eol)),
-            try_stmt.then_ignore(just(Token::Eol)),
-        ))
-        .labelled("statement")
-        .map_with(|x, e| x.spanned(e.span()))
-        .boxed(),
-    );
+    let stmt = choice((
+        import_stmt,
+        pattern_assign_stmt,
+        assign_stmt,
+        decl_stmt,
+        while_stmt.clone(),
+        for_stmt.clone(),
+        return_stmt,
+        raise_stmt,
+        break_stmt.clone(),
+        continue_stmt.clone(),
+        try_stmt,
+    ))
+    .labelled("statement")
+    .map_with(|x, e| x.spanned(e.span()))
+    .boxed();
 
-    inline_stmt.define(
-        choice((
-            inline_pattern_assign_stmt,
-            inline_assign_stmt,
-            while_stmt,
-            for_stmt,
-            inline_return_stmt,
-            inline_raise_stmt,
-            break_stmt,
-            continue_stmt,
-        ))
-        .labelled("inline-statement")
-        .map_with(|x, e| x.spanned(e.span()))
-        .boxed(),
-    );
+    let inline_stmt = choice((
+        inline_pattern_assign_stmt,
+        inline_assign_stmt,
+        while_stmt,
+        for_stmt,
+        inline_return_stmt,
+        inline_raise_stmt,
+        break_stmt,
+        continue_stmt,
+    ))
+    .labelled("inline-statement")
+    .map_with(|x, e| x.spanned(e.span()))
+    .boxed();
 
     (stmt, inline_stmt)
 }
@@ -768,6 +753,7 @@ where
 
     let stmts = stmt
         .clone()
+        .then_ignore(just(Token::Eol))
         .map(|x| x.indirect())
         .repeated()
         .collect::<Vec<Indirect<SStmt>>>()
@@ -776,7 +762,7 @@ where
 
     let block = stmts
         .clone()
-        .delimited_by(symbol("BEGIN_BLOCK"), symbol("END_BLOCK"))
+        .delimited_by(just(Token::Indent), just(Token::Dedent))
         .map(SExprInner::Block)
         .spanned_expr()
         .boxed();
@@ -898,6 +884,27 @@ where
     .labelled("nary-tuple")
     .boxed();
     // .memoized();
+
+    let inline_stmts = stmts
+        .try_map_with(|x, e| {
+            println!("inline-stmts: {x:?}");
+            if x.is_empty() {
+                panic!("Expected at least one statement, got none");
+            } else if x.len() == 1 {
+                match &x[0].value {
+                    Stmt::Expr(_) => {
+                        let Stmt::Expr(x) = x.into_iter().next().unwrap().value else {
+                            panic!();
+                        };
+                        Ok(x.extract())
+                    }
+                    _ => Ok(SExprInner::Block(x).spanned(e.span())),
+                }
+            } else {
+                Ok(SExprInner::Block(x).spanned(e.span()))
+            }
+        })
+        .boxed();
 
     let tuple = choice((
         symbol("(")

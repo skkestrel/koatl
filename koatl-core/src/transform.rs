@@ -1531,17 +1531,6 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     pre.push(a.expr(expr));
                 }
             }
-            Stmt::Assert(expr, msg) => {
-                let expr = pre.bind(expr.transform(ctx)?);
-
-                let msg = if let Some(msg) = msg {
-                    Some(pre.bind(msg.transform(ctx)?))
-                } else {
-                    None
-                };
-
-                pre.push(a.assert(expr, msg));
-            }
             Stmt::Return(expr) => {
                 let expr = pre.bind(expr.transform(ctx)?);
                 pre.push(a.return_(expr));

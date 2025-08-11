@@ -1585,10 +1585,6 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 
                 Stmt::Try(body, cases, finally)
             }
-            Stmt::Assert(a, b) => Stmt::Assert(
-                a.traverse_guarded(state),
-                b.map(|x| x.traverse_guarded(state)),
-            ),
             Stmt::Raise(expr) => Stmt::Raise(expr.map(|x| x.traverse_guarded(state))),
             Stmt::Import(import_stmt) => {
                 let scope_key = *state.scope_stack.last().unwrap();

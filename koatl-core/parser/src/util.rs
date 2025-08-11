@@ -42,14 +42,6 @@ impl AstBuilder {
         Stmt::Return(expr.indirect()).spanned(self.span)
     }
 
-    pub fn assert<'src>(
-        &self,
-        expr: impl IntoIndirect<SExpr<'src>>,
-        msg: Option<impl IntoIndirect<SExpr<'src>>>,
-    ) -> SStmt<'src> {
-        Stmt::Assert(expr.indirect(), msg.map(|m| m.indirect())).spanned(self.span)
-    }
-
     pub fn while_<'src>(
         &self,
         test: impl IntoIndirect<SExpr<'src>>,

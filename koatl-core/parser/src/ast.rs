@@ -131,7 +131,6 @@ pub enum Stmt<'a, TTree: Tree> {
     For(TTree::Pattern, TTree::Expr, TTree::Expr),
     Import(ImportStmt<'a>),
     Try(TTree::Expr, Vec<MatchCase<TTree>>, Option<TTree::Expr>),
-    Assert(TTree::Expr, Option<TTree::Expr>),
     Raise(Option<TTree::Expr>),
 
     Break,

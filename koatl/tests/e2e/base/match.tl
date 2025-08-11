@@ -77,7 +77,7 @@ f = () =>
     if [1, 2, 3] matches [1, 2, x]:
         assert_eq(x, 3)
     else:
-        assert False
+        raise
 
     if [1, 2, 3] matches not [1, 2, x]:
         raise

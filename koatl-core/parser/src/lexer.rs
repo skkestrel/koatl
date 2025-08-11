@@ -20,8 +20,11 @@ pub enum Token<'src> {
 
     Num(&'src str),
     Kw(&'src str),
+
     Symbol(&'src str),
 
+    Indent,
+    Dedent,
     Eol,
 }
 
@@ -47,9 +50,11 @@ impl fmt::Display for Token<'_> {
             Token::Symbol(s) => write!(f, "{s}"),
             Token::Ident(s) => write!(f, "{s}"),
             Token::Kw(s) => write!(f, "<{s}>"),
-            Token::Eol => write!(f, "<eol>"),
             Token::FstrBegin(s) => write!(f, "<f_begin {s}>"),
             Token::FstrContinue(s) => write!(f, "<f_middle {s}>"),
+            Token::Indent => write!(f, "<indent>"),
+            Token::Dedent => write!(f, "<dedent>"),
+            Token::Eol => write!(f, "<eol>"),
         }
     }
 }
@@ -626,7 +631,7 @@ where
                 self.try_parse(|x| x.parse_indentation())?;
                 self.try_parse(|x| x.parse_seq("}"))?;
 
-                tokens.push(Token::Symbol("BEGIN_BLOCK").spanned(Span::new(
+                tokens.push(Token::Indent.spanned(Span::new(
                     sexpr.span.context,
                     sexpr.span.start..sexpr.span.start,
                 )));
@@ -635,7 +640,7 @@ where
                     sexpr.span.context,
                     sexpr.span.end..sexpr.span.end,
                 )));
-                tokens.push(Token::Symbol("END_BLOCK").spanned(Span::new(
+                tokens.push(Token::Dedent.spanned(Span::new(
                     sexpr.span.context,
                     sexpr.span.end..sexpr.span.end,
                 )));
@@ -846,7 +851,7 @@ where
                     self.try_parse(|x| x.parse_block(indent_level.value, NewBlockType::NewBlock));
 
                 if let Ok(new_block) = new_block {
-                    tokens.push(Token::Symbol("BEGIN_BLOCK").spanned(Span::new(
+                    tokens.push(Token::Indent.spanned(Span::new(
                         new_block.span.context,
                         new_block.span.start..new_block.span.start,
                     )));
@@ -862,7 +867,7 @@ where
                         tokens.push(Token::Eol.spanned(end_span));
                     }
 
-                    tokens.push(Token::Symbol("END_BLOCK").spanned(end_span));
+                    tokens.push(Token::Dedent.spanned(end_span));
 
                     // continue in order to catch trailing characters after the block
                     continue;
@@ -941,7 +946,7 @@ where
         let mut tokens = TokenList(vec![]);
         tokens
             .0
-            .push(Token::Symbol("BEGIN_BLOCK").spanned(self.span_since(&self.cursor())));
+            .push(Token::Indent.spanned(self.span_since(&self.cursor())));
 
         tokens
             .0
@@ -953,7 +958,7 @@ where
 
         tokens
             .0
-            .push(Token::Symbol("END_BLOCK").spanned(self.span_since(&self.cursor())));
+            .push(Token::Dedent.spanned(self.span_since(&self.cursor())));
 
         Ok(tokens)
     }
