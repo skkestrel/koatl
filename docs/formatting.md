@@ -33,6 +33,8 @@ Like Rust, the final expression of a block is treated as its value.
 
 Opening round parentheses at the end of a line starts a block-expression on the next line.
 
+Statements can also be delimited by `;`.
+
 ```koatl
 x = (
     a = 2
@@ -51,6 +53,11 @@ x = 2 + (
         3
 )
 x == 4
+```
+
+```koatl
+x = (let x = 123; x)
+x == 123
 ```
 
 ```koatl

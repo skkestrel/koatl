@@ -67,6 +67,15 @@ There's also an alternate syntax which looks a bit better inline:
 x = condition then 10 else 20
 ```
 
+## With-expressions
+
+Similar to above, with also yields a value
+
+```koatl
+x = with f = open("my_file.txt", "r"):
+    f.read()
+```
+
 ## Matches-expressions
 
 Matches-expressions resolve to either True or False, using Python pattern matching (see [Pattern matching](match)):
@@ -76,6 +85,14 @@ Matches-expressions resolve to either True or False, using Python pattern matchi
 >>> if x matches [a, *b]:
 >>>    print(a, b)
 1 [2, 3]
+```
+
+This makes regex matching especially convenient:
+
+```koatl
+>>> if "(\\d+).(\\d+)".match("123.456") matches Ok([a, b]):
+>>>    print(a, b)
+123 456
 ```
 
 ## Coalescing operators
