@@ -97,6 +97,49 @@ pub type TExtra<'src> = extra::Full<TError<'src>, (), ()>;
 
 type TResult<'src, T> = Result<T, TError<'src>>;
 
+pub fn py_escape_str(s: &str) -> String {
+    let mut escaped_string = String::new();
+
+    // Iterate over each character in the input string.
+    for c in s.chars() {
+        match c {
+            // Handle common escape sequences
+            '\n' => escaped_string.push_str("\\n"),
+            '\r' => escaped_string.push_str("\\r"),
+            '\t' => escaped_string.push_str("\\t"),
+            '\"' => escaped_string.push_str("\\\""),
+            '\\' => escaped_string.push_str("\\\\"),
+
+            // Handle additional escape sequences
+            '\0' => escaped_string.push_str("\\0"), // Null character
+            '\x08' => escaped_string.push_str("\\b"), // Backspace
+            '\x0c' => escaped_string.push_str("\\f"), // Form feed
+
+            // Handle all other ASCII control characters (0x00 to 0x1F) using hex escapes
+            c if (c as u32) < 32 => {
+                escaped_string.push_str(&format!("\\x{:02x}", c as u32));
+            }
+
+            // For all other characters, simply append them to the new string.
+            _ => escaped_string.push(c),
+        }
+    }
+
+    escaped_string
+}
+
+pub fn py_escape_fstr(s: &str) -> String {
+    // TODO
+    py_escape_str(s)
+        .chars()
+        .map(|c| match c {
+            '{' => "{{".to_string(),
+            '}' => "}}".to_string(),
+            _ => c.to_string(),
+        })
+        .collect()
+}
+
 pub fn escape_str(s: &str) -> String {
     // TODO
     s.chars()
@@ -152,9 +195,9 @@ where
 {
     fn new(input: &'input mut InputRef<'src, 'parse, TInput, TExtra<'src>>) -> Self {
         static KEYWORDS: &[&str] = &[
-            "match", "if", "then", "else", "import", "export", "as", "class", "while", "for", "in",
-            "break", "continue", "with", "yield", "global", "return", "raise", "try", "except",
-            "finally", "and", "or", "not", "await", "let", "const", "with",
+            "if", "then", "else", "import", "export", "as", "class", "while", "for", "in", "break",
+            "continue", "with", "yield", "global", "return", "raise", "try", "except", "finally",
+            "and", "or", "not", "await", "let", "const", "with",
         ];
 
         let keywords = HashSet::<String>::from_iter(KEYWORDS.iter().map(|s| s.to_string()));

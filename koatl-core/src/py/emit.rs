@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use parser::{
     ast::Span,
-    lexer::{escape_fstr, escape_str},
+    lexer::{py_escape_fstr, py_escape_str},
 };
 
 use crate::{py::ast::*, util::TlResult};
@@ -45,7 +45,7 @@ impl EmitCtx {
 
     pub fn emit_escaped_str(&mut self, text: &str) -> Span {
         let start = self.source.len();
-        self.source.push_str(&escape_str(text));
+        self.source.push_str(&py_escape_str(text));
         let end = self.source.len();
 
         Span {
@@ -57,7 +57,7 @@ impl EmitCtx {
 
     pub fn emit_escaped_fstr(&mut self, text: &str) -> Span {
         let start = self.source.len();
-        self.source.push_str(&escape_fstr(text));
+        self.source.push_str(&py_escape_fstr(text));
         let end = self.source.len();
 
         Span {

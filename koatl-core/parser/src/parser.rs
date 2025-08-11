@@ -3,7 +3,6 @@
 /**
  * TODO:
  * - Cascade operator
- * - Regex match
  */
 use std::borrow::Cow;
 
@@ -384,7 +383,7 @@ where
 
     let match_ = lhs
         .then(
-            just(Token::Kw("match"))
+            just(Token::Ident("match"))
                 .then(just(START_BLOCK).or_not())
                 .ignore_then(cases.clone())
                 .or_not(),
@@ -1050,7 +1049,7 @@ where
     .labelled("with")
     .boxed();
 
-    let classic_match = just(Token::Kw("match"))
+    let classic_match = just(Token::Ident("match"))
         .ignore_then(expr.clone())
         .then_ignore(just(START_BLOCK))
         .then(cases.clone())
@@ -1110,11 +1109,11 @@ where
 
     atom.define(
         choice((
+            classic_match,
             memo_expr,
             async_memo_expr,
             ident_expr.clone(),
             classic_if,
-            classic_match,
             with,
             control_kw,
             class_,

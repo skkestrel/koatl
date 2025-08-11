@@ -19,8 +19,8 @@ use std::hash::{Hash, Hasher};
 
 static PY_KWS: &[&str] = &[
     "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else", "except",
-    "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "match", "nonlocal",
-    "not", "or", "pass", "raise", "return", "try", "while", "with", "yield", "await", "async",
+    "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not",
+    "or", "pass", "raise", "return", "try", "while", "with", "yield", "await", "async",
 ];
 
 static PY_KWS_SET: Lazy<HashSet<String>> = Lazy::new(|| {
