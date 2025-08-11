@@ -5,7 +5,6 @@
  * - Cascade operator
  * - With-expressions
  * - Regex match
- * - Semicolon statement terminator
  */
 use std::borrow::Cow;
 
@@ -753,7 +752,7 @@ where
 
     let stmts = stmt
         .clone()
-        .then_ignore(just(Token::Eol))
+        .then_ignore(just(Token::Eol).or(symbol(";")))
         .map(|x| x.indirect())
         .repeated()
         .collect::<Vec<Indirect<SStmt>>>()
@@ -885,9 +884,14 @@ where
     .boxed();
     // .memoized();
 
-    let inline_stmts = stmts
+    let inline_stmts = stmt
+        .clone()
+        .map(|x| x.indirect())
+        .separated_by(symbol(";"))
+        .allow_trailing()
+        .at_least(1)
+        .collect::<Vec<_>>()
         .try_map_with(|x, e| {
-            println!("inline-stmts: {x:?}");
             if x.is_empty() {
                 panic!("Expected at least one statement, got none");
             } else if x.len() == 1 {
@@ -906,19 +910,14 @@ where
         })
         .boxed();
 
-    let tuple = choice((
+    let round_brackets = choice((
         symbol("(")
             .then(symbol(")"))
             .map(|_| Expr::Tuple(vec![]))
             .spanned_expr(),
-        nary_tuple
+        inline_stmts
             .clone()
-            .delimited_by_with_eol(just(Token::Symbol("(")), just(Token::Symbol(")"))),
-    ))
-    .boxed();
-
-    let round_brackets = choice((
-        tuple.clone(),
+            .delimited_by_with_eol(symbol("("), symbol(")")),
         block
             .clone()
             .delimited_by_with_eol(symbol("("), symbol(")")),
