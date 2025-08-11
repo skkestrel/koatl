@@ -19,11 +19,11 @@ export List = class(Monad):
 
     pure = staticmethod& x => [x]
 
-    len = TraitProperty& self => len(self)
+    len = Trait.property& self => len(self)
 
 
 for name, method in List.__dict__:
     if name.startswith("_"):
         continue
 
-    ExtensionMethod(list, name)& method
+    Extension.method(list, name)& method

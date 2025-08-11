@@ -48,13 +48,13 @@ export Regex = class:
         __repr__ = self => f"Match({self._match})"
 
 
-ExtensionMethod(str, "match")& (regex, str) => Regex(regex).match(str)
+Extension.method(str, "match")& (regex, str) => Regex(regex).match(str)
 
 
 # Note: the below methods have arguments in reverse order to Python's re module.
 
-ExtensionMethod(str, "matches")& (str, regex) =>
+Extension.method(str, "matches")& (str, regex) =>
     Regex(regex).match(str)
 
-ExtensionMethod(str, "search")& (str, regex) =>
+Extension.method(str, "search")& (str, regex) =>
     Regex(regex).search(str)

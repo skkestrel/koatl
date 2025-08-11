@@ -1,5 +1,6 @@
 from functools import partial
 from itertools import count
+from types import SimpleNamespace
 from .._rs import fast_vget, fast_vset, fast_vset_trait
 
 
@@ -30,7 +31,7 @@ def vget(obj, name, ignore_traits=False):
 
         v = fast_vget(obj, name, ignore_traits)
         if v is not None:
-            if hasattr(v, "_ext_prop"):
+            if hasattr(v, "_property"):
                 return v(obj)
 
             return partial(v, obj)
@@ -67,16 +68,16 @@ def vhas(obj, name, ignore_traits=False):
     return False
 
 
-def ExtensionProperty(type, name):
+def ext_prop(type, name):
     def impl(value):
-        value._ext_prop = True
+        value._property = True
         fast_vset(type, name, value)
         return value
 
     return impl
 
 
-def ExtensionMethod(type, name):
+def ext_method(type, name):
     def impl(value):
         fast_vset(type, name, value)
         return value
@@ -84,20 +85,19 @@ def ExtensionMethod(type, name):
     return impl
 
 
-def ExtensionTrait(type):
-    for name in type._own_methods:
-        fast_vset_trait(type.__name__, type._trait_reqs, name, type.__dict__[name])
+def ext_trait(type):
+    for name, value in type._own_methods.items():
+        fast_vset_trait(type.__name__, type._trait_reqs, name, value)
     return type
 
 
-def TraitProperty(value):
-    value._ext_prop = True
-    return value
+Extension = SimpleNamespace(
+    property=ext_prop,
+    method=ext_method,
+    trait=ext_trait,
+)
 
 
 __all__ = [
-    "ExtensionProperty",
-    "ExtensionMethod",
-    "ExtensionTrait",
-    "TraitProperty",
+    "Extension",
 ]

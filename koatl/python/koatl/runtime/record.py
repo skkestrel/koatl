@@ -1,5 +1,5 @@
+import functools
 import re
-from .virtual import vget
 
 __all__ = ["Record"]
 
@@ -10,9 +10,26 @@ class Record(dict):
 
     def __getattr__(self, name):
         try:
-            return self[name]
+            attr = self[name]
         except KeyError:
             return super().__getattr__(name)
+
+        if hasattr(attr, "_property"):
+            return attr(self)
+        elif hasattr(attr, "_method"):
+            return functools.partial(attr, self)
+
+        return attr
+
+    @staticmethod
+    def method(fn):
+        fn._method = True
+        return fn
+
+    @staticmethod
+    def property(fn):
+        fn._property = True
+        return fn
 
     def _repr_with_visited(self, visited):
         # Handle cycles by checking if this object is already being processed

@@ -160,7 +160,7 @@ export Err = class(Result):
         raise ValueError(f"Expected Ok, got {repr(self)}")
     coalesce = (self, f) => f()
 
-ExtensionProperty(object, "result")& Result
+Extension.property(object, "result")& Result
 
 __tl__.Ok = Ok
 __tl__.Err = Err

@@ -2,7 +2,7 @@ import itertools
 import builtins
 import .functional.(Traversable, Ok, Err, Memo, Async, AsyncMemo)
 
-export Iterable = ExtensionTrait& class(Traversable, Trait):
+export Iterable = Extension.trait& class(Traversable, Trait):
     iter = Abstract
 
     skip = (self, n) =>

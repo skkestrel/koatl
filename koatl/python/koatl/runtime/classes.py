@@ -7,6 +7,11 @@ from koatl.runtime.virtual import vhas
 
 @collections.abc.Mapping.register
 class MappingMeta(type):
+    """
+    A metaclass that makes a class behave like a read-only mapping.
+    Useful for destructuring static methods from a class.
+    """
+
     def __getitem__(self, key):
         return getattr(self, key)
 
@@ -49,7 +54,7 @@ class TraitMeta(MappingMeta):
 
         if Trait in bases:
             cls._trait_reqs = []
-            cls._own_methods = []
+            cls._own_methods = {}
 
             for key, value in inspect.getmembers(cls):
                 if (
@@ -67,7 +72,17 @@ class TraitMeta(MappingMeta):
                     continue
 
                 if callable(value) and not key.startswith("_"):
-                    cls._own_methods.append(key)
+                    cls._own_methods[key] = value
+                elif isinstance(value, property):
+                    cls._own_methods[key] = value.fget
+
+            def new(*args, **kwargs):
+                raise TypeError(
+                    f"Trait cannot be instantiated, since abstract methods {cls._trait_reqs} are not implemented."
+                )
+
+            if len(cls._trait_reqs) > 0:
+                cls.__init__ = new
 
     def __instancecheck__(cls, instance):
         # Check if the exact class has _trait_reqs, in which case it's a trait.
@@ -82,7 +97,11 @@ class TraitMeta(MappingMeta):
 
 
 class Trait(metaclass=TraitMeta):
-    pass
+    @staticmethod
+    def property(fn):
+        """Decorator to mark a method as a trait property."""
+        fn._property = True
+        return property(fn)
 
 
 Abstract = lambda value: abc.abstractmethod(value)
