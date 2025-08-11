@@ -1041,6 +1041,17 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 Expr::Block(new_stmts)
             }
+            Expr::With(pattern, value, body) => {
+                let (pattern, body_scope, _meta) = pattern_scoped(state, pattern);
+
+                Expr::With(
+                    pattern,
+                    value.traverse(state),
+                    state
+                        .scoped(body_scope, |state| body.traverse_expecting_scope(state))
+                        .value,
+                )
+            }
             Expr::If(cond, then, else_) => 'block: {
                 let cond_span = cond.span;
 
@@ -1136,6 +1147,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 Expr::Match(subject, cases)
             }
+
             Expr::Class(bases, body) => {
                 let bases = traverse_call_items(state, bases);
 

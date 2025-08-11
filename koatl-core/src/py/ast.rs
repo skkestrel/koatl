@@ -64,6 +64,7 @@ pub struct PyClassDef<'a> {
 #[derive(Debug, Clone)]
 pub enum PyStmt<'a> {
     Expr(SPyExpr<'a>),
+    With(Vec<(SPyExpr<'a>, Option<SPyExpr<'a>>)>, PyBlock<'a>),
     If(SPyExpr<'a>, PyBlock<'a>, Option<PyBlock<'a>>),
     Match(SPyExpr<'a>, Vec<PyMatchCase<'a>>),
     Assign(SPyExpr<'a>, SPyExpr<'a>, Option<PyBinaryOp>),
@@ -206,7 +207,7 @@ pub enum PyFstrPart<'a> {
 pub enum PyExpr<'a> {
     Literal(PyLiteral<'a>),
     Fstr(Vec<PyFstrPart<'a>>),
-    Ident(PyIdent<'a>, PyAccessCtx),
+    Name(PyIdent<'a>, PyAccessCtx),
 
     Binary(PyBinaryOp, Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
     Unary(PyUnaryOp, Box<SPyExpr<'a>>),

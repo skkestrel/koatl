@@ -255,6 +255,22 @@ trait PyStmtExt<'src> {
 impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
     fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject> {
         match &self.value {
+            PyStmt::With(bindings, body) => {
+                let mut context_exprs = Vec::new();
+                for (binding, alias) in bindings {
+                    let binding_ast = binding.emit_py(ctx)?;
+                    context_exprs.push(ctx.ast_node(
+                        "withitem",
+                        (
+                            binding_ast,
+                            alias.as_ref().map(|x| x.emit_py(ctx)).transpose()?,
+                        ),
+                        &self.tl_span,
+                    )?)
+                }
+                let body_ast = body.emit_py(ctx)?;
+                ctx.ast_node("With", (context_exprs, body_ast), &self.tl_span)
+            }
             PyStmt::Expr(expr) => ctx.ast_node("Expr", (expr.emit_py(ctx)?,), &self.tl_span),
             PyStmt::If(cond, then_block, else_block) => {
                 let cond_ast = cond.emit_py(ctx)?;
@@ -441,7 +457,7 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                             typ.emit_py(ctx)?
                         } else {
                             PySpanned::from((
-                                PyExpr::Ident("Exception".into(), PyAccessCtx::Load),
+                                PyExpr::Name("Exception".into(), PyAccessCtx::Load),
                                 self.tl_span,
                             ))
                             .emit_py(ctx)?
@@ -528,7 +544,7 @@ impl<'src> PyExprExt<'src> for SPyExpr<'src> {
     fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject> {
         Ok(match &self.value {
             PyExpr::Literal(lit) => lit.emit_py(ctx, &self.tl_span)?,
-            PyExpr::Ident(ident, c) => {
+            PyExpr::Name(ident, c) => {
                 ctx.ast_node("Name", (ident, c.emit_py(ctx)?), &self.tl_span)?
             }
             PyExpr::Binary(op, left, right) => {

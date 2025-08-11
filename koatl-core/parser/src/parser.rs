@@ -3,7 +3,6 @@
 /**
  * TODO:
  * - Cascade operator
- * - With-expressions
  * - Regex match
  */
 use std::borrow::Cow;
@@ -1039,6 +1038,18 @@ where
     let (closed_pattern, as_pattern, nary_pattern) =
         match_pattern(ident.clone(), qualified_ident.clone(), literal.clone());
 
+    let with = group((
+        just(Token::Kw("with")).ignore_then(nary_pattern.clone()),
+        symbol("=")
+            .ignore_then(expr.clone())
+            .then_ignore(just(START_BLOCK)),
+        expr_or_inline_stmt_or_block.clone(),
+    ))
+    .map(|(pattern, value, body)| Expr::With(pattern.indirect(), value.indirect(), body.indirect()))
+    .spanned_expr()
+    .labelled("with")
+    .boxed();
+
     let classic_match = just(Token::Kw("match"))
         .ignore_then(expr.clone())
         .then_ignore(just(START_BLOCK))
@@ -1104,6 +1115,7 @@ where
             ident_expr.clone(),
             classic_if,
             classic_match,
+            with,
             control_kw,
             class_,
             literal_expr.clone(),

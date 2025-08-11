@@ -347,7 +347,7 @@ impl SPyExpr<'_> {
         };
 
         match &mut self.value {
-            PyExpr::Ident(id, _ctx) => {
+            PyExpr::Name(id, _ctx) => {
                 ctx.emit(&id);
             }
             PyExpr::Tuple(items, _ctx) => {
@@ -603,6 +603,23 @@ impl SPyStmt<'_> {
                     ctx.emit_endl();
                     orelse.emit_to(ctx, 1)?;
                 }
+            }
+            PyStmt::With(items, body) => {
+                ctx.emit_indent();
+                ctx.emit("with ");
+                for (i, (expr, as_name)) in items.iter_mut().enumerate() {
+                    if i > 0 {
+                        ctx.emit(", ");
+                    }
+                    expr.emit_to(ctx, LOW_PREC)?;
+                    if let Some(as_name) = as_name {
+                        ctx.emit(" as ");
+                        as_name.emit_to(ctx, LOW_PREC)?;
+                    }
+                }
+                ctx.emit(":");
+                ctx.emit_endl();
+                body.emit_to(ctx, 1)?;
             }
             PyStmt::Raise(expr) => {
                 ctx.emit_indent();

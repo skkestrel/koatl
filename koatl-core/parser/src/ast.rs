@@ -210,6 +210,8 @@ pub enum Expr<'a, TTree: Tree> {
     Matches(TTree::Expr, TTree::Pattern),
     Class(Vec<CallItem<'a, TTree>>, TTree::Expr),
 
+    With(TTree::Pattern, TTree::Expr, TTree::Expr),
+
     Call(TTree::Expr, Vec<CallItem<'a, TTree>>),
     Subscript(TTree::Expr, Vec<ListItem<TTree>>),
     RawAttribute(TTree::Expr, SIdent<'a>),

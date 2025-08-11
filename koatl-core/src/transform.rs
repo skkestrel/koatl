@@ -195,7 +195,7 @@ impl<'src> SPyExprWithPreExt<'src> for SPyExprWithPre<'src> {
         let mut block = self.pre;
 
         match self.value.value {
-            PyExpr::Literal(..) | PyExpr::Ident(..) => {}
+            PyExpr::Literal(..) | PyExpr::Name(..) => {}
             _ => {
                 let span = self.value.tl_span;
                 block.push((PyStmt::Expr(self.value), span).into());
@@ -241,7 +241,7 @@ fn deduplicate<'src, 'ast>(
     let mut pre = PyBlock::new();
 
     let expr = match expr.value {
-        PyExpr::Ident(id, _) => a.load_ident(id),
+        PyExpr::Name(id, _) => a.load_ident(id),
         x => {
             pre.push(a.assign(
                 a.ident(var_name.clone(), PyAccessCtx::Store),
@@ -825,12 +825,12 @@ fn transform_match_expr<'src, 'ast>(
 
     let ret_varname = ctx.create_aux_var("matchexp", span.start);
     let load_ret_var: SPyExpr = (
-        PyExpr::Ident(ret_varname.clone().into(), PyAccessCtx::Load),
+        PyExpr::Name(ret_varname.clone().into(), PyAccessCtx::Load),
         *span,
     )
         .into();
     let store_ret_var: SPyExpr = (
-        PyExpr::Ident(ret_varname.clone().into(), PyAccessCtx::Store),
+        PyExpr::Name(ret_varname.clone().into(), PyAccessCtx::Store),
         *span,
     )
         .into();
@@ -1171,7 +1171,7 @@ fn make_fn_exp<'src, 'ast>(
     );
 
     Ok(SPyExprWithPre {
-        value: (PyExpr::Ident(name.into(), PyAccessCtx::Load), *span).into(),
+        value: (PyExpr::Name(name.into(), PyAccessCtx::Load), *span).into(),
         pre,
     })
 }
@@ -1525,7 +1525,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
             Stmt::Expr(expr) => {
                 let expr = pre.bind(expr.transform(ctx)?);
 
-                if let PyExpr::Ident(_, PyAccessCtx::Load) = &expr.value {
+                if let PyExpr::Name(_, PyAccessCtx::Load) = &expr.value {
                     // this is a no-op, so we can skip it
                 } else {
                     pre.push(a.expr(expr));
@@ -1550,7 +1550,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     // TODO this is a bit hacky. We need to get separate the root node
                     // from the rest of the expression to avoid double evaluation
                     let (safe_lhs_store, safe_lhs_load) = match lhs.value {
-                        PyExpr::Ident(id, _) => (
+                        PyExpr::Name(id, _) => (
                             a.ident(id.clone(), PyAccessCtx::Store),
                             a.load_ident(id.clone()),
                         ),
@@ -1860,6 +1860,27 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
             | Expr::MappedScopedAttribute(..)
             | Expr::Attribute(..)
             | Expr::MappedAttribute(..) => pre.bind(transform_postfix_expr(ctx, self, access_ctx)?),
+            Expr::With(pattern, value, body) => {
+                let temp_var = ctx.create_aux_var("with", span.start);
+                let value = pre.bind(value.transform(ctx)?);
+
+                let info = ctx.pattern_info(pattern)?;
+                let (matcher, cursor) = create_throwing_matcher(ctx, pattern, &info)?;
+
+                let mut body_block = PyBlock::new();
+                body_block.extend(matcher);
+                let body = body.transform(ctx)?;
+                body_block.extend(body.pre);
+                body_block
+                    .push(a.assign(a.ident(temp_var.clone(), PyAccessCtx::Store), body.value));
+
+                pre.push(a.with(
+                    vec![(value, Some(a.ident(cursor, PyAccessCtx::Store)))],
+                    body_block,
+                ));
+
+                a.load_ident(temp_var.clone())
+            }
             Expr::If(cond, then_block, else_block) => pre.bind(transform_if_expr(
                 ctx,
                 cond,

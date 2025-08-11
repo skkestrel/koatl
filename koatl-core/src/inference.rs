@@ -78,6 +78,10 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
 
                 typ
             }
+            Expr::With(_pat, value, body) => {
+                value.traverse(ctx);
+                body.traverse(ctx)
+            }
             Expr::If(cond, then_, else_) => {
                 cond.traverse(ctx);
                 let then_type = then_.traverse(ctx);

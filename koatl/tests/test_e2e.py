@@ -1,9 +1,11 @@
 import pytest
 import sys
+import os
 import koatl.cli
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent / "e2e"))
+os.chdir(Path(__file__).parent / "e2e")
 
 
 def get_test_data(dirs):

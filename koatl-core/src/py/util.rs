@@ -120,6 +120,14 @@ impl PyAstBuilder {
         (PyStmt::For(target, iter, body), self.span).into()
     }
 
+    pub fn with<'src>(
+        &self,
+        values: impl Into<Vec<(SPyExpr<'src>, Option<SPyExpr<'src>>)>>,
+        body_block: PyBlock<'src>,
+    ) -> SPyStmt<'src> {
+        (PyStmt::With(values.into(), body_block), self.span).into()
+    }
+
     pub fn if_<'src>(
         &self,
         test: SPyExpr<'src>,
@@ -173,7 +181,7 @@ impl PyAstBuilder {
     }
 
     pub fn ident<'src>(&self, name: impl Into<PyIdent<'src>>, ctx: PyAccessCtx) -> SPyExpr<'src> {
-        (PyExpr::Ident(name.into(), ctx), self.span).into()
+        (PyExpr::Name(name.into(), ctx), self.span).into()
     }
 
     pub fn load_ident<'src>(&self, name: impl Into<PyIdent<'src>>) -> SPyExpr<'src> {
