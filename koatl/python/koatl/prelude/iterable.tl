@@ -127,15 +127,67 @@ export Iterable = Extension.trait& class(Traversable, Trait):
                 return Ok(i)
         return Err()
 
+    for_each = (self, f) =>
+        for i in self:
+            f(i)
+
+    unique = self =>
+        let seen = set()
+        let impl = () =>
+            for i in self:
+                if not seen.__contains__(i):
+                    seen.add(i)
+                    yield i
+
+        impl.__name__ = f"unique"
+        impl.__qualname__ = f"Iterable.unique"
+
+        impl()
+
+    join_str = (self, sep="") =>
+        sep.join(self.map(str))
+
     sum = self =>
         let acc = 0
         for i in self:
             acc = acc + i
         acc
 
-    for_each = (self, f) =>
+    mean = self =>
+        let acc = 0
+        let count = 0
         for i in self:
-            f(i)
+            acc = acc + i
+            count = count + 1
+        if count == 0:
+            raise ValueError("mean of empty iterable")
+        acc / count
+
+    max = self =>
+        let it = self.iter
+        let v
+        try:
+            v = next(it)
+        except StopIteration(value=value):
+            raise ValueError("max of empty iterable")
+
+        for i in it:
+            if i > v:
+                v = i
+        v
+
+    min = self =>
+        let it = self.iter
+        let v
+        try:
+            v = next(it)
+        except StopIteration(value=value):
+            raise ValueError("min of empty iterable")
+
+        for i in it:
+            if i < v:
+                v = i
+        v
 
     list = self =>
         list(self.iter)

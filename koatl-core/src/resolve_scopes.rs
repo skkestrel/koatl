@@ -1135,12 +1135,19 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                             (None, state.scopes.insert(Scope::new(Some(parent))))
                         };
 
+                        let (guard, body) = state
+                            .scoped(scope, |state| {
+                                (
+                                    case.guard.map(|g| g.traverse(state)),
+                                    case.body.traverse_expecting_scope(state),
+                                )
+                            })
+                            .value;
+
                         SMatchCase {
                             pattern,
-                            guard: case.guard.map(|g| g.traverse(state)),
-                            body: state
-                                .scoped(scope, |state| case.body.traverse_expecting_scope(state))
-                                .value,
+                            guard,
+                            body,
                         }
                     })
                     .collect::<Vec<_>>();

@@ -75,6 +75,7 @@ class TraitMeta(MappingMeta):
                     cls._own_methods[key] = value
                 elif isinstance(value, property):
                     cls._own_methods[key] = value.fget
+                    print(cls._own_methods)
 
             def new(*args, **kwargs):
                 raise TypeError(

@@ -19,11 +19,7 @@ export List = class(Monad):
 
     pure = staticmethod& x => [x]
 
-    len = Trait.property& self => len(self)
+    len = property& self => len(self)
 
 
-for name, method in List.__dict__:
-    if name.startswith("_"):
-        continue
-
-    Extension.method(list, name)& method
+Extension.property(list, "len")& List.len.fget
