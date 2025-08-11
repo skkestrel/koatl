@@ -2225,6 +2225,7 @@ fn map_py_binary_op(op: BinaryOp, span: Span) -> TlResult<PyBinaryOp> {
         BinaryOp::Sub => PyBinaryOp::Sub,
         BinaryOp::Mul => PyBinaryOp::Mult,
         BinaryOp::Div => PyBinaryOp::Div,
+        BinaryOp::FloorDiv => PyBinaryOp::FloorDiv,
         BinaryOp::Mod => PyBinaryOp::Mod,
         BinaryOp::Exp => PyBinaryOp::Pow,
         BinaryOp::MatMul => PyBinaryOp::MatMult,
@@ -2237,6 +2238,8 @@ fn map_py_binary_op(op: BinaryOp, span: Span) -> TlResult<PyBinaryOp> {
         BinaryOp::Neq => PyBinaryOp::Neq,
         BinaryOp::Is => PyBinaryOp::Is,
         BinaryOp::Nis => PyBinaryOp::Nis,
+        BinaryOp::In => PyBinaryOp::In,
+        BinaryOp::Nin => PyBinaryOp::Nin,
 
         _ => return Err(simple_err("Internal error: Unsupported binary op", span)),
     })

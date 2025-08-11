@@ -1,6 +1,6 @@
 import itertools
 import builtins
-import .functional.(Traversable, Ok, Err, Memo, Async, AsyncMemo)
+import .functional.(Traversable, Ok, Err, Memo, Async, AsyncMemo, Result)
 
 export Iterable = Extension.trait& class(Traversable, Trait):
     iter = Abstract
@@ -50,6 +50,22 @@ export Iterable = Extension.trait& class(Traversable, Trait):
 
     filter = (self, f) => builtins.filter(f, self.iter)
 
+    filter_map = (self, f=None) =>
+        let impl = () =>
+            if f === None:
+                for i in self.iter:
+                    if Result(i) matches Ok(value):
+                        yield value
+            else:
+                for i in self.iter:
+                    if Result(f(i)) matches Ok(value):
+                        yield value
+
+        impl.__name__ = f"filter_map"
+        impl.__qualname__ = f"Iterable.filter_map"
+
+        impl()
+
     flat_map = (self, f) => itertools.chain.from_iterable(self.map(f))
 
     reverse = self => reversed(list(self.iter))
@@ -59,8 +75,16 @@ export Iterable = Extension.trait& class(Traversable, Trait):
 
     copy = self => itertools.tee(self.iter)
 
-
-    count = self => len(self.iter)
+    count = (self, f=None) =>
+        let acc = 0
+        if f === None:
+            for _ in self:
+                acc += 1
+        else:
+            for i in self:
+                if f(i):
+                    acc += 1
+        acc
 
     fold = (self, init, f) =>
         let acc = init
@@ -163,30 +187,56 @@ export Iterable = Extension.trait& class(Traversable, Trait):
             raise ValueError("mean of empty iterable")
         acc / count
 
-    max = self =>
+    max = (self, key=None) =>
         let it = self.iter
-        let v
+        let v, m
         try:
             v = next(it)
+            if key === None:
+                m = v
+            else:
+                m = key(v)
         except StopIteration(value=value):
             raise ValueError("max of empty iterable")
 
-        for i in it:
-            if i > v:
-                v = i
+
+        if key === None:
+            for i in it:
+                if i > m:
+                    v = i
+                    m = i
+        else:
+            for i in it:
+                let ki = key(i)
+                if ki > m:
+                    v = i
+                    m = ki
+
         v
 
-    min = self =>
+    min = (self, key=None) =>
         let it = self.iter
-        let v
+        let v, m
         try:
             v = next(it)
+            if key === None:
+                m = v
+            else:
+                m = key(v)
         except StopIteration(value=value):
             raise ValueError("min of empty iterable")
 
-        for i in it:
-            if i < v:
-                v = i
+        if key === None:
+            for i in it:
+                if i < m:
+                    v = i
+                    m = i
+        else:
+            for i in it:
+                let ki = key(i)
+                if ki < m:
+                    v = i
+                    m = ki
         v
 
     list = self =>

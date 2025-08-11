@@ -146,6 +146,7 @@ pub enum PyBinaryOp {
     Mult,
     Div,
     Mod,
+    FloorDiv,
     Pow,
     MatMult,
 
@@ -160,6 +161,8 @@ pub enum PyBinaryOp {
     Geq,
     Is,
     Nis,
+    In,
+    Nin,
 }
 
 #[derive(Debug, Clone)]

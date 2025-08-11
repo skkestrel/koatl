@@ -258,10 +258,16 @@ impl PyBinaryOp {
             | PyBinaryOp::Geq
             | PyBinaryOp::Is
             | PyBinaryOp::Nis
+            | PyBinaryOp::In
+            | PyBinaryOp::Nin
             | PyBinaryOp::And
             | PyBinaryOp::Or => 0.0,
             PyBinaryOp::Add | PyBinaryOp::Sub => 1.0,
-            PyBinaryOp::Mult | PyBinaryOp::Div | PyBinaryOp::Mod | PyBinaryOp::MatMult => 2.0,
+            PyBinaryOp::Mult
+            | PyBinaryOp::Div
+            | PyBinaryOp::Mod
+            | PyBinaryOp::MatMult
+            | PyBinaryOp::FloorDiv => 2.0,
             PyBinaryOp::Pow => 3.0,
         }
     }
@@ -272,6 +278,7 @@ impl PyBinaryOp {
             PyBinaryOp::Sub => "-",
             PyBinaryOp::Mult => "*",
             PyBinaryOp::Div => "/",
+            PyBinaryOp::FloorDiv => "//",
             PyBinaryOp::Mod => "%",
             PyBinaryOp::Pow => "**",
             PyBinaryOp::MatMult => "@",
@@ -283,6 +290,8 @@ impl PyBinaryOp {
             PyBinaryOp::Geq => ">=",
             PyBinaryOp::Is => "is",
             PyBinaryOp::Nis => "is not",
+            PyBinaryOp::In => "in",
+            PyBinaryOp::Nin => "not in",
             PyBinaryOp::And => "and",
             PyBinaryOp::Or => "or",
         });

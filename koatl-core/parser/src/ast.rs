@@ -35,11 +35,15 @@ pub enum BinaryOp {
     Add,
     Sub,
     Mul,
-    Mod,
     MatMul,
     Div,
     Exp,
 
+    FloorDiv,
+    Mod,
+
+    In,
+    Nin,
     Lt,
     Leq,
     Gt,

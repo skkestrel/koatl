@@ -7,7 +7,7 @@ from .._rs import fast_vget, fast_vset, fast_vset_trait
 def vget(obj, name, ignore_traits=False):
     try:
         return getattr(obj, name)
-    except:
+    except AttributeError:
         pass
 
     # special case for iter - this could be implemented using types and trait vtbls

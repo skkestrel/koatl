@@ -525,6 +525,8 @@ where
         symbol("-=").to(BinaryOp::Sub),
         symbol("*=").to(BinaryOp::Mul),
         symbol("/=").to(BinaryOp::Div),
+        symbol("//=").to(BinaryOp::FloorDiv),
+        symbol("%=").to(BinaryOp::Mod),
         symbol("|=").to(BinaryOp::Pipe),
         symbol("??=").to(BinaryOp::Coalesce),
     ))
@@ -543,6 +545,7 @@ where
             SStmtInner::Expr(lhs.indirect())
         }
     })
+    .labelled("assignment")
     .boxed();
 
     let inline_assign_stmt = group((expr.clone(), assign_op.clone().then(expr.clone()).or_not()))
@@ -553,6 +556,7 @@ where
                 SStmtInner::Expr(lhs.indirect())
             }
         })
+        .labelled("assignment")
         .boxed();
 
     let while_stmt = just(Token::Kw("while"))
@@ -1307,6 +1311,7 @@ where
         select! {
             Token::Symbol("*") => BinaryOp::Mul,
             Token::Symbol("/") => BinaryOp::Div,
+            Token::Symbol("//") => BinaryOp::FloorDiv,
             Token::Symbol("%") => BinaryOp::Mod,
             Token::Symbol("@") => BinaryOp::MatMul,
         },
@@ -1325,6 +1330,7 @@ where
     let binary3 = make_binary_op(
         binary2.clone(),
         select! {
+            Token::Kw("in") => BinaryOp::In,
             Token::Symbol("<") => BinaryOp::Lt,
             Token::Symbol("<=") => BinaryOp::Leq,
             Token::Symbol(">") => BinaryOp::Gt,
@@ -1333,7 +1339,10 @@ where
             Token::Symbol("<>") => BinaryOp::Neq,
             Token::Symbol("===") => BinaryOp::Is,
             Token::Symbol("<=>") => BinaryOp::Nis,
-        },
+        }
+        .or(just(Token::Kw("not"))
+            .then(just(Token::Kw("in")))
+            .to(BinaryOp::Nin)),
         false,
     );
 

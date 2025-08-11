@@ -553,6 +553,7 @@ impl<'src> PyExprExt<'src> for SPyExpr<'src> {
                     PyBinaryOp::Sub => Some("Sub"),
                     PyBinaryOp::Mult => Some("Mult"),
                     PyBinaryOp::Div => Some("Div"),
+                    PyBinaryOp::FloorDiv => Some("FloorDiv"),
                     PyBinaryOp::Mod => Some("Mod"),
                     PyBinaryOp::Pow => Some("Pow"),
                     _ => None,
@@ -596,6 +597,8 @@ impl<'src> PyExprExt<'src> for SPyExpr<'src> {
                     PyBinaryOp::Neq => Some("NotEq"),
                     PyBinaryOp::Is => Some("Is"),
                     PyBinaryOp::Nis => Some("IsNot"),
+                    PyBinaryOp::In => Some("In"),
+                    PyBinaryOp::Nin => Some("NotIn"),
                     _ => None,
                 };
 

@@ -21,6 +21,16 @@ class Record(dict):
 
         return attr
 
+    def __hash__(self):
+        return hash(tuple(sorted(self.items())))
+
+    def __eq__(self, other):
+        return super().__eq__(other)
+
+    @property
+    def len(self):
+        return len(self)
+
     @staticmethod
     def method(fn):
         fn._method = True
