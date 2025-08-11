@@ -1,5 +1,8 @@
 # Monads
 
+Koatl has very basic support for some common monads.
+Unfortunately, making useful constructions in this area is very difficult without a type system, so there are many lacking features.
+
 Koatl uses `@` as a bind-operator to simulate some common and useful monads:
 
 ```koatl

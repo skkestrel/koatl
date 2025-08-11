@@ -41,19 +41,11 @@ def do(f):
 
         try:
             m = gen.send(None)
-        except StopIteration as e:
+        except StopIteration:
             raise ValueError(
                 "Returning before `@` is not allowed. "
                 "Use `return @MonadType.pure(value)` instead."
             ) from None
-
-        def recurse(v):
-            nonlocal m
-            try:
-                m = gen.send(v)
-                return vget(m, "bind_once")(recurse)
-            except StopIteration as e:
-                return vget(m, "pure")(e.value)
 
         try:
             # TODO: this is a workaround to avoid recursion.
@@ -62,6 +54,14 @@ def do(f):
             return vget(m, "bind_gen")(gen)
         except AttributeError:
             pass
+
+        def recurse(v):
+            nonlocal m
+            try:
+                m = gen.send(v)
+                return vget(m, "bind_once")(recurse)
+            except StopIteration as e:
+                return vget(m, "pure")(e.value)
 
         try:
             return vget(m, "bind_once")(recurse)

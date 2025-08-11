@@ -120,11 +120,11 @@ some_other_array[my_saved_slice]
 
 ## Decorators
 
-Koatl uses the `&` operator to represent function application which is primarily used for decorating functions:
+As a synonym for calling a one-argument function, the `&` operator can be used to attach decorators:
 
 ```koatl
 Foo = class:
     do_something = staticmethod& () => ...
 ```
 
-`a & b` is equivalent to `a(b)`.
+`a& b` is equivalent to `a(b)`.
