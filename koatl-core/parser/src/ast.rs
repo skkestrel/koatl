@@ -142,9 +142,9 @@ pub enum Stmt<'a, TTree: Tree> {
 }
 
 #[derive(Debug, Clone)]
-pub struct FmtExpr<'a, TTree: Tree> {
+pub struct FmtExpr<TTree: Tree> {
     pub expr: TTree::Expr,
-    pub fmt: Option<Ident<'a>>,
+    pub fmt: Option<TTree::Expr>,
 }
 
 #[derive(Debug, Clone)]
@@ -233,7 +233,7 @@ pub enum Expr<'a, TTree: Tree> {
     Block(Vec<TTree::Stmt>),
 
     Fn(Vec<ArgDefItem<'a, TTree>>, TTree::Expr),
-    Fstr(Spanned<String>, Vec<(FmtExpr<'a, TTree>, Spanned<String>)>),
+    Fstr(Spanned<String>, Vec<(FmtExpr<TTree>, Spanned<String>)>),
 
     // these are removed during desugaring
     Decorated(TTree::Expr, TTree::Expr),
@@ -351,4 +351,4 @@ pub type SMappingItem<'a> = MappingItem<STree<'a>>;
 pub type SMatchCase<'a> = MatchCase<STree<'a>>;
 pub type SCallItem<'a> = CallItem<'a, STree<'a>>;
 pub type SArgDefItem<'a> = ArgDefItem<'a, STree<'a>>;
-pub type SFmtExpr<'a> = FmtExpr<'a, STree<'a>>;
+pub type SFmtExpr<'a> = FmtExpr<STree<'a>>;

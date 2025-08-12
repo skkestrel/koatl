@@ -376,7 +376,7 @@ impl PyAstBuilder {
     pub fn fstr_expr<'src>(
         &self,
         expr: SPyExpr<'src>,
-        format_spec: impl Into<Option<PyIdent<'src>>>,
+        format_spec: impl Into<Option<SPyExpr<'src>>>,
     ) -> PyFstrPart<'src> {
         PyFstrPart::Expr(expr, format_spec.into())
     }

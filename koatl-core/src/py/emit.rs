@@ -5,7 +5,10 @@ use parser::{
     lexer::{py_escape_fstr, py_escape_str},
 };
 
-use crate::{py::ast::*, util::TlResult};
+use crate::{
+    py::ast::*,
+    util::{TlErrBuilder, TlResult},
+};
 
 const LOW_PREC: f32 = -100.0;
 const HIGH_PREC: f32 = 100.0;
@@ -485,22 +488,7 @@ impl SPyExpr<'_> {
             PyExpr::Literal(literal) => literal.emit_to(ctx, parent_precendence)?,
             PyExpr::Fstr(fstr_parts) => {
                 ctx.emit("f\"");
-                for part in fstr_parts.iter_mut() {
-                    match part {
-                        PyFstrPart::Str(s) => {
-                            ctx.emit_escaped_fstr(s);
-                        }
-                        PyFstrPart::Expr(expr, fmt) => {
-                            ctx.emit("{");
-                            expr.emit_sided_to(ctx, HIGH_PREC, true)?;
-                            if let Some(fmt) = fmt {
-                                ctx.emit(":");
-                                ctx.emit(fmt);
-                            }
-                            ctx.emit("}");
-                        }
-                    }
-                }
+                emit_fstr_inner(ctx, fstr_parts)?;
                 ctx.emit("\"");
             }
             PyExpr::Slice(start, stop, step) => {
@@ -554,6 +542,34 @@ impl SPyExpr<'_> {
 
         Ok(())
     }
+}
+
+fn emit_fstr_inner(ctx: &mut EmitCtx, fstr_parts: &mut [PyFstrPart<'_>]) -> TlResult<()> {
+    for part in fstr_parts.iter_mut() {
+        match part {
+            PyFstrPart::Str(s) => {
+                ctx.emit_escaped_fstr(s);
+            }
+            PyFstrPart::Expr(expr, fmt) => {
+                ctx.emit("{");
+                expr.emit_sided_to(ctx, HIGH_PREC, true)?;
+
+                if let Some(fmt) = fmt {
+                    ctx.emit(":");
+                    let PyExpr::Fstr(fmt_parts) = &mut fmt.value else {
+                        return Err(TlErrBuilder::new()
+                            .message("Format specifier must be an fstr")
+                            .span(fmt.tl_span)
+                            .build());
+                    };
+                    emit_fstr_inner(ctx, fmt_parts)?;
+                }
+                ctx.emit("}");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 impl PyBlock<'_> {

@@ -203,7 +203,7 @@ pub enum PyDictItem<'a> {
 #[derive(Debug, Clone)]
 pub enum PyFstrPart<'a> {
     Str(PyIdent<'a>),
-    Expr(SPyExpr<'a>, Option<PyIdent<'a>>),
+    Expr(SPyExpr<'a>, Option<SPyExpr<'a>>),
 }
 
 #[derive(Debug, Clone)]

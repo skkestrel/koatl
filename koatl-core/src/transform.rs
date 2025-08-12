@@ -1348,10 +1348,7 @@ fn transform_postfix_expr<'src, 'ast>(
             }
             Expr::ScopedAttribute(_, rhs) | Expr::MappedScopedAttribute(_, rhs) => {
                 let t = inner_pre.bind(rhs.transform(ctx)?);
-                a.call(
-                    a.tl_builtin("partial"),
-                    vec![PyCallItem::Arg(t), PyCallItem::Arg(lhs)],
-                )
+                a.call(t, vec![PyCallItem::Arg(lhs)])
             }
             Expr::RawAttribute(_, attr) | Expr::MappedRawAttribute(_, attr) => {
                 a.attribute(lhs, attr.value.escape(), access_ctx)
@@ -2168,10 +2165,14 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 nodes.push(PyFstrPart::Str(begin.value.clone().into()));
 
                 for (fmt_expr, str_part) in parts {
-                    // TODO format specifiers?
                     let expr = pre.bind(fmt_expr.expr.transform(ctx)?);
+                    let fmt = fmt_expr
+                        .fmt
+                        .as_ref()
+                        .map(|x| -> TlResult<_> { Ok(pre.bind(x.transform(ctx)?)) })
+                        .transpose()?;
 
-                    nodes.push(PyFstrPart::Expr(expr, None));
+                    nodes.push(PyFstrPart::Expr(expr, fmt));
                     nodes.push(PyFstrPart::Str(str_part.value.clone().into()));
                 }
 

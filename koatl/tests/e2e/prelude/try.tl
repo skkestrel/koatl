@@ -25,5 +25,5 @@ except:
 
 assert_eq(try 1 matches Ok(1), True)
 
-assert_eq((try 5)?.($+1)?(), Ok(6))
-assert_eq((try x)?.($+1)?() matches Err(), True)
+assert_eq((try 5)?.($+1), Ok(6))
+assert_eq((try x)?.($+1) matches Err(), True)

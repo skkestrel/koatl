@@ -5,7 +5,10 @@ use chumsky::{
     label::LabelError,
     prelude::*,
 };
-use std::{collections::HashSet, fmt};
+use std::{
+    collections::HashSet,
+    fmt::{self},
+};
 
 use crate::ast::{Span, Spannable, Spanned};
 
@@ -321,7 +324,7 @@ where
     fn parse_symbol(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
         const POLYGRAMS: &[&str] = &[
             "+=", "-=", "*=", "/=", "|=", "??=", "===", "<=>", "=>", "..", "==", "<>", "<=", ">=",
-            "//", "**", "??", ".=",
+            "//", "**", "??", ".=", "::",
         ];
         const MONOGRAMS: &str = "[](){}<>.,;:!?@$%^&*+-=|\\/`~";
 
@@ -612,23 +615,13 @@ where
         }
     }
 
-    fn parse_fstr(&mut self, verbatim: bool) -> TResult<'src, TokenList<'src>> {
+    fn parse_fstr_inner(&mut self, ending: &str, verbatim: bool) -> TResult<'src, TokenList<'src>> {
         let mut marker = self.cursor();
-
-        if verbatim {
-            self.parse_seq("f\"\"\"")?;
-        } else {
-            self.parse_seq("f\"")?;
-        }
-
         let mut tokens = vec![];
         let mut current_str = String::new();
 
         loop {
-            if self
-                .try_parse(|x| x.parse_seq(if verbatim { "\"\"\"" } else { "\"" }))
-                .is_ok()
-            {
+            if self.look_ahead(|x| x.parse_seq(ending)).is_ok() {
                 if tokens.len() == 0 {
                     tokens.push(Token::FstrBegin(current_str).spanned(self.span_since(&marker)));
                 } else {
@@ -667,12 +660,19 @@ where
 
                 self.parse_nonsemantic()?;
                 let _ = self.try_parse(|x| x.parse_newline());
-
                 let sexpr = self.try_parse(|x| x.parse_block(0, NewBlockType::BeginInput))?;
-
                 let _ = self.try_parse(|x| x.parse_newline());
-                self.try_parse(|x| x.parse_indentation())?;
-                self.try_parse(|x| x.parse_seq("}"))?;
+
+                self.parse_indentation()?;
+
+                marker = self.cursor();
+                let mut format_tokens = vec![];
+                if self.try_parse(|x| x.parse_seq("!")).is_ok() {
+                    format_tokens.push(Token::Symbol("!").spanned(self.span_since(&marker)));
+                    format_tokens.extend(self.parse_fstr_inner("}", verbatim)?);
+                }
+
+                self.parse_seq("}")?;
 
                 tokens.push(Token::Indent.spanned(Span::new(
                     sexpr.span.context,
@@ -687,6 +687,7 @@ where
                     sexpr.span.context,
                     sexpr.span.end..sexpr.span.end,
                 )));
+                tokens.extend(format_tokens);
 
                 marker = self.cursor();
 
@@ -700,6 +701,20 @@ where
             } else {
                 current_str.push(self.parse_escaped_char()?);
             }
+        }
+    }
+
+    fn parse_fstr(&mut self, verbatim: bool) -> TResult<'src, TokenList<'src>> {
+        if verbatim {
+            self.parse_seq("f\"\"\"")?;
+            let inner = self.parse_fstr_inner("\"\"\"", true)?;
+            self.parse_seq("\"\"\"")?;
+            return Ok(inner);
+        } else {
+            self.parse_seq("f\"")?;
+            let inner = self.parse_fstr_inner("\"", false)?;
+            self.parse_seq("\"")?;
+            return Ok(inner);
         }
     }
 
@@ -815,6 +830,13 @@ where
                     } else if let Ok(token) = self.try_parse(TokenizeCtx::parse_symbol) {
                         tok = token;
                     } else {
+                        break;
+                    }
+
+                    if let Token::Symbol("!") = &tok.value {
+                        // Format specifier delimiter; end block.
+                        self.input.rewind(saved);
+                        end_block = true;
                         break;
                     }
 

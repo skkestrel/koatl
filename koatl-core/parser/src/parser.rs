@@ -959,27 +959,32 @@ where
     }
     .map_with(|x, e| x.spanned(e.span()));
 
-    let fstr = fstr_begin
-        .then(
-            expr_or_block
-                .clone()
-                .then(fstr_continue)
-                .map(|(block, cont)| {
-                    (
-                        FmtExpr {
-                            expr: block.indirect(),
-                            fmt: None,
-                        },
-                        cont,
-                    )
-                })
-                .repeated()
-                .collect::<Vec<_>>(),
-        )
-        .map(|(begin, parts)| SExprInner::Fstr(begin, parts))
-        .spanned_expr()
-        .labelled("f-string")
-        .boxed();
+    let mut fstr = Recursive::<chumsky::recursive::Indirect<TInput, SExpr, TExtra>>::declare();
+
+    fstr.define(
+        fstr_begin
+            .then(
+                expr_or_block
+                    .clone()
+                    .then(symbol("!").ignore_then(fstr.clone()).or_not())
+                    .then(fstr_continue)
+                    .map(|((block, fmt), cont)| {
+                        (
+                            FmtExpr {
+                                expr: block.indirect(),
+                                fmt: fmt.map(|x| x.indirect()),
+                            },
+                            cont,
+                        )
+                    })
+                    .repeated()
+                    .collect::<Vec<_>>(),
+            )
+            .map(|(begin, parts)| SExprInner::Fstr(begin, parts))
+            .spanned_expr()
+            .labelled("f-string")
+            .boxed(),
+    );
 
     let class_ = just(Token::Kw("class"))
         .ignore_then(
@@ -1187,7 +1192,7 @@ where
         .labelled("then-attribute")
         .boxed();
 
-    let raw_attr = symbol("!")
+    let raw_attr = symbol("::")
         .ignore_then(ident.clone())
         .map(Postfix::RawAttribute)
         .labelled("raw-attribute")

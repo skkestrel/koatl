@@ -1319,7 +1319,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                         (
                             FmtExpr {
                                 expr: expr.expr.traverse(state),
-                                fmt: expr.fmt,
+                                fmt: expr.fmt.map(|x| x.traverse(state)),
                             },
                             suffix,
                         )
