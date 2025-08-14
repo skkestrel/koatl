@@ -158,6 +158,10 @@ for i in ..10:
     print(i)
 ```
 
+## Primitive operators
+
+Use `<>` instead of `!=` and `===` and `<=>` instead of `is` and `is not`.
+
 ## Decorators
 
 As a synonym for calling a one-argument function, the `&` operator can be used to attach decorators:

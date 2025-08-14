@@ -142,6 +142,10 @@ impl<'src> ResolveState<'src> {
             fn_ctx.captures.insert(found.decl.clone().into());
 
             for fn_ctx in self.fn_stack.iter_mut().rev().skip(1) {
+                if fn_ctx.decls.contains(&found.decl) {
+                    break;
+                }
+
                 fn_ctx.indirect_captures.insert(found.decl.clone().into());
             }
 
@@ -152,9 +156,12 @@ impl<'src> ResolveState<'src> {
 
         if lhs {
             if scope.is_class || scope.is_global {
-                let decl =
-                    self.declarations
-                        .insert_declaration(ident.clone(), scope_key, DeclType::Let);
+                let decl = self.declarations.insert_declaration(
+                    &mut self.fn_stack,
+                    ident.clone(),
+                    scope_key,
+                    DeclType::Let,
+                );
 
                 scope.locals.push(decl.clone());
 
@@ -163,9 +170,12 @@ impl<'src> ResolveState<'src> {
         }
 
         if !lhs {
-            let decl =
-                self.declarations
-                    .insert_declaration(ident.clone(), self.root_scope, DeclType::Let);
+            let decl = self.declarations.insert_declaration(
+                &mut self.fn_stack,
+                ident.clone(),
+                self.root_scope,
+                DeclType::Let,
+            );
 
             self.scopes[self.root_scope].locals.push(decl.clone());
 
@@ -212,6 +222,7 @@ impl<'src> ResolveState<'src> {
         let temp_scope_key = self.scopes.insert(dummy_scope);
 
         let ph_decl = self.declarations.insert_declaration(
+            &mut self.fn_stack,
             Ident("x".into()).spanned(span),
             temp_scope_key,
             DeclType::Let,
@@ -332,9 +343,9 @@ impl<'src> ResolveState<'src> {
 
         let key = *self.scope_stack.last().unwrap();
 
-        let decl = self
-            .declarations
-            .insert_declaration(name.clone(), key, modifier);
+        let decl =
+            self.declarations
+                .insert_declaration(&mut self.fn_stack, name.clone(), key, modifier);
 
         if lifted {
             self.scopes[key].lifted_decls.push(decl.clone());
@@ -415,6 +426,8 @@ pub struct FnInfo {
     pub is_memo: bool,
     pub is_mapped_rhs: bool,
 
+    pub decls: Vec<DeclarationKey>,
+
     pub arg_names: Vec<DeclarationKey>,
 
     /**
@@ -439,6 +452,7 @@ impl FnInfo {
             is_memo: false,
             is_mapped_rhs: false,
             arg_names: Vec::new(),
+            decls: Vec::new(),
             captures: HashSet::new(),
             indirect_captures: HashSet::new(),
         }
@@ -461,6 +475,7 @@ pub struct Declaration<'src> {
 trait DeclSlotMapExt<'src> {
     fn insert_declaration(
         &mut self,
+        fn_stack: &mut Vec<FnInfo>,
         name: SIdent<'src>,
         scope: ScopeKey,
         modifier: DeclType,
@@ -470,6 +485,7 @@ trait DeclSlotMapExt<'src> {
 impl<'src> DeclSlotMapExt<'src> for SlotMap<DeclarationKey, Declaration<'src>> {
     fn insert_declaration(
         &mut self,
+        fn_stack: &mut Vec<FnInfo>,
         name: SIdent<'src>,
         scope: ScopeKey,
         modifier: DeclType,
@@ -486,7 +502,15 @@ impl<'src> DeclSlotMapExt<'src> for SlotMap<DeclarationKey, Declaration<'src>> {
             is_import: false,
         };
 
-        self.insert(decl)
+        let key = self.insert(decl);
+
+        if let Some(fnctx) = fn_stack.last_mut() {
+            if matches!(modifier, DeclType::Let | DeclType::Const) {
+                fnctx.decls.push(key);
+            }
+        }
+
+        key
     }
 }
 
@@ -614,9 +638,12 @@ fn error_ident_and_decl<'src>(
     let ident = Ident("_".into()).spanned(span);
     let expr = Expr::Ident(ident.clone()).spanned(span).indirect();
 
-    let decl = state
-        .declarations
-        .insert_declaration(ident.clone(), state.err_scope, DeclType::Let);
+    let decl = state.declarations.insert_declaration(
+        &mut state.fn_stack,
+        ident.clone(),
+        state.err_scope,
+        DeclType::Let,
+    );
 
     state.resolutions.insert(expr.as_ref().into(), decl);
 
@@ -861,6 +888,7 @@ fn pattern_scoped<'src>(
         .iter()
         .map(|x| {
             state.declarations.insert_declaration(
+                &mut state.fn_stack,
                 x.clone().spanned(pattern.span),
                 scope_key,
                 DeclType::Let,
@@ -1187,6 +1215,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                                 let cap = capture.spanned(pattern.span);
 
                                 let decl = state.declarations.insert_declaration(
+                                    &mut state.fn_stack,
                                     cap,
                                     scope,
                                     DeclType::Let,
@@ -1210,6 +1239,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                         }
                         ArgDefItem::ArgSpread(arg) => {
                             let decl = state.declarations.insert_declaration(
+                                &mut state.fn_stack,
                                 arg.clone(),
                                 scope,
                                 DeclType::Let,
@@ -1221,6 +1251,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                         }
                         ArgDefItem::KwargSpread(arg) => {
                             let decl = state.declarations.insert_declaration(
+                                &mut state.fn_stack,
                                 arg.clone(),
                                 scope,
                                 DeclType::Let,
@@ -1432,7 +1463,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                             MappingItem::Item(key.traverse(state), value.traverse(state))
                         }
                         MappingItem::Spread(i) => MappingItem::Spread(i.traverse(state)),
-                        MappingItem::Ident(i) => MappingItem::Ident(i),
+                        MappingItem::Ident(i) => MappingItem::Ident(i.traverse(state)),
                     })
                     .collect::<Vec<_>>(),
             ),
@@ -1640,6 +1671,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                     ImportList::Leaves(imports) => {
                         for (ident, as_name) in imports {
                             let decl = state.declarations.insert_declaration(
+                                &mut state.fn_stack,
                                 as_name.clone().unwrap_or(ident.clone()),
                                 scope_key,
                                 if import_stmt.reexport {

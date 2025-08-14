@@ -72,3 +72,7 @@ x = (       # this is not a tuple! this is a block-expression,
     3
 )
 ```
+
+## Sets
+
+Koatl has no syntax for defining literal sets; use `set([...])`.

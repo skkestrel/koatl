@@ -61,7 +61,7 @@ analyze_repos = query =>
                 category: classify_language(repo.language)
                 activity: repo.activity_score()
             })
-            .sort(repo => repo.activity, reverse=True)
+            .sorted(repo => repo.activity, reverse=True)
     )
 
 compute_stats = repos =>
@@ -80,7 +80,7 @@ compute_stats = repos =>
                 total_stars: repos.map($.stars).sum()
                 avg_activity: repos.map($.activity).mean()
             })
-            .sort($.total_stars, reverse=True)
+            .sorted($.total_stars, reverse=True)
             .take(5),
 
         categories: by_category
@@ -89,7 +89,7 @@ compute_stats = repos =>
                 count: repos.len
                 languages: repos.map($.language).unique().take(3)
             })
-            .sort($.count, reverse=True),
+            .sorted($.count, reverse=True),
 
         most_active: repos.take(3).map(repo => {
             name: repo.name

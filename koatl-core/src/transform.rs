@@ -2019,9 +2019,10 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 for capture in deps_set {
                     let decl = &ctx.declarations[*capture];
                     let decl_scope = &ctx.scopes[decl.scope];
+                    let py_name = ctx.decl_py_ident(*capture)?;
 
                     if !decl_scope.is_global {
-                        nonglobal_deps.push(decl.name.0.clone());
+                        nonglobal_deps.push(py_name.clone());
                     }
                 }
 

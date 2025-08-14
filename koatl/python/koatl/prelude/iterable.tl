@@ -11,6 +11,16 @@ export Iterable = Extension.trait& class(Traversable, Trait):
             next(it, None)
         it
 
+    skip_while = (self, f) =>
+        let it = self.iter
+        while True:
+            try:
+                let value = next(it)
+                if not f(value):
+                    return Iterable.chain([value], it)
+            except StopIteration():
+                return it
+
     take = (self, n) =>
         let impl = () =>
             let it = self.iter
@@ -70,7 +80,7 @@ export Iterable = Extension.trait& class(Traversable, Trait):
 
     reverse = self => reversed(list(self.iter))
 
-    sort = (self, key=None, reverse=False) =>
+    sorted = (self, key=None, reverse=False) =>
         sorted(self.iter, key=key, reverse=reverse)
 
     copy = self => itertools.tee(self.iter)
@@ -99,19 +109,19 @@ export Iterable = Extension.trait& class(Traversable, Trait):
             acc[i] = value
         acc
 
-    group_by = (self, f) =>
+    group_by = (self, f=None) =>
         let acc = dict()
         for i in self:
-            let key = f(i)
+            let key = f === None then i else f(i)
             if not acc.__contains__(key):
                 acc[key] = []
             acc[key].append(i)
         acc
 
-    count_by = (self, f) =>
+    count_by = (self, f=None) =>
         let acc = dict()
         for i in self:
-            let key = f(i)
+            let key = f === None then i else f(i)
             if not acc.__contains__(key):
                 acc[key] = 0
             acc[key] += 1

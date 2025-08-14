@@ -12,7 +12,7 @@ word_count = url =>
         .split()
         .map(re.sub("[^a-zA-Z]", "", $))
         .count_by($.lower())
-        .sort([_, value] => value, reverse=True)
+        .sorted([_, value] => value, reverse=True)
         .take(10)
         .list()
     )
