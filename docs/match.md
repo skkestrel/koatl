@@ -10,14 +10,24 @@ f = [x, [y, z]] => x + y + z
 f([1, [2, 3]]) == 6
 
 f(1) # raises MatchError
+
+
+# this looks strange, but just ensures that the first argument matches the constant 1
+f = 1 => 1
+
+f(1) == 1
+f("asdf") # MatchError
 ```
 
 ```koatl
 for x, y in [[1, 2]]:
     print(x, y)
 
-# raises MatchError
-for {1: x} in [1]:
+for {1: x} in [1]: # MatchError
+    print(x)
+
+# rudimentary argument validation by matching the type `str`
+for str(x) in ["x", "y", "z"]:
     print(x)
 ```
 
@@ -44,20 +54,21 @@ match x:
         # this matches correctly
 ```
 
-Koatl introduces a shorthand syntax for matching values:
+In Koatl, matching against _captures_ versus _values_ is distinguished by a leading `.`:
 
 ```koatl
 y = 2
-match x: # or "x match:"
-    .y => print("matched")
-    y => print("fallback")
+x match:
+    .y => print("matched the constant y")
+    .module.value => print("matched a module constant")
+    y => print("capture any value to a new variable y")
 ```
 
-Like if-expressions, matches are also expressions in Koatl, and introduces the `default:` keyword that is "longhand" for `_ =>`:
+Like if-expressions, matches are also expressions in Koatl, and introduces the `default` keyword that is a bit more readable than `_ =>`:
 
 ```koatl
 result = x match:
-    [_ as item] => True
+    [_] => True
     default: False
 
 result = x match [_] => True default False

@@ -16,6 +16,40 @@ a()
     .do_other_thing()
 ```
 
+## Scopes
+
+Koatl adds scopes to Python:
+
+```koatl
+let a = 1
+if True:
+    let a = 2
+    print(a)
+print(a)
+
+# Prints:
+# 2
+# 1
+```
+
+The `nonlocal` keyword is never needed in Koatl, as declarations later in a scope can never affect previous statements:
+
+```koatl
+f = () =>
+    let a = 1
+    g = () =>
+        a += 2 # nonlocal not needed here
+        let a = 4
+        print(a)
+    g()
+    print(a)
+f()
+
+# Prints:
+# 4
+# 3
+```
+
 ## Nesting block comments
 
 Koatl adds `#- -#` block comments, which can nest inside each other, allowing more commenting flexibility
@@ -81,7 +115,7 @@ my_list = [
     3
 ]
 
-# Records replace dicts in Koatl - they behave similarly to Javascript objects
+# {} defines a Record, not a dict - they're a subclass of dict that behaves like Javascript objects
 my_record = {
     1: 4
     asdf: 4

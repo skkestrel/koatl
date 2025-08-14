@@ -15,7 +15,7 @@ assert_eq(x.a, 1)
 
 
 SomeTrait = Extension.trait& class(Trait):
-    required_method = Abstract
+    required_method = Trait.abstract& self => ()
 
     derived_method = self => self.required_method()
     derived_property = Trait.property& self => self.required_method()

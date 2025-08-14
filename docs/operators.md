@@ -4,10 +4,10 @@ Koatl adds a number of operators that allow for much greater expressivity and co
 
 ## Lambdas
 
-Koatl has no `def` statement; they're completely replaced by the new `=>` syntax:
+Koatl has no need for `def` as all functions can be defined using `=>`:
 
 ```koatl
-f = (a, b, *args, **kwargs) =>
+let f = (a, b, *args, **kwargs) =>
     other_func(a + 2, b / a, *args, **kwargs)
 ```
 
@@ -23,11 +23,15 @@ f(a, $, c)
 # x => x + 2 * y / 4
 ```
 
-...the rules are a bit weird (to be detailed later), but they should "just work" in most situations.
+Rules:
+
+1. A bare `$` as an argument to a function call, i.e. `fn(a, $, b)`, creates `x => fn(a, x, b)`.
+2. Any other `$` turns its containing expression into a function, up to the nearest function call, i.e., `fn(a, $.value*3+2, b)` becomes `x => fn(a, x.value*3+2)`.
+3. When in doubt, use an arrow function.
 
 ## Piping
 
-`x | f` means `f(x)`, and can be chained, which lets us understand complex transformations of data at a glance
+`x | f` means `f(x)`, and can be chained, for intuitive piping syntax
 
 ```koatl
 data
@@ -40,7 +44,7 @@ data
 
 ## Try-expressions
 
-Try-expressions elegantly interface with the outside world without breaking the flow of a program with a try-catch block, instead returning exceptions as a regular value in the Result monad:
+Try-expressions elegantly interface with the outside world without breaking the flow of a program with a try-catch block, instead returning exceptions as a regular value wrapped in Result:
 
 ```koatl
 >>> try a
@@ -51,7 +55,7 @@ Ok(1)
 
 ## If-expressions
 
-In Koatl, if-statements can be expressions too.
+Most statements, including ifs, can act as expressions:
 
 ```koatl
 x =
@@ -78,7 +82,8 @@ x = with f = open("my_file.txt", "r"):
 
 ## Matches-expressions
 
-Matches-expressions resolve to either True or False, using Python pattern matching (see [Pattern matching](match)):
+Matches-expressions resolve to either True or False, using Python pattern matching (see [Pattern matching](match)).
+When used as the condition in an if-statement, bound variables can be accessed in the then-scope:
 
 ```koatl
 >>> x = [1, 2, 3]
@@ -95,6 +100,17 @@ This makes regex matching especially convenient:
 123 456
 ```
 
+If-matches-not expressions can also be used to conditionally destructure values:
+
+```koatl
+if 123 matches not str(x):
+    # this block must be of bottom type, i.e., return, break, continue, or throw
+    return None
+
+# x is a string
+x.join(["a", "b"])
+```
+
 ## Coalescing operators
 
 We can use coalescing operators to work with try-expressions and the Result monad.
@@ -104,7 +120,7 @@ They lazily evaluate the RHS default value on Err, None, and Exceptions.
 config_option = try get_config_value() ?? default_value
 ```
 
-### Mapping operators:
+### Mapping operators
 
 Mapping operators `?.`, `?()`, `?[]`, work as usual, on both Results and regular values.
 
@@ -119,7 +135,7 @@ Ok[1]
 Err(ValueError())
 
 >>> Ok(None)?.prop
-<raised AttributeError>
+<...raised AttributeError...>
 ```
 
 ## Better slices
@@ -135,6 +151,13 @@ my_saved_slice = ..5
 some_other_array[my_saved_slice]
 ```
 
+Slices implement the Iterable trait (which is distinct, but related to, `__iter__`), so they can be used as ranges like normal:
+
+```koatl
+for i in ..10:
+    print(i)
+```
+
 ## Decorators
 
 As a synonym for calling a one-argument function, the `&` operator can be used to attach decorators:
@@ -145,3 +168,21 @@ Foo = class:
 ```
 
 `a& b` is equivalent to `a(b)`.
+
+## F-strings
+
+Like everywhere else, f-strings can contain blocks too:
+
+```koatl
+f"Hello, my name is {
+    let name = "Maryam"
+    name += " Mirzakhani"
+    name
+}"
+```
+
+For various reasons, format strings should be separated using `!` instead of `:`:
+
+```koatl
+f"{123!.2f}"
+```

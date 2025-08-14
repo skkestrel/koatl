@@ -7,9 +7,9 @@ import random
 
 # Define a conversational trait for objects that can respond
 export ConversationalTrait = Extension.trait& class(Trait):
-    respond_to = Abstract
-    context = Abstract
-    
+    respond_to = Trait.abstract& self => ()
+    context = Trait.abstract& self => ()
+
     # Derived methods available to all implementations
     chat_with = Trait.property& self => user_input =>
         self.respond_to(user_input, self.context)
@@ -33,11 +33,11 @@ Extension.method(str, "sentiment_score")& self =>
     # Simplified sentiment analysis
     let positive_words = ["good", "great", "awesome", "excellent", "fantastic", "love", "like", "happy", "amazing"]
     let negative_words = ["bad", "terrible", "awful", "hate", "dislike", "sad", "angry", "frustrated", "annoying"]
-    
+
     let words = self.lower().split()
     let positive_count = positive_words.filter(words.__contains__).count()
     let negative_count = negative_words.filter(words.__contains__).count()
-    
+
     positive_count - negative_count
 
 Extension.method(str, "classify_intent")& self =>
@@ -59,12 +59,12 @@ create_weather_bot = () => {
         last_query: None
         conversation_history: []
     }
-    
+
     respond_to: Record.method& (self, message, context) =>
         let entities = message.extract_entities()
         let intent = message.classify_intent()
         let sentiment = message.sentiment_score()
-        
+
         # Update context
         context.conversation_history.append({
             message: message
@@ -72,69 +72,69 @@ create_weather_bot = () => {
             sentiment: sentiment
             timestamp: "now"  # Would use datetime in real implementation
         })
-        
+
         # Pattern match on intent and entities
         (intent, entities) match:
             ("weather_query", {numbers: [location_code]}) =>
                 f"The weather in location {location_code} is sunny with 22°C! 🌞"
-            
+
             ("weather_query", _) =>
                 "I'd love to help with weather! Could you specify a location?"
-            
+
             ("time_query", _) =>
                 "The current time is 3:42 PM! ⏰"
-            
+
             ("joke_request", _) =>
                 random.choice([
                     "Why don't scientists trust atoms? Because they make up everything! 😄"
                     "I told my wife she was drawing her eyebrows too high. She looked surprised! 😂"
                     "Why don't skeletons fight each other? They don't have the guts! 💀"
                 ])
-            
+
             ("help_request", _) =>
                 "I can help you with weather, time, jokes, and general conversation! What would you like to know?"
-            
+
             ("farewell", _) =>
                 "Goodbye! It was nice chatting with you! 👋"
-            
+
             ("question", entities) if entities.numbers =>
                 f"That's an interesting question involving the numbers {", ".join(entities.numbers)}!"
-            
+
             (_, entities) if entities.emails =>
                 f"I notice you mentioned an email: {entities.emails[0]}. Are you looking for help with that?"
-            
+
             (_, _) if sentiment > 1 =>
                 "I'm glad you're feeling positive! How can I help make your day even better? 😊"
-            
+
             (_, _) if sentiment < -1 =>
                 "I'm sorry to hear you're not feeling great. Is there anything I can do to help? 🤗"
-            
+
             _ =>
                 "That's interesting! Tell me more about that."
 }
 
-# News bot with different personality  
+# News bot with different personality
 create_news_bot = () => {
     context: {
         topics_of_interest: ["technology", "science", "politics"]
         reading_level: "advanced"
         last_articles: []
     }
-    
+
     respond_to: Record.method& (self, message, context) =>
         let intent = message.classify_intent()
         let entities = message.extract_entities()
-        
+
         intent match:
             "question" if "news" in message.lower() =>
                 "Here are today's top stories: Tech stocks surge, new scientific discovery announced! 📰"
-            
+
             "question" if "technology" in message.lower() =>
                 "Latest in tech: AI advances continue, new programming languages emerge! 💻"
-            
+
             _ if entities.hashtags =>
                 f"I see you're interested in #{entities.hashtags[0]}. Let me find relevant news!"
-            
+
             _ =>
                 "I specialize in news and current events. What topics interest you most?"
 }
@@ -143,53 +143,53 @@ create_news_bot = () => {
 create_conversation_manager = bots => {
     active_bot: None
     bots: bots
-    
+
     route_message: Record.method& (self, message) =>
         # Smart routing based on message content
         message.lower() match:
-            text if "weather" in text => 
+            text if "weather" in text =>
                 self.active_bot = self.bots.weather
-                
+
             text if ("news" in text or "article" in text) =>
                 self.active_bot = self.bots.news
-                
+
             text if ("switch" in text or "change" in text) =>
                 # Let user switch bots
                 let available = self.bots.keys().list()
                 f"Available bots: {", ".join(available)}. Which would you like?"
-                
+
             _ if self.active_bot === None =>
                 # Default to weather bot
                 self.active_bot = self.bots.weather
-        
+
         self.active_bot?.chat_with(message) ?? "I'm not sure how to help with that."
 }
 
-# Conversation flow with monadic error handling  
+# Conversation flow with monadic error handling
 run_chat_session = () =>
     print("🤖 Multi-Bot Chat System Starting...")
     print("Available commands: 'quit' to exit, 'switch' to change bots")
     print("Try asking about weather, news, time, or jokes!\n")
-    
+
     let bots = {
         weather: create_weather_bot()
         news: create_news_bot()
     }
-    
+
     let manager = create_conversation_manager(bots)
-    
+
     # Chat loop using recursive function with pattern matching
     let chat_loop = () =>
         let user_input = input("You: ").strip()
-        
+
         user_input.lower() match:
             "quit" | "exit" | "bye" =>
                 print("🤖: Goodbye! Thanks for chatting! 👋")
-                
+
             "" =>
                 print("🤖: I'm here when you're ready to chat!")
                 chat_loop()
-                
+
             message =>
                 try:
                     let response = manager.route_message(message)
@@ -200,16 +200,16 @@ run_chat_session = () =>
                 except Exception(e):
                     print(f"🤖: Sorry, I encountered an error: {e}")
                     chat_loop()
-    
+
     chat_loop()
 
 # Demo conversation examples
 demo_conversations = () =>
     print("🎭 Running Demo Conversations...\n")
-    
+
     let weather_bot = create_weather_bot()
     let news_bot = create_news_bot()
-    
+
     let demo_messages = [
         "What's the weather like in 90210?"
         "Tell me a joke!"
@@ -220,7 +220,7 @@ demo_conversations = () =>
         "Contact me at user@example.com"
         "Goodbye!"
     ]
-    
+
     demo_messages.for_each(message =>
         print(f"User: {message}")
         print(f"Weather Bot: {weather_bot.chat_with(message)}")
@@ -232,6 +232,6 @@ demo_conversations = () =>
 if __name__ == "__main__":
     # Uncomment to run interactive chat:
     # run_chat_session()
-    
+
     # Run demo instead:
     demo_conversations()

@@ -3,7 +3,7 @@ import builtins
 import .functional.(Traversable, Ok, Err, Memo, Async, AsyncMemo, Result)
 
 export Iterable = Extension.trait& class(Traversable, Trait):
-    iter = Abstract
+    iter = Trait.abstract& self => None
 
     skip = (self, n) =>
         let it = self.iter

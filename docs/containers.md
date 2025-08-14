@@ -19,7 +19,7 @@ x["my_key"] == 1
 x["key"] == 2
 ```
 
-As mentioned before, multiline records don't need commas - just remember that the `{` has to be the last character on the first line:
+Multiline records don't need commas - just ensure that the `{` is the last character on the first line, to open a new block:
 
 ```koatl
 x = {
@@ -27,6 +27,21 @@ x = {
     b: 2
     c: 3
 }
+```
+
+Records can be imbued with 1) functions, 2) methods, and 3) properties:
+
+```koatl
+x = {
+    a: 1
+    get_global_value: () => 2
+    get_own_a: Record.method& self => self.a
+    own_a_prop: Record.property& self => self.a
+}
+
+x.get_global_value() == 2
+x.get_own_a() == 1
+x.own_a_prop == 1
 ```
 
 ## Lists
@@ -56,20 +71,4 @@ x = (       # this is not a tuple! this is a block-expression,
     2
     3
 )
-```
-
-## Better destructuring
-
-Koatl allows you to destructure both lists and Records (which Python unfortunately doesn't).
-
-```koatl
-[a, b] = [1, 2]
-
-{1: a, 2: b} = {1: 1, 2: 2}
-
-{a, b, c} = {a: "1", b: "2", c: "3"}
-
-# and as much nesting as you want
-
-[a, {b, c}] = [42, {b: "b", c: "c"}]
 ```

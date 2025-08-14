@@ -1,6 +1,6 @@
 # Extension attributes (experimental)
 
-Extension attributes allow us to bestow properties and methods on other types (including builtin types) without having to edit their type definition or use a library like `forbiddenfruit`.
+Extension attributes allow us to non-destructively bestow properties and methods on any type (including builtin types).
 
 Extensions are registered globally using the `Extension.method(type, name)`, `Extension.property(type, name)`, and `Extension.trait` decorators.
 `Extension.method` and `Extension.property` enable lookup on the specified `type` (or any subtype).
@@ -13,9 +13,7 @@ Example:
 
 ```koatl
 export SomeTrait = Extension.trait& class(Trait):
-    required_method = Abstract
-    # or...
-    # required_method = Abstract& self => ()
+    required_method = Trait.abstract& self => ()
 
     derived_method = self => self.required_method()
     derived_property = Trait.property& self => self.required_method()

@@ -40,6 +40,7 @@ class MappingMeta(type):
         return [(k, v) for k, v in inspect.getmembers(self) if not k.startswith("_")]
 
 
+# A utility base class to inherit from to enable __getitem__ method lookup on types and thus destructuring.
 class Class(metaclass=MappingMeta):
     pass
 
@@ -104,9 +105,9 @@ class Trait(metaclass=TraitMeta):
         fn._property = True
         return property(fn)
 
+    @staticmethod
+    def abstract(value):
+        return abc.abstractmethod(value)
 
-Abstract = lambda value: abc.abstractmethod(value)
-Abstract.__isabstractmethod__ = True
 
-
-__all__ = ["Class", "Trait", "Abstract"]
+__all__ = ["Class", "Trait"]
