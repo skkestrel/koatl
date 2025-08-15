@@ -6,19 +6,24 @@ Koatl unifies Python's `import` and `from ... import` syntax into a single state
 
 ```koatl
 import a.b.c.d
-# equivalent to Python's:
-# import a
 # from a.b.c import d
 
 import a.b.c.(d, e, f)
-# equivalent to Python's:
-# import a
 # from a.b.c import d, e, f
 
 import a.b.c.*
-# equivalent to Python's:
-# import a
 # from a.b.c import *
+
+import a.b.c.(
+    .e
+    .
+    d
+    f.g.(i, j)
+)
+# from a.b import c
+# from a.b.c import d
+# from a.b import e
+# from a.b.c.f.g import i, j
 ```
 
 ## Exports

@@ -59,8 +59,8 @@ impl AstBuilder {
         Stmt::For(target.indirect(), iter.indirect(), body.indirect()).spanned(self.span)
     }
 
-    pub fn import<'src>(&self, import: ImportStmt<'src>) -> SStmt<'src> {
-        Stmt::Import(import).spanned(self.span)
+    pub fn import<'src>(&self, import: ImportTree<'src>, reexport: bool) -> SStmt<'src> {
+        Stmt::Import(import, reexport).spanned(self.span)
     }
 
     pub fn try_<'src>(
@@ -222,42 +222,14 @@ impl AstBuilder {
         &self,
         trunk: Vec<impl Into<Ident<'src>>>,
         level: usize,
-    ) -> ImportStmt<'src> {
-        ImportStmt {
+    ) -> ImportTree<'src> {
+        ImportTree {
             trunk: trunk
                 .into_iter()
                 .map(|t| t.into().spanned(self.span))
                 .collect(),
-            imports: ImportList::Star,
+            leaf: ImportLeaf::Star.spanned(self.span),
             level,
-            reexport: false,
-        }
-    }
-
-    pub fn import_<'src>(
-        &self,
-        trunk: Vec<impl Into<Ident<'src>>>,
-        leaves: Vec<(impl Into<Ident<'src>>, Option<impl Into<Ident<'src>>>)>,
-        level: usize,
-    ) -> ImportStmt<'src> {
-        ImportStmt {
-            trunk: trunk
-                .into_iter()
-                .map(|t| t.into().spanned(self.span))
-                .collect(),
-            imports: ImportList::Leaves(
-                leaves
-                    .into_iter()
-                    .map(|(name, alias)| {
-                        (
-                            name.into().spanned(self.span),
-                            alias.map(|a| a.into().spanned(self.span)),
-                        )
-                    })
-                    .collect(),
-            ),
-            level,
-            reexport: false,
         }
     }
 }

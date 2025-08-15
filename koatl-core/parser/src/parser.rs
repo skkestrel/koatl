@@ -646,55 +646,62 @@ where
         .labelled("continue statement")
         .boxed();
 
+    let import_item = recursive(|import_item| {
+        // TODO this looks extremely cursed
+        let level = symbol("..")
+            .to(2)
+            .repeated()
+            .foldr(
+                symbol(".")
+                    .or_not()
+                    .map(|x| if x.is_some() { 1 } else { 0 }),
+                |acc, sum| acc + sum,
+            )
+            .boxed();
+
+        let prefix = ident
+            .clone()
+            .then_ignore(symbol("."))
+            .repeated()
+            .collect()
+            .boxed();
+
+        choice((
+            group((
+                level,
+                prefix,
+                choice((
+                    enumeration(import_item.clone(), symbol(","))
+                        .delimited_by_with_eol(symbol("("), symbol(")"))
+                        .map(ImportLeaf::Multi),
+                    ident
+                        .clone()
+                        .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not())
+                        .map(|(item, name)| ImportLeaf::Single(item, name)),
+                    symbol("*").map(|_| ImportLeaf::Star),
+                )),
+            ))
+            .map_with(|(level, prefix, choice), e| ImportTree {
+                trunk: prefix,
+                level: level,
+                leaf: choice.spanned(e.span()),
+            }),
+            symbol(".")
+                .ignore_then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not())
+                .map_with(|alias, e| ImportTree {
+                    trunk: vec![],
+                    level: 0,
+                    leaf: ImportLeaf::This(alias).spanned(e.span()),
+                }),
+        ))
+    });
+
     let import_stmt = just(Token::Kw("export"))
         .to(1)
         .or_not()
         .then_ignore(just(Token::Kw("import")))
-        .then(group((
-            // TODO this looks extremely cursed
-            symbol("..")
-                .to(2)
-                .repeated()
-                .foldr(
-                    symbol(".")
-                        .or_not()
-                        .map(|x| if x.is_some() { 1 } else { 0 }),
-                    |acc, sum| acc + sum,
-                )
-                .boxed(),
-            ident
-                .clone()
-                .then_ignore(symbol("."))
-                .repeated()
-                .collect()
-                .boxed(),
-            choice((
-                enumeration(
-                    ident
-                        .clone()
-                        .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not()),
-                    symbol(","),
-                )
-                .delimited_by_with_eol(symbol("("), symbol(")"))
-                .map(ImportList::Leaves)
-                .boxed(),
-                just(Token::Symbol("*")).map(|_| ImportList::Star),
-                ident
-                    .clone()
-                    .then(just(Token::Kw("as")).ignore_then(ident.clone()).or_not())
-                    .map(|x| ImportList::Leaves(vec![x]))
-                    .boxed(),
-            ))
-            .boxed(),
-        )))
-        .map(|(reexport, (level, trunk, import_list))| {
-            SStmtInner::Import(ImportStmt {
-                trunk,
-                imports: import_list,
-                level,
-                reexport: reexport.is_some(),
-            })
-        })
+        .then(import_item)
+        .map(|(reexport, tree)| SStmtInner::Import(tree, reexport.is_some()))
         .labelled("import statement")
         .boxed();
 
@@ -1133,6 +1140,7 @@ where
 
     enum Postfix<'a> {
         Call(Vec<CallItem<'a, STree<'a>>>),
+        MethodCall(SIdent<'a>, Vec<CallItem<'a, STree<'a>>>),
         Subscript(Vec<ListItem<STree<'a>>>),
         Attribute(SIdent<'a>),
         ScopedAttribute(SExpr<'a>),
@@ -1180,6 +1188,12 @@ where
     .labelled("subscript")
     .boxed();
 
+    let method_call = symbol(".")
+        .ignore_then(ident.clone())
+        .then(call_args.clone())
+        .map(|(ident, args)| Postfix::MethodCall(ident, args))
+        .labelled("method-call");
+
     let attribute = symbol(".")
         .ignore_then(ident.clone())
         .map(Postfix::Attribute)
@@ -1203,12 +1217,25 @@ where
             symbol("?")
                 .to(1)
                 .or_not()
-                .then(choice((call, subscript, attribute, then, raw_attr)))
+                .then(choice((
+                    call,
+                    subscript,
+                    method_call,
+                    attribute,
+                    then,
+                    raw_attr,
+                )))
                 .repeated(),
             |expr, (coal, op), e| -> SExpr {
                 if coal.is_none() {
                     match op {
                         Postfix::Call(args) => Expr::Call(expr.indirect(), args),
+                        Postfix::MethodCall(name, args) => Expr::Call(
+                            Expr::Attribute(expr.indirect(), name)
+                                .spanned(e.span())
+                                .indirect(),
+                            args,
+                        ),
                         Postfix::Subscript(args) => Expr::Subscript(expr.indirect(), args),
                         Postfix::RawAttribute(attr) => Expr::RawAttribute(expr.indirect(), attr),
                         Postfix::ScopedAttribute(rhs) => {
@@ -1219,6 +1246,12 @@ where
                 } else {
                     match op {
                         Postfix::Call(args) => Expr::MappedCall(expr.indirect(), args),
+                        Postfix::MethodCall(name, args) => Expr::MappedCall(
+                            Expr::MappedAttribute(expr.indirect(), name)
+                                .spanned(e.span())
+                                .indirect(),
+                            args,
+                        ),
                         Postfix::Subscript(args) => Expr::MappedSubscript(expr.indirect(), args),
                         Postfix::RawAttribute(attr) => {
                             Expr::MappedRawAttribute(expr.indirect(), attr)

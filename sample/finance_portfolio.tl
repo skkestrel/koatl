@@ -1,5 +1,5 @@
 # Financial Portfolio Analyzer
-# Demonstrates Coatl's pattern matching, monads, extensions, and data processing
+# Demonstrates Koatl's pattern matching, monads, extensions, and data processing
 
 import datetime.(datetime, timedelta)
 import random
@@ -12,13 +12,13 @@ create_stock = (symbol, price, shares, purchase_date) => {
     shares: shares
     purchase_date: purchase_date
     purchase_price: price
-    
+
     # Extension methods using Record.method
     current_value: Record.method& self => self.price * self.shares
-    
+
     days_held: Record.method& (self, date) =>
         (date - self.purchase_date).days
-    
+
     annualized_return: Record.method& (self, date) =>
         let days = self.days_held(date)
         days > 0 then (self.price / self.purchase_price - 1) * (365.0 / days) else 0.0
@@ -43,22 +43,22 @@ update_portfolio = (portfolio, action, date) =>
                     **portfolio
                     (symbol): create_stock(symbol, price, shares, date)
                 }
-        
+
         {type: "sell", symbol, shares} =>
             let stock = @(try portfolio[symbol]).map_err(_ => KeyError(f"Stock {symbol} not found"))
-            
+
             stock.shares >= shares then {
                 **portfolio
                 (symbol): {**stock, shares: stock.shares - shares}
             } else:
                 @Err(ValueError(f"Insufficient shares: {stock.shares} < {shares}"))
-        
+
         {type: "dividend", symbol, amount} =>
             portfolio[symbol]?.(stock => {
                 **portfolio
                 (symbol): {**stock, dividends: (try stock.dividends ?? 0) + amount}
-            })?() ?? portfolio
-        
+            }) ?? portfolio
+
         _ => @Err(ValueError(f"Unknown action: {action}"))
     )
 
@@ -71,7 +71,7 @@ simulate_market_day = portfolio =>
                 let volatility = 0.02  # 2% daily volatility
                 let change = random.gauss(0.001, volatility)  # Slight upward bias
                 let new_price = stock.price * (1 + change)
-                
+
                 (symbol, {**stock, price: new_price})
             )
             .record()
@@ -81,18 +81,18 @@ simulate_market_day = portfolio =>
 analyze_portfolio = (portfolio, date) =>
     let total_value = portfolio.values().map($.current_value()).sum()
     let stocks = portfolio.values().list()
-    
+
     # Risk analysis using pattern matching on volatility
     let risk_assessment = stocks
         .map(stock => {
             **stock
-            risk_level: stock.annualized_return(date).(abs)() match:
+            risk_level: stock.annualized_return(date).(abs) match:
                 x if x < 0.1 => "Low"
-                x if x < 0.3 => "Medium" 
+                x if x < 0.3 => "Medium"
                 _ => "High"
         })
         .group_by($.risk_level)
-    
+
     # Sector diversification (simplified)
     let sector_allocation = stocks
         .map(stock => {
@@ -108,7 +108,7 @@ analyze_portfolio = (portfolio, date) =>
             total_value: holdings.map($.value).sum()
             percentage: holdings.map($.value).sum() / total_value * 100
         })
-    
+
     # Performance metrics
     let performance = stocks.map(stock => {
         symbol: stock.symbol
@@ -136,7 +136,7 @@ run_portfolio_simulation = () =>
     print("🏦 Starting Portfolio Simulation")
 
     let date = datetime.now()
-    
+
     # Initial portfolio setup
     let initial_actions = [
         {type: "buy", symbol: "TECH001", shares: 100, price: 150.0}
@@ -144,7 +144,7 @@ run_portfolio_simulation = () =>
         {type: "buy", symbol: "HEALTH003", shares: 75, price: 120.0}
         {type: "buy", symbol: "TECH004", shares: 200, price: 45.0}
     ]
-    
+
     # Build portfolio with error handling
     let portfolio = initial_actions
         .fold({}, (portfolio, action) =>
@@ -155,17 +155,17 @@ run_portfolio_simulation = () =>
                     portfolio
                 )
         )
-    
+
     print(f"📊 Initial portfolio created with {portfolio.len} stocks")
-    
+
     # Simulate 30 days of trading
     let final_portfolio = (..30).fold(portfolio, (current_portfolio, day) =>
         print(f"📅 Day {day + 1}")
         date = date + timedelta(days=1)
-        
+
         # Simulate market changes
         let updated_portfolio = simulate_market_day(current_portfolio).run()
-        
+
         # Random trading actions
         let action = random.choice([
             {type: "buy", symbol: "TECH001", shares: 10, price: updated_portfolio["TECH001"].price * 1.01}
@@ -173,7 +173,7 @@ run_portfolio_simulation = () =>
             {type: "dividend", symbol: "HEALTH003", amount: 50.0}
             None  # No action
         ])
-        
+
         action match:
             None => updated_portfolio
             action => update_portfolio(updated_portfolio, action, date) match:
@@ -184,10 +184,10 @@ run_portfolio_simulation = () =>
                     print(f"❌ Failed: {error}")
                     updated_portfolio
     )
-    
+
     # Final analysis
     let analysis = analyze_portfolio(final_portfolio, date)
-    
+
     print("\n📈 Final Portfolio Analysis:")
     print(f"Total Value: ${analysis.total_value}")
     print(f"Total P&L: ${analysis.total_profit_loss}")
@@ -202,7 +202,7 @@ run_portfolio_simulation = () =>
     analysis.sector_allocation.for_each(sector =>
         print(f"  {sector.sector}: {sector.percentage}% (${sector.total_value})")
     )
-    
+
     print("\n⚠️  Risk Breakdown:")
     analysis.risk_breakdown.for_each(risk =>
         print(f"  {risk.risk_level} Risk: {risk.count} stocks, ${risk.total_value}")

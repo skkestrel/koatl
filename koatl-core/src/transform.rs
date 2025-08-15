@@ -1661,45 +1661,96 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
             }
             Stmt::Break => pre.push(a.break_()),
             Stmt::Continue => pre.push(a.continue_()),
-            Stmt::Import(import_stmt) => {
-                let mut aliases = vec![];
+            Stmt::Import(tree, reexport) => {
+                fn traverse_import_tree<'src>(
+                    tree: &ImportTree<'src>,
+                    mut trunk_accum: Vec<SIdent<'src>>,
+                    mut level: usize,
+                    reexport: bool,
+                ) -> TlResult<PyBlock<'src>> {
+                    let to_drain = std::cmp::min(tree.level, trunk_accum.len());
+                    trunk_accum.truncate(trunk_accum.len() - to_drain);
+                    level += tree.level - to_drain;
 
-                let base_module = import_stmt
-                    .trunk
-                    .iter()
-                    .map(|ident| ident.value.0.as_ref())
-                    .collect::<Vec<_>>()
-                    .join(".");
+                    trunk_accum.extend(tree.trunk.iter().cloned());
 
-                match &import_stmt.imports {
-                    ImportList::Star => {
-                        aliases.push(PyImportAlias {
-                            name: "*".into(),
-                            as_name: None,
-                        });
-                    }
-                    ImportList::Leaves(imports) => {
-                        for (ident, alias) in imports {
-                            aliases.push(PyImportAlias {
-                                name: ident.value.escape(),
-                                as_name: alias.as_ref().map(|a| a.value.escape()),
-                            });
+                    let base_module = trunk_accum
+                        .iter()
+                        .map(|ident| ident.value.0.as_ref())
+                        .collect::<Vec<_>>()
+                        .join(".");
+
+                    let a = PyAstBuilder::new(tree.leaf.span);
+
+                    match &tree.leaf.value {
+                        ImportLeaf::Star => Ok(PyBlock(vec![a.import_from(
+                            Some(base_module.into()),
+                            vec![a.import_alias("*", None)],
+                            level,
+                        )])),
+                        ImportLeaf::This(alias) => {
+                            if trunk_accum.len() == 0 {
+                                Err(simple_err(
+                                    "Cannot use `this` import without a base module",
+                                    tree.leaf.span,
+                                ))
+                            } else {
+                                let base_module = trunk_accum[..trunk_accum.len() - 1]
+                                    .iter()
+                                    .map(|ident| ident.value.0.as_ref())
+                                    .collect::<Vec<_>>()
+                                    .join(".");
+
+                                let aliases = vec![a.import_alias(
+                                    trunk_accum.last().unwrap().value.escape(),
+                                    alias.as_ref().map(|a| a.value.escape()),
+                                )];
+
+                                if trunk_accum.len() == 1 && level == 0 {
+                                    Ok(PyBlock(vec![a.import(aliases)]))
+                                } else {
+                                    Ok(PyBlock(vec![a.import_from(
+                                        Some(base_module.into()),
+                                        aliases,
+                                        level,
+                                    )]))
+                                }
+                            }
+                        }
+                        ImportLeaf::Single(name, alias) => {
+                            let aliases = vec![a.import_alias(
+                                name.value.escape(),
+                                alias.as_ref().map(|a| a.value.escape()),
+                            )];
+
+                            if trunk_accum.len() == 0 && level == 0 {
+                                Ok(PyBlock(vec![a.import(aliases)]))
+                            } else {
+                                Ok(PyBlock(vec![a.import_from(
+                                    Some(base_module.into()),
+                                    aliases,
+                                    level,
+                                )]))
+                            }
+                        }
+                        ImportLeaf::Multi(leaves) => {
+                            let mut stmts = PyBlock::new();
+
+                            for leaf in leaves {
+                                stmts.extend(traverse_import_tree(
+                                    leaf,
+                                    trunk_accum.clone(),
+                                    level,
+                                    reexport,
+                                )?);
+                            }
+
+                            Ok(stmts)
                         }
                     }
                 }
 
-                if !import_stmt.trunk.is_empty() {
-                    if import_stmt.level == 0 {
-                        pre.push(a.import(vec![
-                            a.import_alias(import_stmt.trunk[0].value.escape(), None),
-                        ]))
-                    }
-                    pre.push(a.import_from(Some(base_module.into()), aliases, import_stmt.level));
-                } else if import_stmt.level != 0 {
-                    pre.push(a.import_from(None, aliases, import_stmt.level));
-                } else {
-                    pre.push(a.import(aliases));
-                };
+                pre.extend(traverse_import_tree(tree, vec![], 0, *reexport)?);
             }
         };
 
@@ -2304,9 +2355,7 @@ pub fn transform_ast<'src, 'ast>(
 ) -> TlResult<TransformOutput<'src>> {
     let mut ctx = TlCtx::new(source, filename, resolve_state, inference)?;
 
-    let mut py_block = PyBlock::new();
-    let expr = py_block.bind(block.transform(&mut ctx)?);
-    py_block.0.push((PyStmt::Expr(expr), block.span).into());
+    let py_block = block.transform(&mut ctx)?.drop_expr(&mut ctx);
 
     let mut exports = Vec::new();
 

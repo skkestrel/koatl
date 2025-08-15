@@ -48,6 +48,8 @@ get_user_details = (data, user_id) =>
             "No orders found."
     )
 
+    ()
+
 ["user_a", "user_b", "user_c", "user_d"]
     .map(id =>
         print(f"Searching for id: {id}")

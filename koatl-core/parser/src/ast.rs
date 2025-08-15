@@ -97,21 +97,20 @@ pub enum Literal<'a> {
 pub type SLiteral<'a> = Spanned<Literal<'a>>;
 
 #[derive(Debug, Clone)]
-pub enum ImportList<'a> {
-    // ident, alias
-    Leaves(Vec<(SIdent<'a>, Option<SIdent<'a>>)>),
+pub enum ImportLeaf<'a> {
+    Multi(Vec<ImportTree<'a>>),
+    Single(SIdent<'a>, Option<SIdent<'a>>),
+    This(Option<SIdent<'a>>),
     Star,
 }
 
 #[derive(Debug, Clone)]
-pub struct ImportStmt<'a> {
+pub struct ImportTree<'a> {
     pub trunk: Vec<SIdent<'a>>,
-    pub imports: ImportList<'a>,
+    pub leaf: Spanned<ImportLeaf<'a>>,
 
     // number of dots prepending the trunk
     pub level: usize,
-
-    pub reexport: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -133,7 +132,7 @@ pub enum Stmt<'a, TTree: Tree> {
     Return(TTree::Expr),
     While(TTree::Expr, TTree::Expr),
     For(TTree::Pattern, TTree::Expr, TTree::Expr),
-    Import(ImportStmt<'a>),
+    Import(ImportTree<'a>, bool),
     Try(TTree::Expr, Vec<MatchCase<TTree>>, Option<TTree::Expr>),
     Raise(Option<TTree::Expr>),
 

@@ -1636,11 +1636,11 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                 Stmt::Try(body, cases, finally)
             }
             Stmt::Raise(expr) => Stmt::Raise(expr.map(|x| x.traverse_guarded(state))),
-            Stmt::Import(import_stmt) => {
+            Stmt::Import(tree, reexport) => {
                 let scope_key = *state.scope_stack.last().unwrap();
                 let scope = &mut state.scopes[scope_key];
 
-                if import_stmt.reexport {
+                if reexport {
                     if !scope.is_global {
                         state.errors.extend(simple_err(
                             "Re-exporting imports is only allowed in the global scope",
@@ -1649,32 +1649,49 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                     }
                 }
 
-                match &import_stmt.imports {
-                    ImportList::Star => {
-                        // TODO can this be improved?
+                fn traverse_import_tree<'src>(
+                    state: &mut ResolveState<'src>,
+                    tree: &ImportTree<'src>,
+                    mut trunk_accum: Vec<SIdent<'src>>,
+                    mut level: usize,
+                    reexport: bool,
+                ) {
+                    let to_drain = std::cmp::min(tree.level, trunk_accum.len());
+                    trunk_accum.truncate(trunk_accum.len() - to_drain);
+                    level += tree.level - to_drain;
 
-                        let base_module = import_stmt
-                            .trunk
-                            .iter()
-                            .map(|ident| ident.value.0.as_ref())
-                            .collect::<Vec<_>>()
-                            .join(".");
+                    trunk_accum.extend(tree.trunk.iter().cloned());
 
-                        let full_module = ".".repeat(import_stmt.level) + &base_module;
+                    let base_module = tree
+                        .trunk
+                        .iter()
+                        .map(|ident| ident.value.0.as_ref())
+                        .collect::<Vec<_>>()
+                        .join(".");
 
-                        if import_stmt.reexport {
-                            state
-                                .export_stars
-                                .push(Ident(full_module.into()).spanned(span));
+                    let full_module = ".".repeat(tree.level) + &base_module;
+
+                    match &tree.leaf.value {
+                        ImportLeaf::Multi(branches) => {
+                            for branch in branches {
+                                traverse_import_tree(
+                                    state,
+                                    &branch,
+                                    trunk_accum.clone(),
+                                    level,
+                                    reexport,
+                                );
+                            }
                         }
-                    }
-                    ImportList::Leaves(imports) => {
-                        for (ident, as_name) in imports {
+                        ImportLeaf::Single(ident, alias) => {
+                            let scope_key = *state.scope_stack.last().unwrap();
+                            let scope = &mut state.scopes[scope_key];
+
                             let decl = state.declarations.insert_declaration(
                                 &mut state.fn_stack,
-                                as_name.clone().unwrap_or(ident.clone()),
+                                alias.clone().unwrap_or(ident.clone()),
                                 scope_key,
-                                if import_stmt.reexport {
+                                if reexport {
                                     DeclType::Export
                                 } else {
                                     DeclType::Let
@@ -1685,10 +1702,43 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 
                             scope.locals.push(decl);
                         }
+                        ImportLeaf::This(alias) => {
+                            let scope_key = *state.scope_stack.last().unwrap();
+                            let scope = &mut state.scopes[scope_key];
+
+                            if trunk_accum.is_empty() {
+                                // TODO ?
+                                return;
+                            }
+
+                            let decl = state.declarations.insert_declaration(
+                                &mut state.fn_stack,
+                                alias.clone().unwrap_or(trunk_accum.last().unwrap().clone()),
+                                scope_key,
+                                if reexport {
+                                    DeclType::Export
+                                } else {
+                                    DeclType::Let
+                                },
+                            );
+
+                            state.declarations[decl].is_import = true;
+
+                            scope.locals.push(decl);
+                        }
+                        ImportLeaf::Star => {
+                            if reexport {
+                                state
+                                    .export_stars
+                                    .push(Ident(full_module.into()).spanned(tree.leaf.span));
+                            }
+                        }
                     }
                 }
 
-                Stmt::Import(import_stmt)
+                traverse_import_tree(state, &tree, vec![], 0, reexport);
+
+                Stmt::Import(tree, reexport)
             }
             Stmt::Break => Stmt::Break,
             Stmt::Continue => Stmt::Continue,
