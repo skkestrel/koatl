@@ -1750,6 +1750,12 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     }
                 }
 
+                if tree.level == 0 {
+                    if let Some(tl) = tree.trunk.first() {
+                        pre.push(a.import(vec![a.import_alias(tl.value.escape(), None)]));
+                    }
+                }
+
                 pre.extend(traverse_import_tree(tree, vec![], 0, *reexport)?);
             }
         };
@@ -2352,10 +2358,20 @@ pub fn transform_ast<'src, 'ast>(
     block: &'ast SExpr<'src>,
     resolve_state: &'ast ResolveState<'src>,
     inference: &'ast InferenceCtx<'src, 'ast>,
+    interactive: bool,
 ) -> TlResult<TransformOutput<'src>> {
     let mut ctx = TlCtx::new(source, filename, resolve_state, inference)?;
 
-    let py_block = block.transform(&mut ctx)?.drop_expr(&mut ctx);
+    let py_block = if interactive {
+        let mut py_value = block.transform(&mut ctx)?;
+        let span = py_value.value.tl_span;
+        py_value
+            .pre
+            .push((PyStmt::Expr(py_value.value), span).into());
+        py_value.pre
+    } else {
+        block.transform(&mut ctx)?.drop_expr(&mut ctx)
+    };
 
     let mut exports = Vec::new();
 

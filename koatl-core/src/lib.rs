@@ -22,6 +22,7 @@ pub struct TranspileOptions {
     pub inject_runtime: bool,
     pub set_exports: bool,
     pub allow_await: bool,
+    pub interactive: bool,
 }
 
 impl TranspileOptions {
@@ -29,6 +30,7 @@ impl TranspileOptions {
         TranspileOptions {
             inject_prelude: true,
             inject_runtime: true,
+            interactive: false,
             set_exports: false,
             allow_await: false,
         }
@@ -39,6 +41,7 @@ impl TranspileOptions {
         opt.inject_prelude = false;
         opt.inject_runtime = false;
         opt.allow_await = true;
+        opt.interactive = true;
         opt
     }
 
@@ -48,6 +51,7 @@ impl TranspileOptions {
             inject_prelude: true,
             inject_runtime: true,
             set_exports: true,
+            interactive: false,
         }
     }
 
@@ -80,7 +84,14 @@ pub fn transpile_to_py_ast<'src>(
         }
     };
 
-    let output = match transform_ast(&src, &filename, &tl_ast, &resolve_state, &inference) {
+    let output = match transform_ast(
+        &src,
+        &filename,
+        &tl_ast,
+        &resolve_state,
+        &inference,
+        options.interactive,
+    ) {
         Ok(output) => Some(output),
         Err(e) => {
             errs.extend(e);
