@@ -745,8 +745,7 @@ where
     let mut expr = Recursive::<chumsky::recursive::Indirect<TInput, SExpr, TExtra>>::declare();
     let mut unary = Recursive::<chumsky::recursive::Indirect<TInput, SExpr, TExtra>>::declare();
     let mut cases = Recursive::<chumsky::recursive::Indirect<TInput, _, TExtra>>::declare();
-    let mut below_pipe =
-        Recursive::<chumsky::recursive::Indirect<TInput, SExpr, TExtra>>::declare();
+    let mut below_fn = Recursive::<chumsky::recursive::Indirect<TInput, SExpr, TExtra>>::declare();
 
     let stmts = stmt
         .clone()
@@ -1374,17 +1373,10 @@ where
             .boxed(),
     );
 
-    let fn_ = function(
-        expr_or_inline_stmt_or_block.clone(),
-        ident.clone(),
-        expr.clone(),
-        closed_pattern.clone(),
-    );
-
     not_or_try.define(choice((not, checked, binary3.clone())));
 
     let binary4 = make_binary_op(
-        choice((fn_, not_or_try)),
+        not_or_try,
         select! {
             Token::Symbol("??") => BinaryOp::Coalesce,
         },
@@ -1429,7 +1421,7 @@ where
 
     let (match_, cases_) = match_expr(
         slices,
-        binary3,
+        below_fn.clone(),
         nary_pattern.clone(),
         expr_or_inline_stmt_or_block.clone(),
     );
@@ -1465,12 +1457,19 @@ where
         matches,
         select! {
             Token::Kw("and") => BinaryOp::And,
+        },
+        false,
+    );
+
+    let binary6 = make_binary_op(
+        binary5,
+        select! {
             Token::Kw("or") => BinaryOp::Or,
         },
         false,
     );
 
-    let if_ = binary5
+    let if_ = binary6
         .then(
             group((
                 just(Token::Kw("then"))
@@ -1494,10 +1493,17 @@ where
             }
         });
 
-    below_pipe.define(if_);
+    below_fn.define(if_);
+
+    let fn_ = function(
+        expr_or_inline_stmt_or_block.clone(),
+        ident.clone(),
+        expr.clone(),
+        closed_pattern.clone(),
+    );
 
     let binary6 = make_binary_op(
-        below_pipe.clone(),
+        choice((fn_, below_fn)),
         select! {
             Token::Symbol("|") => BinaryOp::Pipe,
         },

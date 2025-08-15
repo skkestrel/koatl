@@ -262,9 +262,9 @@ impl PyBinaryOp {
             | PyBinaryOp::Is
             | PyBinaryOp::Nis
             | PyBinaryOp::In
-            | PyBinaryOp::Nin
-            | PyBinaryOp::And
-            | PyBinaryOp::Or => 0.0,
+            | PyBinaryOp::Nin => 0.0,
+            PyBinaryOp::Or => 0.1,
+            PyBinaryOp::And => 0.2,
             PyBinaryOp::Add | PyBinaryOp::Sub => 1.0,
             PyBinaryOp::Mult
             | PyBinaryOp::Div
