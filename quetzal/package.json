@@ -6,7 +6,7 @@
 		"type": "git",
 		"url": "https://github.com/skkestrel/koatl"
 	},
-	"version": "0.0.4",
+	"version": "0.0.5",
 	"publisher": "koatl",
 	"engines": {
 		"vscode": "^1.90.0"

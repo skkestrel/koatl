@@ -135,3 +135,39 @@ function_call(
         42
 )
 ```
+
+## Strings
+
+Regular strings work as expected, but many escape sequences are not yet supported...
+
+### Raw strings
+
+Unlike Python, `r"..."` and `"""..."""` have the same semantics of "no escape sequences".
+
+The latter version can be extended with arbitrarily many `"` in a row if necessary:
+
+```koatl
+"""""Having up to four """" in this string is possible."""""
+```
+
+### fstrings
+
+Like everywhere else, f-strings can contain blocks too:
+
+```koatl
+f"Hello, my name is {
+    let name = "Maryam"
+    name += " Mirzakhani"
+    name
+}"
+```
+
+For reasons, format specifiers should be separated using `!` instead of `:`:
+
+```koatl
+f"{123!.2f}"
+```
+
+### Verbatim fstrings
+
+Verbatim fstrings are either `rf"..."` or `f"""..."""`.

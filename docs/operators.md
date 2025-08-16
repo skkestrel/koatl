@@ -172,21 +172,3 @@ Foo = class:
 ```
 
 `a& b` is equivalent to `a(b)`.
-
-## F-strings
-
-Like everywhere else, f-strings can contain blocks too:
-
-```koatl
-f"Hello, my name is {
-    let name = "Maryam"
-    name += " Mirzakhani"
-    name
-}"
-```
-
-For various reasons, format strings should be separated using `!` instead of `:`:
-
-```koatl
-f"{123!.2f}"
-```

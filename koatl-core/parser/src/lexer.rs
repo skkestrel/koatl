@@ -541,6 +541,19 @@ where
         }
     }
 
+    fn parse_char(&mut self, c: char) -> TResult<'src, ()> {
+        let start = self.cursor();
+
+        if self.next() != Some(c) {
+            return Err(Rich::custom(
+                self.span_since(&start),
+                format!("expected '{c}'"),
+            ));
+        }
+
+        Ok(())
+    }
+
     fn parse_seq(&mut self, seq: &str) -> TResult<'src, ()> {
         let start = self.cursor();
 
@@ -579,58 +592,19 @@ where
         }
     }
 
-    fn parse_regular_str(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
-        let start = self.cursor();
-
-        self.parse_seq("\"")?;
-
-        let mut s = String::new();
-        loop {
-            if self.try_parse(|x| x.parse_seq("\"")).is_ok() {
-                return Ok(Token::Str(s).spanned(self.span_since(&start)));
-            }
-
-            if self.try_parse(|x| x.parse_newline()).is_ok() {
-                return Err(Rich::custom(self.span_since(&start), "unterminated string"));
-            }
-
-            s.push(self.parse_escaped_char()?);
-        }
-    }
-
-    fn parse_verbatim_str(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
-        let start = self.cursor();
-
-        self.parse_seq("\"\"\"")?;
-
-        let mut s = String::new();
-        loop {
-            if self.try_parse(|x| x.parse_seq("\"\"\"")).is_ok() {
-                return Ok(Token::Str(s).spanned(self.span_since(&start)));
-            }
-
-            s.push(self.next().ok_or_else(|| {
-                Rich::custom(self.span_since(&start), "unterminated verbatim string")
-            })?);
-        }
-    }
-
-    fn parse_fstr_inner(&mut self, ending: &str, verbatim: bool) -> TResult<'src, TokenList<'src>> {
+    fn parse_fstr_inner(
+        &mut self,
+        ending_char: char,
+        ending_char_count: u32,
+        verbatim: bool,
+    ) -> TResult<'src, TokenList<'src>> {
         let mut marker = self.cursor();
         let mut tokens = vec![];
         let mut current_str = String::new();
 
+        let mut seen_quotes = 0;
+        let mut ending_marker = self.input.save();
         loop {
-            if self.look_ahead(|x| x.parse_seq(ending)).is_ok() {
-                if tokens.len() == 0 {
-                    tokens.push(Token::FstrBegin(current_str).spanned(self.span_since(&marker)));
-                } else {
-                    tokens.push(Token::FstrContinue(current_str).spanned(self.span_since(&marker)));
-                }
-
-                return Ok(TokenList(tokens));
-            }
-
             if !verbatim && self.try_parse(|x| x.parse_newline()).is_ok() {
                 return Err(Rich::custom(
                     self.span_since(&marker),
@@ -638,19 +612,47 @@ where
                 ));
             }
 
+            let Some(peeked) = self.peek() else {
+                return Err(Rich::custom(
+                    self.span_since(&marker),
+                    "unterminated fstring",
+                ));
+            };
+
+            let mut save_marker = false;
+
+            if peeked == ending_char {
+                seen_quotes += 1;
+
+                if seen_quotes == ending_char_count {
+                    if tokens.len() == 0 {
+                        tokens
+                            .push(Token::FstrBegin(current_str).spanned(self.span_since(&marker)));
+                    } else {
+                        tokens.push(
+                            Token::FstrContinue(current_str).spanned(self.span_since(&marker)),
+                        );
+                    }
+
+                    self.input.rewind(ending_marker);
+
+                    return Ok(TokenList(tokens));
+                }
+            } else {
+                for _ in 0..seen_quotes {
+                    current_str.push(ending_char);
+                }
+                seen_quotes = 0;
+                save_marker = true;
+            }
+
             if self.try_parse(|x| x.parse_seq("{{")).is_ok() {
                 current_str.push('{');
-                continue;
-            }
-
-            if self.try_parse(|x| x.parse_seq("}}")).is_ok() {
+            } else if self.try_parse(|x| x.parse_seq("}}")).is_ok() {
                 current_str.push('}');
-                continue;
-            } else if self.try_parse(|x| x.parse_seq("}")).is_ok() {
+            } else if self.try_parse(|x| x.parse_char('}')).is_ok() {
                 return Err(Rich::custom(self.span_since(&marker), "unexpected '}'"));
-            }
-
-            if self.try_parse(|x| x.parse_seq("{")).is_ok() {
+            } else if self.try_parse(|x| x.parse_char('{')).is_ok() {
                 if tokens.len() == 0 {
                     tokens.push(Token::FstrBegin(current_str).spanned(self.span_since(&marker)));
                 } else {
@@ -669,7 +671,7 @@ where
                 let mut format_tokens = vec![];
                 if self.try_parse(|x| x.parse_seq("!")).is_ok() {
                     format_tokens.push(Token::Symbol("!").spanned(self.span_since(&marker)));
-                    format_tokens.extend(self.parse_fstr_inner("}", verbatim)?);
+                    format_tokens.extend(self.parse_fstr_inner('}', 1, verbatim)?);
                 }
 
                 self.parse_seq("}")?;
@@ -690,70 +692,150 @@ where
                 tokens.extend(format_tokens);
 
                 marker = self.cursor();
+            } else {
+                let next_char = if verbatim {
+                    self.next().ok_or_else(|| {
+                        Rich::custom(self.span_since(&marker), "unterminated verbatim fstring")
+                    })?
+                } else {
+                    self.parse_escaped_char()?
+                };
 
-                continue;
+                if save_marker {
+                    current_str.push(next_char);
+                }
             }
 
-            if verbatim {
-                current_str.push(self.next().ok_or_else(|| {
-                    Rich::custom(self.span_since(&marker), "unterminated verbatim fstring")
-                })?);
-            } else {
-                current_str.push(self.parse_escaped_char()?);
+            if save_marker {
+                ending_marker = self.input.save();
             }
         }
     }
 
-    fn parse_fstr(&mut self, verbatim: bool) -> TResult<'src, TokenList<'src>> {
-        if verbatim {
-            self.parse_seq("f\"\"\"")?;
-            let inner = self.parse_fstr_inner("\"\"\"", true)?;
-            self.parse_seq("\"\"\"")?;
-            return Ok(inner);
-        } else {
-            self.parse_seq("f\"")?;
-            let inner = self.parse_fstr_inner("\"", false)?;
-            self.parse_seq("\"")?;
-            return Ok(inner);
+    fn parse_regular_str(&mut self, ch: char) -> TResult<'src, Spanned<Token<'src>>> {
+        let start = self.cursor();
+        let mut quote_count = 0;
+
+        let mut verbatim = self.try_parse(|x| x.parse_char('r')).is_ok();
+
+        while self.try_parse(|x| x.parse_char(ch)).is_ok() {
+            quote_count += 1;
         }
+
+        if quote_count == 2 {
+            return Ok(Token::Str(String::new()).spanned(self.span_since(&start)));
+        }
+
+        verbatim |= quote_count >= 3;
+
+        let mut seen_quotes = 0;
+        let mut s = String::new();
+        loop {
+            if !verbatim && self.try_parse(|x| x.parse_newline()).is_ok() {
+                return Err(Rich::custom(self.span_since(&start), "unterminated string"));
+            }
+
+            let Some(peeked) = self.peek() else {
+                return Err(Rich::custom(self.span_since(&start), "unterminated string"));
+            };
+
+            let mut push_next = false;
+            if peeked == ch {
+                seen_quotes += 1;
+
+                if seen_quotes == quote_count {
+                    self.next();
+                    return Ok(Token::Str(s).spanned(self.span_since(&start)));
+                }
+            } else {
+                for _ in 0..seen_quotes {
+                    s.push(ch);
+                }
+                seen_quotes = 0;
+                push_next = true;
+            }
+
+            let next_char = if verbatim {
+                self.next().unwrap()
+            } else {
+                self.parse_escaped_char()?
+            };
+
+            if push_next {
+                s.push(next_char);
+            }
+        }
+    }
+
+    fn parse_fstr(&mut self, ch: char) -> TResult<'src, TokenList<'src>> {
+        let start = self.cursor();
+        let mut verbatim = self.try_parse(|x| x.parse_seq("r")).is_ok();
+
+        self.parse_seq("f")?;
+        let mut quote_count = 0;
+
+        while self.try_parse(|x| x.parse_char(ch)).is_ok() {
+            quote_count += 1;
+        }
+
+        if quote_count == 2 {
+            return Ok(TokenList(vec![
+                Token::FstrBegin(String::new()).spanned(self.span_since(&start)),
+            ]));
+        }
+
+        verbatim |= quote_count >= 3;
+
+        let inner = self.parse_fstr_inner(ch, quote_count, verbatim)?;
+
+        let start = self.cursor();
+
+        let mut close_quote_count = 0;
+        while self.try_parse(|x| x.parse_char(ch)).is_ok() {
+            close_quote_count += 1;
+        }
+
+        if quote_count != close_quote_count {
+            return Err(Rich::custom(
+                self.span_since(&start),
+                format!(
+                    "expected {} closing quotes, found {}",
+                    quote_count, close_quote_count
+                ),
+            ));
+        }
+
+        return Ok(inner);
     }
 
     fn parse_str_start(&mut self) -> TResult<'src, ()> {
         let start = self.cursor();
 
-        if self.try_parse(|x| x.parse_seq("f\"")).is_ok() {
-            return Ok(());
-        }
+        let _ = self.try_parse(|x| x.parse_ident_or_token());
+        self.parse_char('"')?;
 
-        if self.try_parse(|x| x.parse_seq("\"")).is_ok() {
-            return Ok(());
-        }
-
-        Err(Rich::custom(
-            self.span_since(&start),
-            "expected string start",
-        ))
+        Ok(())
     }
 
     fn parse_str(&mut self) -> TResult<'src, TokenList<'src>> {
-        if self.look_ahead(|x| x.parse_seq("\"\"\"")).is_ok() {
-            let token = self.parse_verbatim_str()?;
-            return Ok(TokenList(vec![token]));
-        }
-
-        if self.look_ahead(|x| x.parse_seq("\"")).is_ok() {
-            let token = self.parse_regular_str()?;
-            return Ok(TokenList(vec![token]));
-        }
-
-        if self.look_ahead(|x| x.parse_seq("f\"\"\"")).is_ok() {
-            let tokens = self.parse_fstr(true)?;
+        if self.look_ahead(|x| x.parse_seq("rf\"")).is_ok() {
+            let tokens = self.parse_fstr('"')?;
             return Ok(tokens);
         }
 
         if self.look_ahead(|x| x.parse_seq("f\"")).is_ok() {
-            let tokens = self.parse_fstr(false)?;
+            let tokens = self.parse_fstr('"')?;
             return Ok(tokens);
+        }
+
+        if self.look_ahead(|x| x.parse_seq("r\"")).is_ok() {
+            let token = self.parse_regular_str('"')?;
+            return Ok(TokenList(vec![token]));
+        }
+
+        if self.look_ahead(|x| x.parse_seq("\"")).is_ok() {
+            let token = self.parse_regular_str('"')?;
+            return Ok(TokenList(vec![token]));
         }
 
         Err(Rich::custom(

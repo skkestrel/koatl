@@ -8,14 +8,17 @@
 	// symbols used as brackets
 	"brackets": [
 		["[", "]"],
-		["(", ")"]
+		["(", ")"],
+		["{", "}"]
 	],
 	// symbols that are auto closed when typing
 	"autoClosingPairs": [
 		["[", "]"],
 		["(", ")"],
 		["\"", "\""],
-		["f\"", "\""]
+		["f\"", "\""],
+		["\"\"\"", "\"\"\""],
+		["f\"\"\"", "\"\"\""]
 	],
 	// symbols that can be used to surround a selection
 	"surroundingPairs": [
