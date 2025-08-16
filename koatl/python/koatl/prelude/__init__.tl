@@ -43,6 +43,7 @@ Extension.method(str, "search")& (str, regex) => Pattern(regex).search(str)
 
 import koatl.std.lazy_module.LazyModule
 
+export import koatl.std.trait.*
 export Result, Ok, Err, Env, Memo, Async, AsyncMemo
 export std = LazyModule("koatl.std")
 

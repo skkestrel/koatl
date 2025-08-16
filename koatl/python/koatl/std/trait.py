@@ -40,7 +40,7 @@ class MappingMeta(type):
         return [(k, v) for k, v in inspect.getmembers(self) if not k.startswith("_")]
 
 
-# A utility base class to inherit from to enable __getitem__ method lookup on types and thus destructuring.
+# A utility base class to inherit from that implements Mapping on the type and thus destructuring.
 class Class(metaclass=MappingMeta):
     pass
 

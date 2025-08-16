@@ -1,3 +1,5 @@
+import koatl.std.trait.Trait
+
 export Monad = class(Trait):
     """
     Abstract base class for monads.

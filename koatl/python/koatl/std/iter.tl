@@ -1,7 +1,8 @@
 import itertools
 import builtins
-import .alg.(Traversable, Ok, Err, Memo, Async, AsyncMemo, Result)
 
+import koatl.std.trait.Trait
+import .alg.(Traversable, Ok, Err, Memo, Async, AsyncMemo, Result)
 
 export Iterable = class(Traversable, Trait):
     iter = Trait.abstract& self => None
