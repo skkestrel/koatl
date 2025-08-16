@@ -1,8 +1,9 @@
 import itertools
 import builtins
-import .functional.(Traversable, Ok, Err, Memo, Async, AsyncMemo, Result)
+import .alg.(Traversable, Ok, Err, Memo, Async, AsyncMemo, Result)
 
-export Iterable = Extension.trait& class(Traversable, Trait):
+
+export Iterable = class(Traversable, Trait):
     iter = Trait.abstract& self => None
 
     skip = (self, n) =>
@@ -259,8 +260,6 @@ export Iterable = Extension.trait& class(Traversable, Trait):
         Record(self.iter)
 
     traverse = (self, f=None) =>
-        import .functional.(Async, Result)
-
         if f === None:
             f = x => x
 

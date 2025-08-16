@@ -1,6 +1,6 @@
 import itertools
 
-import .Monad
+import koatl.std.alg.Monad
 
 export List = class(Monad):
     __new__ = (cls, *args, **kwargs) => raise ValueError(
@@ -20,6 +20,3 @@ export List = class(Monad):
     pure = staticmethod& x => [x]
 
     len = property& self => len(self)
-
-
-Extension.property(list, "len")& List.len.fget

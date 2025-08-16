@@ -1,8 +1,8 @@
 import re
 import collections
-import .functional.Result
+import .alg.Result
 
-export Regex = class:
+export Pattern = class:
     __slots__ = ("pattern",)
 
     __init__ = (self, pattern) =>
@@ -46,15 +46,3 @@ export Regex = class:
         match = property& self => self._match.group(0)
 
         __repr__ = self => f"Match({self._match})"
-
-
-Extension.method(str, "match")& (regex, str) => Regex(regex).match(str)
-
-
-# Note: the below methods have arguments in reverse order to Python's re module.
-
-Extension.method(str, "matches")& (str, regex) =>
-    Regex(regex).match(str)
-
-Extension.method(str, "search")& (str, regex) =>
-    Regex(regex).search(str)

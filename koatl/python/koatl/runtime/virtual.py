@@ -7,8 +7,8 @@ from .._rs import fast_vget, fast_vset, fast_vset_trait
 def vget(obj, name, ignore_traits=False):
     try:
         return getattr(obj, name)
-    except AttributeError:
-        pass
+    except AttributeError as e:
+        orig_err = e
 
     # special case for iter - this could be implemented using types and trait vtbls
     # but this is simpler and probably faster
@@ -38,7 +38,7 @@ def vget(obj, name, ignore_traits=False):
 
         return partial(v, obj)
 
-    raise AttributeError(f"'{type(obj).__name__}' object has no v-attribute '{name}'")
+    raise orig_err
 
 
 def vhas(obj, name, ignore_traits=False):

@@ -1,5 +1,5 @@
 import functools.wraps
-import .algebra.(Identity, MonadOnce)
+import .base.(Identity, MonadOnce)
 
 infer_ok = x =>
     x match:
@@ -159,25 +159,3 @@ export Err = class(Result):
             raise self.value
         raise ValueError(f"Expected Ok, got {repr(self)}")
     coalesce = (self, f) => f()
-
-Extension.property(object, "result")& self => Result(self)
-
-__tl__.Ok = Ok
-__tl__.Err = Err
-__tl__.Result = Result
-
-__tl__.op_coal = (x, f) =>
-    if x matches Result():
-        return x.coalesce(f)
-
-    if not infer_ok(x):
-        return f()
-    return x
-
-__tl__.op_map = (x, f) =>
-    if x matches Result():
-        return x.map(f)
-
-    if infer_ok(x):
-        return f(x)
-    return x

@@ -1,5 +1,5 @@
 import functools.wraps
-import .MonadOnce
+import .base.MonadOnce
 
 export Env = class(MonadOnce):
     __slots__ = ("f",)

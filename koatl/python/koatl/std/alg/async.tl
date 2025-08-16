@@ -1,7 +1,7 @@
 import functools.wraps
 import asyncio
 
-import .MonadOnce
+import .base.MonadOnce
 
 export Async = class(MonadOnce):
     __init__ = (self, awaitable) => self.generator = awaitable.__await__()

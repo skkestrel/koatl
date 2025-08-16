@@ -1,7 +1,7 @@
 import collections.defaultdict
 import functools.wraps
 
-import .algebra.(MonadOnce, Identity)
+import .base.(MonadOnce, Identity)
 import .result.(Result, Ok, Err)
 import .async.(Async)
 
@@ -182,6 +182,3 @@ export AsyncMemo = class(MonadOnce):
         except StopIteration(value=value):
             return value
     )
-
-__tl__.memo_value = Memo.value
-__tl__.async_memo_value = AsyncMemo.value
