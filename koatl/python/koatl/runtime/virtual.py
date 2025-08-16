@@ -1,7 +1,7 @@
 from functools import partial
 from itertools import count
 from types import SimpleNamespace
-from .._rs import fast_vget, fast_vset, fast_vset_trait
+from koatl._rs import fast_vget, fast_vset, fast_vset_trait
 
 
 def vget(obj, name, ignore_traits=False):

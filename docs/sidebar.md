@@ -5,6 +5,7 @@
 -   [Lists, records, and tuples](containers)
 -   [Pattern matching](match)
 -   [Modules](modules)
+-   [Prelude](prelude)
 -   [Extension attributes](extensions)
 -   [Troubleshooting](troubleshooting)
 -   **Links**
