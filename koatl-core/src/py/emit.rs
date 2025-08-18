@@ -1,3 +1,5 @@
+// TODO: reevaluate precedence in this file
+
 use std::collections::HashMap;
 
 use parser::{
@@ -142,7 +144,7 @@ impl PyArgDefItem<'_> {
 impl PyUnaryOp {
     pub fn precedence(&self) -> f32 {
         match self {
-            PyUnaryOp::Not => LOW_PREC, // TODO
+            PyUnaryOp::Not => LOW_PREC,
             PyUnaryOp::Neg | PyUnaryOp::Pos | PyUnaryOp::Inv => 4.0,
         }
     }

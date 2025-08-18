@@ -1,5 +1,5 @@
 import koatl.runtime
 
-# Record is defined in runtime to make some more 
+# TODO: should we just move this to this module?
 
 export Record = runtime.record.Record

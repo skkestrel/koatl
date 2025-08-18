@@ -1706,7 +1706,10 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                             let scope = &mut state.scopes[scope_key];
 
                             if trunk_accum.is_empty() {
-                                // TODO ?
+                                // TODO should this be a scope resolution error?
+                                // right now the error is emitted by transform.rs
+
+                                // well, this function should just instead emit a dummy import leaf.
                                 return;
                             }
 

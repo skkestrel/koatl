@@ -647,7 +647,6 @@ where
         .boxed();
 
     let import_item = recursive(|import_item| {
-        // TODO this looks extremely cursed
         let level = symbol("..")
             .to(2)
             .repeated()

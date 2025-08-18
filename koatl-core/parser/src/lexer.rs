@@ -132,36 +132,11 @@ pub fn py_escape_str(s: &str) -> String {
 }
 
 pub fn py_escape_fstr(s: &str) -> String {
-    // TODO
     py_escape_str(s)
         .chars()
         .map(|c| match c {
             '{' => "{{".to_string(),
             '}' => "}}".to_string(),
-            _ => c.to_string(),
-        })
-        .collect()
-}
-
-pub fn escape_str(s: &str) -> String {
-    // TODO
-    s.chars()
-        .map(|c| match c {
-            '\n' => "\\n".to_string(),
-            '"' => "\\\"".to_string(),
-            _ => c.to_string(),
-        })
-        .collect()
-}
-
-pub fn escape_fstr(s: &str) -> String {
-    // TODO
-    s.chars()
-        .map(|c| match c {
-            '{' => "{{".to_string(),
-            '}' => "}}".to_string(),
-            '\n' => "\\n".to_string(),
-            '"' => "\\\"".to_string(),
             _ => c.to_string(),
         })
         .collect()
@@ -661,9 +636,11 @@ where
                 current_str = String::new();
 
                 self.parse_nonsemantic()?;
-                let _ = self.try_parse(|x| x.parse_newline());
+                while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
+
                 let sexpr = self.try_parse(|x| x.parse_block(0, NewBlockType::BeginInput))?;
-                let _ = self.try_parse(|x| x.parse_newline());
+
+                while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
 
                 self.parse_indentation()?;
 
@@ -851,7 +828,6 @@ where
     ) -> TResult<'src, Spanned<TokenList<'src>>> {
         let mut tokens = vec![];
 
-        // TODO should parse_empty_line be part of parse_indentation?
         while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
 
         let indent_level = self.try_parse(|x| x.parse_indentation()).map_err(|_| {
