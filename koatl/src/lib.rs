@@ -118,8 +118,9 @@ fn fast_vget<'py, 'ptr>(
     let vtbl2 = VTBL2.lock().unwrap();
 
     if let Some(traits) = vtbl2.get(&name) {
-        let tlmod = py.import("koatl.runtime.virtual")?;
-        let vget = tlmod.getattr("vget")?;
+        let runtime = py.import("koatl.runtime")?;
+        let tl = runtime.getattr("__tl__")?;
+        let vget = tl.getattr("vget")?;
 
         for t in traits {
             let mut ok = true;

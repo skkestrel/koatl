@@ -7,6 +7,22 @@ infer_ok = x =>
         BaseException() => False
         default True
 
+op_coal = (x, f) =>
+    if x matches Result():
+        return x.coalesce(f)
+
+    if not infer_ok(x):
+        return f()
+    return x
+
+op_map = (x, f) =>
+    if x matches Result():
+        return x.map(f)
+
+    if infer_ok(x):
+        return f(x)
+    return x
+
 export Result = class(MonadOnce):
     __slots__ = ()
     __match_args__ = ("value",)

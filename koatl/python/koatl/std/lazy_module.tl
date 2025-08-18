@@ -31,3 +31,15 @@ export LazyModule = class:
         raise AttributeError(f"Module '{self._name}' has no attribute '{attr}'")
 
     __repr__ = self => f"LazyModule({self._name})"
+
+
+export RootModulesProxy = class:
+    __init__ = (self) =>
+        self._modules = {}
+
+    __getattr__ = (self, attr) =>
+        if attr not in self._modules:
+            self._modules[attr] = LazyModule(attr)
+        return self._modules[attr]
+
+    __repr__ = self => f"RootModulesProxy({self._modules})"

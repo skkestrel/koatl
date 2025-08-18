@@ -1662,8 +1662,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 
                     trunk_accum.extend(tree.trunk.iter().cloned());
 
-                    let base_module = tree
-                        .trunk
+                    let base_module = trunk_accum
                         .iter()
                         .map(|ident| ident.value.0.as_ref())
                         .collect::<Vec<_>>()

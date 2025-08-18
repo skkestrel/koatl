@@ -2,7 +2,7 @@ import abc
 import collections
 import inspect
 
-from koatl.runtime.virtual import vhas
+from koatl.prelude import __tl__
 
 
 @collections.abc.Mapping.register
@@ -90,7 +90,7 @@ class TraitMeta(MappingMeta):
         # Check if the exact class has _trait_reqs, in which case it's a trait.
         if "_trait_reqs" in cls.__dict__:
             for req in cls._trait_reqs:
-                if not vhas(instance, req):
+                if not __tl__.vhas(instance, req):
                     return False
 
             return True

@@ -594,9 +594,13 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
                     _ => {
                         let var = ctx.create_aux_var("mproxy", span.start);
                         let a = PyAstBuilder::new(span);
+
                         pre.push(a.assign(
                             a.ident(var.clone(), PyAccessCtx::Store),
-                            a.call(a.load_ident("Record"), vec![a.call_kwarg("value", v_node)]),
+                            a.call(
+                                a.tl_builtin("record_literal"),
+                                vec![a.call_arg(a.dict(vec![a.dict_item(a.str("value"), v_node)]))],
+                            ),
                         ));
 
                         PyPattern::Value(a.attribute(a.load_ident(var), "value", PyAccessCtx::Load))
@@ -2186,7 +2190,10 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                     }
                 }
 
-                a.call(a.load_ident("Record"), vec![a.call_arg(a.dict(dict_items))])
+                a.call(
+                    a.tl_builtin("record_literal"),
+                    vec![a.call_arg(a.dict(dict_items))],
+                )
             }
             Expr::Slice(start, end, step) => {
                 let start_node = start

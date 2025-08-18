@@ -17,7 +17,7 @@ class Record:
         else:
             self.__dict__ = dict(data, **kwargs)
 
-    @staticmethod
+    @classmethod
     def from_dict_ref(cls, dict_obj):
         if not isinstance(dict_obj, dict):
             raise TypeError("Expected a dictionary")
