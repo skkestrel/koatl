@@ -180,14 +180,23 @@ fn fast_vset_trait<'py, 'ptr>(
     }
 
     // TODO: what about conflicting traits?
-    vtbl.get_mut(&name).unwrap().insert(
-        0,
-        TraitAttr {
-            name: trait_name.to_string(),
-            requirements: reqs,
-            value: value.clone().unbind(),
-        },
-    );
+    let vtbl_entry = vtbl.get_mut(&name).unwrap();
+    if let Some(existing) = vtbl_entry
+        .iter_mut()
+        .find(|e| e.name == trait_name.to_string())
+    {
+        existing.requirements = reqs;
+        existing.value = value.clone().unbind();
+    } else {
+        vtbl_entry.insert(
+            0,
+            TraitAttr {
+                name: trait_name.to_string(),
+                requirements: reqs,
+                value: value.clone().unbind(),
+            },
+        );
+    }
 
     Ok(())
 }
