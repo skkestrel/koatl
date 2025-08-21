@@ -26,6 +26,9 @@ if _orig_frame_info_init is None:
 
 class KoatlXCachingCompiler(XCachingCompiler):
     def cache(self, transformed_code, number=0, raw_code=None):
+        if not hasattr(self, "shell"):
+            return super().cache(transformed_code, number, raw_code)
+
         filename = super().cache(self.shell._koatl_cell, number, raw_code)
 
         sourcemap = {}
