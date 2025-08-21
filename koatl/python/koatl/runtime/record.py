@@ -19,9 +19,6 @@ class Record:
 
     @classmethod
     def from_dict_ref(cls, dict_obj):
-        if not isinstance(dict_obj, dict):
-            raise TypeError("Expected a dictionary")
-
         self = cls.__new__(cls)
         self.__dict__ = dict_obj
         return self

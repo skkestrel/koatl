@@ -3,14 +3,14 @@ import collections
 
 export LazyModule = class:
     __init__ = (self, name) =>
-        self._name = name
-        self._module = None
-        self._submodules = {}
+        self.__dict__["_name"] = name
+        self.__dict__["_module"] = None
+        self.__dict__["_submodules"] = {}
 
     __getattr__ = (self, attr) =>
         try:
             if self._module === None:
-                self._module = importlib.import_module(self._name)
+                self.__dict__["_module"] = importlib.import_module(self._name)
 
             if hasattr(self._module, "__path__"):
                 if attr not in self._submodules:
@@ -29,6 +29,12 @@ export LazyModule = class:
             raise ValueError(str(e))
 
         raise AttributeError(f"Module '{self._name}' has no attribute '{attr}'")
+
+    __setattr__ = (self, attr, value) =>
+        if self._module === None:
+            self.__dict__["_module"] = importlib.import_module(self._name)
+
+        setattr(self._module, attr, value)
 
     __repr__ = self => f"LazyModule({self._name})"
 
