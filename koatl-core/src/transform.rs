@@ -177,14 +177,7 @@ impl<'src> PyBlock<'src> {
     }
 }
 
-enum PyBlockExpr<'src> {
-    Nothing,
-    Never,
-    Expr(SPyExpr<'src>),
-}
-
 type SPyExprWithPre<'src> = WithPre<'src, SPyExpr<'src>>;
-type PyBlockExprWithPre<'src> = WithPre<'src, PyBlockExpr<'src>>;
 
 trait SPyExprWithPreExt<'src> {
     fn drop_expr<'ast>(self, ctx: &mut TlCtx<'src, 'ast>) -> PyBlock<'src>;
@@ -204,27 +197,6 @@ impl<'src> SPyExprWithPreExt<'src> for SPyExprWithPre<'src> {
 
         block
     }
-}
-
-impl<'src> SPyExprWithPreExt<'src> for PyBlockExprWithPre<'src> {
-    fn drop_expr<'ast>(self, ctx: &mut TlCtx<'src, 'ast>) -> PyBlock<'src> {
-        if let PyBlockExpr::Expr(expr) = self.value {
-            SPyExprWithPre {
-                pre: self.pre,
-                value: expr,
-            }
-            .drop_expr(ctx)
-        } else {
-            self.pre
-        }
-    }
-}
-
-trait BlockExt<'src> {
-    fn transform<'ast>(
-        &'ast self,
-        ctx: &mut TlCtx<'src, 'ast>,
-    ) -> TlResult<PyBlockExprWithPre<'src>>;
 }
 
 fn simple_err(msg: impl Into<String>, span: Span) -> TlErrs {
@@ -254,15 +226,26 @@ fn deduplicate<'src, 'ast>(
     Ok(SPyExprWithPre { value: expr, pre })
 }
 
+trait BlockExt<'src> {
+    fn transform<'ast>(
+        &'ast self,
+        ctx: &mut TlCtx<'src, 'ast>,
+        span: &Span,
+    ) -> TlResult<SPyExprWithPre<'src>>;
+}
+
 impl<'src> BlockExt<'src> for [Indirect<SStmt<'src>>] {
     fn transform<'ast>(
         &'ast self,
         ctx: &mut TlCtx<'src, 'ast>,
-    ) -> TlResult<PyBlockExprWithPre<'src>> {
+        span: &Span,
+    ) -> TlResult<SPyExprWithPre<'src>> {
+        let mut value = (PyExpr::Literal(PyLiteral::None), *span).into();
+
         if self.is_empty() {
-            return Ok(WithPre {
+            return Ok(SPyExprWithPre {
                 pre: PyBlock::new(),
-                value: PyBlockExpr::Nothing,
+                value,
             });
         }
 
@@ -289,22 +272,17 @@ impl<'src> BlockExt<'src> for [Indirect<SStmt<'src>>] {
         }
 
         let final_stmt = iter.next().unwrap();
-        let mut value = PyBlockExpr::Nothing;
 
         match &final_stmt.value {
             Stmt::Expr(expr) => match expr.transform(ctx) {
                 Ok(expr_with_aux) => {
-                    value = PyBlockExpr::Expr(pre.bind(expr_with_aux));
+                    value = pre.bind(expr_with_aux);
                 }
                 Err(e) => {
                     errs.extend(e.0);
                     ok = false;
                 }
             },
-            Stmt::Raise(..) | Stmt::Return(..) | Stmt::Break | Stmt::Continue => {
-                handle_stmt(final_stmt);
-                value = PyBlockExpr::Never;
-            }
             _ => {
                 handle_stmt(final_stmt);
             }
@@ -1031,7 +1009,7 @@ fn make_arglist<'src, 'ast>(
 }
 
 struct PartialPyFnDef<'a> {
-    body: PyBlock<'a>,
+    body: SPyExprWithPre<'a>,
     decorators: PyDecorators<'a>,
     args: Vec<PyArgDefItem<'a>>,
     async_: bool,
@@ -1041,7 +1019,7 @@ enum FnDef<'src, 'ast> {
     /**
      * Args, body, is_do, is_async
      */
-    PyFnDef(Vec<PyArgDefItem<'src>>, PyBlock<'src>, bool, bool),
+    PyFnDef(Vec<PyArgDefItem<'src>>, SPyExprWithPre<'src>, bool, bool),
 
     // Expr::Fn, args, body
     TlFnDef(
@@ -1060,7 +1038,8 @@ fn prepare_py_fn<'src, 'ast>(
     span: &Span,
 ) -> TlResult<WithPre<'src, PartialPyFnDef<'src>>> {
     let mut pre = PyBlock::new();
-    let mut py_body = PyBlock::new();
+    let mut py_body_pre = PyBlock::new();
+    let py_body_expr: SPyExpr;
     let mut decorators = PyDecorators(vec![]);
 
     let a = PyAstBuilder::new(*span);
@@ -1079,7 +1058,8 @@ fn prepare_py_fn<'src, 'ast>(
                 decorators.push(a.tl_builtin("do"));
             }
 
-            py_body.extend(body);
+            py_body_pre.extend(body.pre);
+            py_body_expr = body.value;
         }
         FnDef::TlFnDef(expr, arglist, body) => {
             let fn_info = ctx.fn_info(expr)?;
@@ -1093,7 +1073,7 @@ fn prepare_py_fn<'src, 'ast>(
             args = args_;
 
             pre.extend(arg_pre);
-            py_body.extend(post);
+            py_body_pre.extend(post);
 
             let body = body.transform(ctx)?;
 
@@ -1107,16 +1087,18 @@ fn prepare_py_fn<'src, 'ast>(
 
             let (py_bindings, _, _) = py_fn_bindings(ctx, fn_info, *span)?;
 
-            py_body.extend(py_bindings);
-            py_body.extend(body.pre);
-            py_body.push(a.return_(body.value));
+            py_body_pre.extend(py_bindings);
+            py_body_expr = py_body_pre.bind(body);
         }
     }
 
     Ok(WithPre {
         pre,
         value: PartialPyFnDef {
-            body: py_body,
+            body: WithPre {
+                pre: py_body_pre,
+                value: py_body_expr,
+            },
             args,
             decorators,
             async_,
@@ -1138,26 +1120,26 @@ fn make_fn_exp<'src, 'ast>(
     } = pre.bind(prepare_py_fn(ctx, def, span)?);
     let a = PyAstBuilder::new(*span);
 
-    if body.0.len() == 1 && !async_ {
+    if body.pre.is_empty() && !async_ {
         // TODO maybe refactor prepare_py_fn to return body_stmts as PyExprWithPre instead of pattern matching Return
 
-        if let PyStmt::Return(_) = &body.0[0].value {
-            let PyStmt::Return(expr) = body.0.into_iter().next().unwrap().value else {
-                return Err(simple_err(
-                    "Internal error: Expected a single return statement in function body",
-                    *span,
-                ));
-            };
+        let mut inner = a.lambda(args, body.value);
 
-            let mut inner = a.lambda(args, expr);
-
-            for deco in decorators.0.into_iter().rev() {
-                inner = a.call(deco, vec![a.call_arg(inner)]);
-            }
-
-            return Ok(SPyExprWithPre { value: inner, pre });
+        for deco in decorators.0.into_iter().rev() {
+            inner = a.call(deco, vec![a.call_arg(inner)]);
         }
+
+        return Ok(SPyExprWithPre {
+            pre: PyBlock::new(),
+            value: inner,
+        });
     }
+
+    let body = {
+        let mut block = body.pre;
+        block.push(a.return_(body.value));
+        block
+    };
 
     let name = ctx.create_aux_var("fnexp", span.start);
     pre.push(
@@ -1165,7 +1147,7 @@ fn make_fn_exp<'src, 'ast>(
             PyStmt::FnDef(PyFnDef {
                 name: name.clone().into(),
                 args: args,
-                body,
+                body: body,
                 decorators: decorators,
                 async_,
             }),
@@ -1188,6 +1170,7 @@ fn make_fn_def<'src, 'ast>(
     span: &Span,
 ) -> TlResult<PyBlock<'src>> {
     let mut pre = PyBlock::new();
+    let a = PyAstBuilder::new(*span);
     let PartialPyFnDef {
         body,
         args,
@@ -1196,6 +1179,12 @@ fn make_fn_def<'src, 'ast>(
     } = pre.bind(prepare_py_fn(ctx, def, span)?);
 
     decorators.0.extend(inner_decorators.0);
+
+    let body = {
+        let mut block = body.pre;
+        block.push(a.return_(body.value));
+        block
+    };
 
     pre.push(
         (
@@ -1385,14 +1374,12 @@ fn transform_postfix_expr<'src, 'ast>(
         let py_expr = make_expr(ctx, a.load_ident(arg_name.clone()))?;
 
         let fn_info = ctx.mapped_fninfo.get(&expr.into()).unwrap();
-        let mut fn_body = py_expr.pre;
-        fn_body.push(a.return_(py_expr.value));
 
         let inner_fn = pre.bind(make_fn_exp(
             ctx,
             FnDef::PyFnDef(
                 vec![a.arg_def(arg_name, None)],
-                fn_body,
+                py_expr,
                 false,
                 fn_info.is_async,
             ),
@@ -1946,14 +1933,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 else_block.as_ref().map(|x| x.as_ref()),
                 &span,
             )?),
-            Expr::Block(block) => {
-                let block = pre.bind(block.transform(ctx)?);
-
-                match block {
-                    PyBlockExpr::Expr(expr) => expr,
-                    PyBlockExpr::Nothing | PyBlockExpr::Never => a.none(),
-                }
-            }
+            Expr::Block(block) => pre.bind(block.transform(ctx, &span)?),
             Expr::Match(subject, cases) => pre
                 .bind(transform_match_expr(ctx, MatchSubject::Tl(subject), cases, true, &span)?.0),
             Expr::Matches(subject, pattern) => {
@@ -2088,12 +2068,19 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 }
 
                 py_body.extend(py_bindings);
-                py_body.extend(py_expr.pre);
-                py_body.push(a.return_(py_expr.value));
+                let py_expr = py_body.bind(py_expr);
 
                 let callback = pre.bind(make_fn_exp(
                     ctx,
-                    FnDef::PyFnDef(vec![], py_body, memo_captures.is_do, memo_captures.is_async),
+                    FnDef::PyFnDef(
+                        vec![],
+                        WithPre {
+                            pre: py_body,
+                            value: py_expr,
+                        },
+                        memo_captures.is_do,
+                        memo_captures.is_async,
+                    ),
                     &span,
                 )?);
 
@@ -2257,16 +2244,14 @@ fn create_coalesce<'src, 'ast>(
 ) -> TlResult<SPyExprWithPre<'src>> {
     let a = PyAstBuilder::new(span);
     let mut pre = PyBlock::new();
-    let mut fn_body = PyBlock::new();
-
-    let py_rhs = fn_body.bind(rhs.transform(ctx)?);
-    fn_body.push(a.return_(py_rhs));
 
     let fn_info = ctx.coal_fninfo.get(&rhs.into()).unwrap();
 
+    let py_body = rhs.transform(ctx)?;
+
     let inner_fn = pre.bind(make_fn_exp(
         ctx,
-        FnDef::PyFnDef(vec![], fn_body, false, fn_info.is_async),
+        FnDef::PyFnDef(vec![], py_body, false, fn_info.is_async),
         &span,
     )?);
 
