@@ -3,7 +3,8 @@ import importlib
 from types import SimpleNamespace
 
 from koatl.runtime.record import Record
-from . import meta_finder, vattr
+from . import meta_finder
+from .vattr import vhas, vget
 
 meta_finder.install_hook()
 
@@ -42,6 +43,6 @@ __tl__ = SimpleNamespace(
     #
     set_exports=set_exports,
     #
-    vget=vattr.vget,
-    vhas=vattr.vhas,
+    vget=vget,
+    vhas=vhas,
 )

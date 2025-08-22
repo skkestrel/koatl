@@ -1,6 +1,7 @@
 import itertools
 import builtins
 
+import koatl.std.data.Record
 import koatl.std.trait.Trait
 import .alg.(Traversable, Ok, Err, Memo, Async, AsyncMemo, Result)
 
@@ -51,6 +52,9 @@ export Iterable = class(Traversable, Trait):
 
     chain = (self, *others) =>
         itertools.chain(self.iter, *others.map($.iter))
+
+    product = (self, *others) =>
+        itertools.product(self.iter, *others.map($.iter))
 
     zip = (self, *others) =>
         zip(self.iter, *others.map($.iter))

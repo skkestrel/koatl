@@ -719,7 +719,7 @@ fn create_throwing_matcher<'src, 'ast>(
     let a = PyAstBuilder::new(pattern.span);
     let success = PyBlock(vec![a.pass()]);
     let fail = PyBlock(vec![a.raise(Some(a.call(
-        a.load_ident("MatchError"),
+        a.tl_builtin("MatchError"),
         vec![a.call_arg(a.fstr(vec![
             a.fstr_str("failed to match value of type "),
             a.fstr_expr(

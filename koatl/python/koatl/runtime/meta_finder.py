@@ -52,7 +52,7 @@ class TlLoader(Loader):
             self.filepath,
         )
 
-        if module.__name__.startswith("koatl.prelude"):
+        if module.__name__.startswith("koatl"):
             transpiled_code = transpile(
                 source_code, mode="no_prelude", filename=self.filepath
             )

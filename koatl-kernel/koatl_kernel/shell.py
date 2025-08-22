@@ -19,7 +19,8 @@ if _orig_frame_info_init is None:
 
             old_lineno = self.lineno
             self.lineno = mapper.get(old_lineno, 1)
-            self._sd.lineno = mapper.get(old_lineno, 1)
+            if self._sd is not None:
+                self._sd.lineno = mapper.get(old_lineno, 1)
 
     FrameInfo.__init__ = _new_init
 
