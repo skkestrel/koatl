@@ -1,339 +1,308 @@
-// use std::{borrow::Cow, fmt::Display};
+use crate::lexer::{SToken, Span};
 
-// use crate::ast::{FromIndirect, Indirect, IntoIndirect};
-// use chumsky::span::SimpleSpan;
+#[derive(Debug, Clone)]
+pub struct ListingItem<T, TTree: Tree> {
+    pub item: T,
+    pub separator: Option<TTree::Token>,
+    pub newline: Option<TTree::Token>,
+}
 
-// use crate::lexer::SToken;
+#[derive(Debug, Clone)]
+pub struct Listing<T, TTree: Tree> {
+    pub begin: TTree::Token,
+    pub indent: Option<TTree::Token>,
+    pub items: Vec<ListingItem<T, TTree>>,
+    pub dedent: Option<TTree::Token>,
+    pub newline: Option<TTree::Token>,
+    pub end: TTree::Token,
+}
 
-// #[derive(Debug, Clone)]
-// pub enum ImportLeaf<'a> {
-//     Multi(Vec<ImportTree<'a>>),
-//     Single(SToken<'a>, Option<SToken<'a>>),
-//     This(SToken<'a>, Option<SToken<'a>>),
-//     Star,
-// }
+#[derive(Debug, Clone)]
+pub enum ImportLeaf<TTree: Tree> {
+    Multi(Listing<ImportTree<TTree>, TTree>),
+    Single(TTree::Token, Option<TTree::Token>),
+    This(TTree::Token, Option<TTree::Token>),
+    Star,
+}
 
-// #[derive(Debug, Clone)]
-// pub struct ImportTree<'a> {
-//     pub trunk: Vec<SToken<'a>>,
-//     pub leaf: Spanned<ImportLeaf<'a>>,
-//     pub level: usize,
-// }
+#[derive(Debug, Clone)]
+pub struct ImportTree<TTree: Tree> {
+    pub trunk: Vec<TTree::Token>,
+    pub leaf: Spanned<ImportLeaf<TTree>>,
+    pub level: usize,
+}
 
-// #[derive(Debug, Clone)]
-// pub enum Stmt<'a, TTree: Tree> {
-//     // modifier, identifiers
-//     Decl(SToken<'a>, Vec<SToken<'a>>),
+#[derive(Debug, Clone)]
+pub enum Stmt<TTree: Tree> {
+    // modifier, identifiers
+    Decl(TTree::Token, Vec<TTree::Token>),
 
-//     // modifier, lhs, =, rhs
-//     PatternAssign(Option<SToken<'a>>, TTree::Pattern, SToken<'a>, TTree::Expr),
+    // modifier, lhs, =, rhs
+    PatternAssign(
+        Option<TTree::Token>,
+        TTree::Pattern,
+        TTree::Token,
+        TTree::Expr,
+    ),
 
-//     // lhs, op, =, rhs
-//     Assign(TTree::Expr, Option<SToken<'a>>, SToken<'a>, TTree::Expr),
+    // lhs, op, =, rhs
+    Assign(TTree::Expr, Option<TTree::Token>, TTree::Token, TTree::Expr),
 
-//     // while, cond, :, body
-//     While(SToken<'a>, TTree::Expr, SToken<'a>, TTree::Expr),
+    // while, cond, :, body
+    While(TTree::Token, TTree::Expr, TTree::Token, TTree::Expr),
 
-//     // for, cursor, in, iterable, :, body
-//     For(
-//         SToken<'a>,
-//         TTree::Pattern,
-//         SToken<'a>,
-//         TTree::Expr,
-//         SToken<'a>,
-//         TTree::Expr,
-//     ),
+    // for, cursor, in, iterable, :, body
+    For(
+        TTree::Token,
+        TTree::Pattern,
+        TTree::Token,
+        TTree::Expr,
+        TTree::Token,
+        TTree::Expr,
+    ),
 
-//     // export, import, tree
-//     Import(Option<SToken<'a>>, SToken<'a>, ImportTree<'a>),
+    // export, import, tree
+    Import(Option<TTree::Token>, TTree::Token, ImportTree<TTree>),
 
-//     // try, expr, :, cases, (finally, :, expr)?
-//     Try(
-//         SToken<'a>,
-//         TTree::Expr,
-//         SToken<'a>,
-//         Vec<MatchCase<TTree>>,
-//         Option<(SToken<'a>, SToken<'a>, TTree::Expr)>,
-//     ),
+    // try, expr, :, cases, (finally, :, expr)?
+    Try(
+        TTree::Token,
+        TTree::Expr,
+        TTree::Token,
+        Vec<MatchCase<TTree>>,
+        Option<(TTree::Token, TTree::Token, TTree::Expr)>,
+    ),
 
-//     Break(SToken<'a>),
-//     Continue(SToken<'a>),
-//     Return(SToken<'a>, TTree::Expr),
-//     Raise(SToken<'a>, Option<TTree::Expr>),
-//     Expr(TTree::Expr),
-// }
+    Break(TTree::Token),
+    Continue(TTree::Token),
+    Return(TTree::Token, TTree::Expr),
+    Raise(TTree::Token, Option<TTree::Expr>),
+    Expr(TTree::Expr),
+}
 
-// #[derive(Debug, Clone)]
-// pub struct FmtExpr<TTree: Tree> {
-//     pub expr: TTree::Expr,
-//     pub fmt: Option<TTree::Expr>,
-// }
+#[derive(Debug, Clone)]
+pub struct FmtExpr<TTree: Tree> {
+    pub expr: TTree::Expr,
+    pub fmt: Option<TTree::Expr>,
+}
 
-// #[derive(Debug, Clone)]
-// pub enum ListItem<TTree: Tree> {
-//     Item(TTree::Expr),
-//     Spread(TTree::Expr),
-// }
+#[derive(Debug, Clone)]
+pub enum ListItem<TTree: Tree> {
+    Item(TTree::Expr),
+    Spread(TTree::Expr),
+}
 
-// #[derive(Debug, Clone)]
-// pub enum MappingItem<TTree: Tree> {
-//     Ident(TTree::Expr),
-//     Item(TTree::Expr, TTree::Expr),
-//     Spread(TTree::Expr),
-// }
+#[derive(Debug, Clone)]
+pub enum MappingItem<TTree: Tree> {
+    Ident(TTree::Expr),
+    Item(TTree::Expr, TTree::Expr),
+    Spread(TTree::Expr),
+}
 
-// #[derive(Debug, Clone)]
-// pub enum CallItem<'a, TTree: Tree> {
-//     Arg(TTree::Expr),
-//     Kwarg(SIdent<'a>, TTree::Expr),
-//     ArgSpread(TTree::Expr),
-//     KwargSpread(TTree::Expr),
-// }
+#[derive(Debug, Clone)]
+pub enum CallItem<TTree: Tree> {
+    Arg(TTree::Expr),
+    Kwarg(TTree::Token, TTree::Expr),
+    ArgSpread(TTree::Expr),
+    KwargSpread(TTree::Expr),
+}
 
-// #[derive(Debug, Clone)]
-// pub enum ArgDefItem<'a, TTree: Tree> {
-//     Arg(TTree::Pattern, Option<TTree::Expr>),
-//     ArgSpread(SIdent<'a>),
-//     KwargSpread(SIdent<'a>),
-// }
+#[derive(Debug, Clone)]
+pub enum ArgDefItem<TTree: Tree> {
+    Arg(TTree::Pattern, Option<TTree::Expr>),
+    ArgSpread(TTree::Token),
+    KwargSpread(TTree::Token),
+}
 
-// #[derive(Debug, Clone)]
-// pub struct MatchCase<TTree: Tree> {
-//     pub pattern: Option<TTree::Pattern>,
-//     pub guard: Option<TTree::Expr>,
-//     pub body: TTree::Expr,
-// }
+#[derive(Debug, Clone)]
+pub struct MatchCase<TTree: Tree> {
+    pub pattern: Option<TTree::Pattern>,
+    pub guard: Option<TTree::Expr>,
+    pub body: TTree::Expr,
+}
 
-// pub trait Tree {
-//     type Expr;
-//     type Pattern;
-//     type Stmt;
-// }
+pub trait Tree {
+    type Expr;
+    type Pattern;
+    type Stmt;
+    type Token;
+}
 
-// #[derive(Debug, Clone)]
-// pub enum Expr<'a, TTree: Tree> {
-//     Literal(SLiteral<'a>),
-//     Ident(SIdent<'a>),
-//     Tuple(Vec<ListItem<TTree>>),
-//     List(Vec<ListItem<TTree>>),
-//     Mapping(Vec<MappingItem<TTree>>),
-//     Slice(
-//         Option<TTree::Expr>,
-//         Option<TTree::Expr>,
-//         Option<TTree::Expr>,
-//     ),
+#[derive(Debug, Clone)]
+pub enum Expr<TTree: Tree> {
+    Literal(TTree::Token),
+    Ident(TTree::Token),
+    Tuple(Listing<ListItem<TTree>, TTree>),
+    List(Listing<ListItem<TTree>, TTree>),
+    Mapping(Listing<MappingItem<TTree>, TTree>),
+    Slice(
+        Option<TTree::Expr>,
+        Option<TTree::Expr>,
+        Option<TTree::Expr>,
+    ),
 
-//     Unary(UnaryOp, TTree::Expr),
-//     Binary(BinaryOp, TTree::Expr, TTree::Expr),
+    Unary(TTree::Token, TTree::Expr),
+    Binary(TTree::Token, TTree::Expr, TTree::Expr),
 
-//     Await(TTree::Expr),
-//     Yield(TTree::Expr),
-//     YieldFrom(TTree::Expr),
-//     Memo(TTree::Expr, bool),
+    Await(TTree::Token, TTree::Expr),
+    Yield(TTree::Token, TTree::Expr),
+    YieldFrom(TTree::Token, TTree::Token, TTree::Expr),
+    Memo(
+        TTree::Token,
+        TTree::Token,
+        Option<TTree::Token>,
+        TTree::Expr,
+    ),
 
-//     If(TTree::Expr, TTree::Expr, Option<TTree::Expr>),
-//     Match(TTree::Expr, Vec<MatchCase<TTree>>),
-//     Matches(TTree::Expr, TTree::Pattern),
-//     Class(Vec<CallItem<'a, TTree>>, TTree::Expr),
+    If(TTree::Expr, TTree::Expr, Option<TTree::Expr>),
 
-//     With(TTree::Pattern, TTree::Expr, TTree::Expr),
+    Match(TTree::Expr, Vec<MatchCase<TTree>>),
+    Matches(TTree::Expr, TTree::Pattern),
+    Class(Vec<CallItem<TTree>>, TTree::Expr),
 
-//     Call(TTree::Expr, Vec<CallItem<'a, TTree>>),
-//     Subscript(TTree::Expr, Vec<ListItem<TTree>>),
-//     RawAttribute(TTree::Expr, SIdent<'a>),
-//     ScopedAttribute(TTree::Expr, TTree::Expr),
-//     Attribute(TTree::Expr, SIdent<'a>),
+    With(TTree::Pattern, TTree::Expr, TTree::Expr),
 
-//     MappedCall(TTree::Expr, Vec<CallItem<'a, TTree>>),
-//     MappedSubscript(TTree::Expr, Vec<ListItem<TTree>>),
-//     MappedRawAttribute(TTree::Expr, SIdent<'a>),
-//     MappedScopedAttribute(TTree::Expr, TTree::Expr),
-//     MappedAttribute(TTree::Expr, SIdent<'a>),
+    Call(TTree::Expr, Vec<CallItem<TTree>>),
+    Subscript(TTree::Expr, Vec<ListItem<TTree>>),
+    RawAttribute(TTree::Expr, TTree::Token),
+    ScopedAttribute(TTree::Expr, TTree::Expr),
+    Attribute(TTree::Expr, TTree::Token),
 
-//     Checked(TTree::Expr, Option<TTree::Pattern>),
+    MappedCall(TTree::Expr, Vec<CallItem<TTree>>),
+    MappedSubscript(TTree::Expr, Vec<ListItem<TTree>>),
+    MappedRawAttribute(TTree::Expr, TTree::Token),
+    MappedScopedAttribute(TTree::Expr, TTree::Expr),
+    MappedAttribute(TTree::Expr, TTree::Token),
 
-//     Block(Vec<TTree::Stmt>),
+    Checked(TTree::Expr, Option<TTree::Pattern>),
 
-//     Fn(Vec<ArgDefItem<'a, TTree>>, TTree::Expr),
-//     Fstr(Spanned<String>, Vec<(FmtExpr<TTree>, Spanned<String>)>),
+    Block(Vec<TTree::Stmt>),
 
-//     // these are removed during desugaring
-//     Decorated(TTree::Expr, TTree::Expr),
-//     Placeholder,
-// }
+    Fn(Vec<ArgDefItem<TTree>>, TTree::Expr),
+    Fstr(Spanned<String>, Vec<(FmtExpr<TTree>, Spanned<String>)>),
 
-// // Patterns
+    // these are removed during desugaring
+    Decorated(TTree::Expr, TTree::Expr),
+    Placeholder,
+}
 
-// #[derive(Debug, Clone)]
-// pub enum PatternSequenceItem<'a, TTree: Tree> {
-//     Item(TTree::Pattern),
-//     Spread(Option<SIdent<'a>>),
-// }
+// Patterns
 
-// #[derive(Debug, Clone)]
-// pub enum PatternMappingItem<'a, TTree: Tree> {
-//     Ident(SIdent<'a>),
-//     Item(TTree::Expr, TTree::Pattern),
-//     Spread(Option<SIdent<'a>>),
-// }
+#[derive(Debug, Clone)]
+pub enum PatternSequenceItem<TTree: Tree> {
+    Item(TTree::Pattern),
+    Spread(Option<TTree::Token>),
+}
 
-// #[derive(Debug, Clone)]
-// pub enum PatternClassItem<'a, TTree: Tree> {
-//     Item(TTree::Pattern),
-//     Kw(SIdent<'a>, TTree::Pattern),
-// }
+#[derive(Debug, Clone)]
+pub enum PatternMappingItem<TTree: Tree> {
+    Ident(TTree::Token),
+    Item(TTree::Expr, TTree::Pattern),
+    Spread(Option<TTree::Token>),
+}
 
-// #[derive(Debug, Clone)]
-// pub enum Pattern<'a, TTree: Tree> {
-//     Capture(Option<SIdent<'a>>),
-//     Value(TTree::Expr),
-//     As(TTree::Pattern, SIdent<'a>),
-//     Or(Vec<TTree::Pattern>),
-//     Literal(SLiteral<'a>),
-//     Sequence(Vec<PatternSequenceItem<'a, TTree>>),
-//     Mapping(Vec<PatternMappingItem<'a, TTree>>),
-//     Class(TTree::Expr, Vec<PatternClassItem<'a, TTree>>),
-// }
+#[derive(Debug, Clone)]
+pub enum PatternClassItem<TTree: Tree> {
+    Item(TTree::Pattern),
+    Kw(TTree::Token, TTree::Pattern),
+}
 
-// // Spanned types
+#[derive(Debug, Clone)]
+pub enum Pattern<TTree: Tree> {
+    Capture(Option<TTree::Token>),
+    Value(TTree::Expr),
+    As(TTree::Pattern, TTree::Token),
+    Or(Vec<TTree::Pattern>),
+    Literal(TTree::Token),
+    Sequence(Vec<PatternSequenceItem<TTree>>),
+    Mapping(Vec<PatternMappingItem<TTree>>),
+    Class(TTree::Expr, Vec<PatternClassItem<TTree>>),
+}
 
-// #[derive(Debug, Clone)]
-// pub struct STree<'src> {
-//     phantom: std::marker::PhantomData<&'src ()>,
-// }
+// Spans
 
-// impl<'src> Tree for STree<'src> {
-//     type Expr = Indirect<SExpr<'src>>;
-//     type Pattern = Indirect<SPattern<'src>>;
-//     type Stmt = Indirect<SStmt<'src>>;
-// }
+#[derive(Debug, Clone)]
+pub struct Spanned<T> {
+    pub span: Span,
+    pub value: T,
+}
 
-// pub type Span = SimpleSpan<usize, ()>;
+pub trait Spannable<T> {
+    fn spanned(self, span: Span) -> Spanned<T>;
+}
 
-// #[derive(Debug, Clone)]
-// pub struct Spanned<T> {
-//     pub span: Span,
-//     pub value: T,
-// }
+impl<T> Spannable<T> for T {
+    fn spanned(self, span: Span) -> Spanned<T> {
+        Spanned { span, value: self }
+    }
+}
 
-// pub trait Spannable<T> {
-//     fn spanned(self, span: Span) -> Spanned<T>;
-// }
+// Spanned types
 
-// impl<T> Spannable<T> for T {
-//     fn spanned(self, span: Span) -> Spanned<T> {
-//         Spanned { span, value: self }
-//     }
-// }
+#[derive(Debug, Clone)]
+pub struct STree<'src: 'tok, 'tok> {
+    _phantom: std::marker::PhantomData<&'src ()>,
+    _phantom2: std::marker::PhantomData<&'tok ()>,
+}
 
-// pub type SPatternInner<'a> = Pattern<'a, STree<'a>>;
+impl<'src: 'tok, 'tok> Tree for STree<'src, 'tok> {
+    type Expr = Box<SExpr<'src, 'tok>>;
+    type Pattern = Box<SPattern<'src, 'tok>>;
+    type Stmt = Box<SStmt<'src, 'tok>>;
+    type Token = &'tok SToken<'src>;
+}
 
-// #[derive(Debug, Clone)]
-// pub struct SPattern<'a> {
-//     pub value: SPatternInner<'a>,
-//     pub span: Span,
-//     pub leading_trivia: Vec<crate::lexer::Trivium<'a>>,
-//     pub trailing_trivia: Vec<crate::lexer::Trivium<'a>>,
-// }
+pub type SPatternInner<'src, 'tok> = Pattern<STree<'src, 'tok>>;
 
-// impl<'a> SPatternInner<'a> {
-//     pub fn spanned(self, span: Span) -> SPattern<'a> {
-//         SPattern {
-//             value: self,
-//             span,
-//             leading_trivia: Vec::new(),
-//             trailing_trivia: Vec::new(),
-//         }
-//     }
+#[derive(Debug, Clone)]
+pub struct SPattern<'src, 'tok> {
+    pub value: SPatternInner<'src, 'tok>,
+    pub span: Span,
+}
 
-//     pub fn spanned_with_trivia(
-//         self,
-//         span: Span,
-//         leading_trivia: Vec<crate::lexer::Trivium<'a>>,
-//         trailing_trivia: Vec<crate::lexer::Trivium<'a>>,
-//     ) -> SPattern<'a> {
-//         SPattern {
-//             value: self,
-//             span,
-//             leading_trivia,
-//             trailing_trivia,
-//         }
-//     }
-// }
+impl<'src, 'tok> SPatternInner<'src, 'tok> {
+    pub fn spanned(self, span: Span) -> SPattern<'src, 'tok> {
+        SPattern { value: self, span }
+    }
+}
 
-// pub type SExprInner<'a> = Expr<'a, STree<'a>>;
+pub type SExprInner<'src, 'tok> = Expr<STree<'src, 'tok>>;
 
-// #[derive(Debug, Clone)]
-// pub struct SExpr<'a> {
-//     pub value: SExprInner<'a>,
-//     pub span: Span,
-//     pub leading_trivia: Vec<crate::lexer::Trivium<'a>>,
-//     pub trailing_trivia: Vec<crate::lexer::Trivium<'a>>,
-// }
+#[derive(Debug, Clone)]
+pub struct SExpr<'src, 'tok> {
+    pub value: SExprInner<'src, 'tok>,
+    pub span: Span,
+}
 
-// impl<'a> SExprInner<'a> {
-//     pub fn spanned(self, span: Span) -> SExpr<'a> {
-//         SExpr {
-//             value: self,
-//             span,
-//             leading_trivia: Vec::new(),
-//             trailing_trivia: Vec::new(),
-//         }
-//     }
+impl<'src, 'tok> SExpr<'src, 'tok> {
+    pub fn boxed(self) -> Box<SExpr<'src, 'tok>> {
+        Box::new(self)
+    }
+}
 
-//     pub fn spanned_with_trivia(
-//         self,
-//         span: Span,
-//         leading_trivia: Vec<crate::lexer::Trivium<'a>>,
-//         trailing_trivia: Vec<crate::lexer::Trivium<'a>>,
-//     ) -> SExpr<'a> {
-//         SExpr {
-//             value: self,
-//             span,
-//             leading_trivia,
-//             trailing_trivia,
-//         }
-//     }
-// }
+impl<'src, 'tok> SExprInner<'src, 'tok> {
+    pub fn spanned(self, span: Span) -> SExpr<'src, 'tok> {
+        SExpr { value: self, span }
+    }
+}
 
-// pub type SStmtInner<'a> = Stmt<'a, STree<'a>>;
+pub type SStmtInner<'src, 'tok> = Stmt<STree<'src, 'tok>>;
 
-// impl<'a> SStmtInner<'a> {
-//     pub fn spanned(self, span: Span) -> SStmt<'a> {
-//         SStmt {
-//             value: self,
-//             span,
-//             leading_trivia: Vec::new(),
-//             trailing_trivia: Vec::new(),
-//         }
-//     }
+impl<'src, 'tok> SStmtInner<'src, 'tok> {
+    pub fn spanned(self, span: Span) -> SStmt<'src, 'tok> {
+        SStmt { value: self, span }
+    }
+}
 
-//     pub fn spanned_with_trivia(
-//         self,
-//         span: Span,
-//         leading_trivia: Vec<crate::lexer::Trivium<'a>>,
-//         trailing_trivia: Vec<crate::lexer::Trivium<'a>>,
-//     ) -> SStmt<'a> {
-//         SStmt {
-//             value: self,
-//             span,
-//             leading_trivia,
-//             trailing_trivia,
-//         }
-//     }
-// }
+#[derive(Debug, Clone)]
+pub struct SStmt<'src, 'tok> {
+    pub value: SStmtInner<'src, 'tok>,
+    pub span: Span,
+}
 
-// #[derive(Debug, Clone)]
-// pub struct SStmt<'a> {
-//     pub value: SStmtInner<'a>,
-//     pub span: Span,
-//     pub leading_trivia: Vec<crate::lexer::Trivium<'a>>,
-//     pub trailing_trivia: Vec<crate::lexer::Trivium<'a>>,
-// }
-
-// pub type SListItem<'a> = ListItem<STree<'a>>;
-// pub type SMappingItem<'a> = MappingItem<STree<'a>>;
-// pub type SMatchCase<'a> = MatchCase<STree<'a>>;
-// pub type SCallItem<'a> = CallItem<'a, STree<'a>>;
-// pub type SArgDefItem<'a> = ArgDefItem<'a, STree<'a>>;
-// pub type SFmtExpr<'a> = FmtExpr<STree<'a>>;
+pub type SListItem<'src, 'tok> = ListItem<STree<'src, 'tok>>;
+pub type SMappingItem<'src, 'tok> = MappingItem<STree<'src, 'tok>>;
+pub type SMatchCase<'src, 'tok> = MatchCase<STree<'src, 'tok>>;
+pub type SCallItem<'src, 'tok> = CallItem<STree<'src, 'tok>>;
+pub type SArgDefItem<'src, 'tok> = ArgDefItem<STree<'src, 'tok>>;
+pub type SFmtExpr<'src, 'tok> = FmtExpr<STree<'src, 'tok>>;

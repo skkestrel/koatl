@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use parser::ast::Span;
+use parser::lexer::Span;
 
 pub type PyIdent<'a> = Cow<'a, str>;
 

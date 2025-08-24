@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Display;
 
+use parser::cst::Spannable;
+use parser::lexer::Span;
 use slotmap::SlotMap;
 use slotmap::new_key_type;
 

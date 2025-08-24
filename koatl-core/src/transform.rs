@@ -13,7 +13,7 @@ use crate::{
     util::{LineColCache, RefHash, TlErrBuilder, TlErrs, TlResult},
 };
 use once_cell::sync::Lazy;
-use parser::ast::*;
+use parser::{ast::*, lexer::Span};
 use slotmap::SlotMap;
 use std::hash::{Hash, Hasher};
 

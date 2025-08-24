@@ -1,5 +1,7 @@
 #![allow(unused_variables, dead_code)]
 
+pub type Span = SimpleSpan<usize, ()>;
+
 use chumsky::{
     input::{Cursor, InputRef, StrInput},
     label::LabelError,
@@ -9,8 +11,6 @@ use std::{
     collections::HashSet,
     fmt::{self},
 };
-
-use crate::ast::Span;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum Token<'src> {

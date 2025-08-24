@@ -6,8 +6,8 @@ pub mod transform;
 mod types;
 pub mod util;
 
-use ::parser::ast::SExpr;
-use parser::ast::Span;
+use parser::ast::SExpr;
+use parser::lexer::Span;
 use parser::{TokenList, parse_tokens, tokenize};
 
 use crate::py::ast::{PyAccessCtx, PyImportAlias, PyListItem, PyLiteral};
@@ -264,9 +264,9 @@ pub fn parse_tl<'src>(src: &'src str) -> TlResult<SExpr<'src>> {
         Some(tokens) => tokens,
         None => return Err(errs),
     };
-    // println!("tokens: {tokens}");
+    println!("tokens: {tokens}");
 
-    let (tl_ast, parser_errs) = parse_tokens(&src, &tokens);
+    let (tl_cst, parser_errs) = parse_tokens(&src, &tokens);
     errs.extend(TlErrs(
         parser_errs
             .into_iter()
@@ -282,8 +282,8 @@ pub fn parse_tl<'src>(src: &'src str) -> TlResult<SExpr<'src>> {
             .collect(),
     ));
 
-    let tl_ast = tl_ast.ok_or_else(|| errs)?;
-    // println!("AST: {ast:?}");
+    let tl_cst = tl_cst.ok_or_else(|| errs)?;
+    println!("cst: {tl_cst:#?}");
 
-    Ok(tl_ast)
+    panic!();
 }

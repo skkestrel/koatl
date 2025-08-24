@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::ast::*;
+use crate::{ast::*, cst::Spannable, lexer::Span};
 
 pub struct AstBuilder {
     pub span: Span,
@@ -172,10 +172,17 @@ impl AstBuilder {
 
     pub fn fstring<'src>(
         &self,
-        prefix: Spanned<String>,
-        parts: Vec<(SFmtExpr<'src>, Spanned<String>)>,
+        prefix: impl Into<String>,
+        parts: Vec<(SFmtExpr<'src>, impl Into<String>)>,
     ) -> SExpr<'src> {
-        Expr::Fstr(prefix, parts).spanned(self.span)
+        Expr::Fstr(
+            prefix.into().spanned(self.span),
+            parts
+                .into_iter()
+                .map(|(x, s)| (x, s.into().spanned(self.span)))
+                .collect(),
+        )
+        .spanned(self.span)
     }
 
     pub fn block_expr<'src>(&self, block: Vec<impl IntoIndirect<SStmt<'src>>>) -> SExpr<'src> {

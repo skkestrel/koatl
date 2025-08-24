@@ -2,7 +2,7 @@ use std::{borrow::Cow, fmt};
 
 use chumsky::{DefaultExpected, error::Error, input::Input, label::LabelError, util::MaybeRef};
 
-use crate::{Token, ast::Span, lexer::SToken};
+use crate::{Token, lexer::SToken, lexer::Span};
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TriviaRichPattern<'a, 'src> {
