@@ -303,9 +303,7 @@ where
             self.next();
         }
 
-        let trivia = self.parse_trivia()?;
-
-        Ok((indent_level, self.span_since(&start), trivia))
+        Ok((indent_level, self.span_since(&start), vec![]))
     }
 
     fn parse_ident_or_token(&mut self) -> TResult<'src, (Token<'src>, Span)> {
@@ -1184,17 +1182,21 @@ where
          *   ^ this is a continuation that immediately ends due to ]
          */
         let block_span = if let Some(last_block_token) = tokens.last_mut() {
-            last_block_token
+            Span::new((), *start.inner()..last_block_token.span.end)
+        } else {
+            Span::new((), *start.inner()..*start.inner())
+        };
+
+        let len = tokens.len();
+        if len >= 2 {
+            // we want to avoid putting trivia on an eol token, so put it on the second last one
+            tokens[len - 2]
                 .trailing_trivia
                 .extend(cur_block_unassigned_trivia.drain(..));
-
-            Span::new((), *start.inner()..last_block_token.span.end)
         } else {
             self.unassigned_trivia
                 .extend(cur_block_unassigned_trivia.drain(..));
-
-            Span::new((), *start.inner()..*start.inner())
-        };
+        }
 
         Ok((TokenList(tokens), break_type, block_span))
     }
@@ -1251,6 +1253,8 @@ pub fn tokenize<'src>(
 
 #[cfg(test)]
 mod tests {
+    use chumsky::text::newline;
+
     use super::*;
 
     fn match_trivia(expected: &Vec<Trivium>, actual: &Vec<Trivium>) -> bool {
@@ -1287,12 +1291,19 @@ mod tests {
             }
         }
 
-        println!("{:?}", token_list);
+        for token in token_list.0.iter() {
+            println!("{:?}", token);
+        }
 
         assert!(
             false,
-            "Expected token '{}' not found. Candidates:\n{:?}",
-            token, cands
+            "Expected token '{}' not found. Candidates:\n{}",
+            token,
+            cands
+                .iter()
+                .map(|t| format!("{:?}", t))
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 
@@ -1606,19 +1617,14 @@ if condition:
     # before
     x = 1 # after
     # end
-# after if
-"#;
+# after if"#;
 
         let token_list = simple_tokenize(source);
 
         assert_has_token_with_trivia(
             &token_list,
             Token::Ident("x"),
-            vec![
-                whitespace_trivium("    "),
-                comment_trivium("# before"),
-                newline_trivium(),
-            ],
+            vec![comment_trivium("# before"), newline_trivium()],
             vec![whitespace_trivium(" ")],
         );
 
@@ -1631,6 +1637,7 @@ if condition:
                 comment_trivium("# after"),
                 newline_trivium(),
                 comment_trivium("# end"),
+                newline_trivium(),
             ],
         );
 
@@ -1638,7 +1645,46 @@ if condition:
             &token_list,
             Token::Dedent,
             vec![],
-            vec![whitespace_trivium(" "), comment_trivium("# after if")],
+            vec![comment_trivium("# after if")],
+        );
+    }
+
+    #[test]
+    fn test_empty_lines_trivia() {
+        let source = r#"
+x
+y
+
+
+z
+# end
+"#;
+
+        let token_list = simple_tokenize(source);
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Ident("x"),
+            vec![newline_trivium()],
+            vec![newline_trivium()],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Ident("y"),
+            vec![],
+            vec![newline_trivium()],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Ident("z"),
+            vec![newline_trivium(), newline_trivium()],
+            vec![
+                newline_trivium(),
+                comment_trivium("# end"),
+                newline_trivium(),
+            ],
         );
     }
 }
