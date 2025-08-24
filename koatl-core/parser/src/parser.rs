@@ -1571,7 +1571,7 @@ pub fn parse_tokens<'tokens, 'src: 'tokens>(
                 .0
                 .as_slice()
                 // convert the span type with map
-                .map((src.len()..src.len()).into(), |tok| (&tok.value, &tok.span)),
+                .map((src.len()..src.len()).into(), |tok| (&tok.token, &tok.span)),
         )
         .into_output_errors()
 }

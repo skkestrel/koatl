@@ -244,7 +244,7 @@ pub fn format_errs(errs: &TlErrs, filename: &str, src: &str) -> Vec<u8> {
 pub fn parse_tl<'src>(src: &'src str) -> TlResult<SExpr<'src>> {
     let mut errs = TlErrs::new();
 
-    let (tokens, token_errs) = tokenize(&src);
+    let (tokens, token_errs) = tokenize(&src, false);
     errs.extend(TlErrs(
         token_errs
             .into_iter()

@@ -10,13 +10,14 @@ use std::{
     fmt::{self},
 };
 
-use crate::ast::{Span, Spannable, Spanned};
+use crate::ast::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token<'src> {
     Ident(&'src str),
     None,
     Bool(bool),
+
     Str(String),
     FstrBegin(String),
     FstrContinue(String),
@@ -31,11 +32,45 @@ pub enum Token<'src> {
     Eol,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum TriviumType {
+    Newline,
+    Whitespace,
+    LineComment,
+    BlockComment,
+}
+
+#[derive(Debug, Clone)]
+pub struct Trivium<'src> {
+    pub span: Span,
+    pub typ: TriviumType,
+    pub value: &'src str,
+}
+
+#[derive(Debug, Clone)]
+pub struct SToken<'src> {
+    pub span: Span,
+    pub token: Token<'src>,
+    pub leading_trivia: Vec<Trivium<'src>>,
+    pub trailing_trivia: Vec<Trivium<'src>>,
+}
+
+impl<'src> SToken<'src> {
+    pub fn new(token: Token<'src>, span: Span, leading_trivia: Vec<Trivium<'src>>) -> Self {
+        SToken {
+            span,
+            token,
+            leading_trivia,
+            trailing_trivia: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug)]
-pub struct TokenList<'src>(pub Vec<Spanned<Token<'src>>>);
+pub struct TokenList<'src>(pub Vec<SToken<'src>>);
 
 impl<'src> IntoIterator for TokenList<'src> {
-    type Item = Spanned<Token<'src>>;
+    type Item = SToken<'src>;
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -62,8 +97,8 @@ impl fmt::Display for Token<'_> {
     }
 }
 
-impl<'src> std::iter::FromIterator<Spanned<Token<'src>>> for TokenList<'src> {
-    fn from_iter<T: IntoIterator<Item = Spanned<Token<'src>>>>(iter: T) -> Self {
+impl<'src> std::iter::FromIterator<SToken<'src>> for TokenList<'src> {
+    fn from_iter<T: IntoIterator<Item = SToken<'src>>>(iter: T) -> Self {
         TokenList(iter.into_iter().collect())
     }
 }
@@ -71,7 +106,7 @@ impl<'src> std::iter::FromIterator<Spanned<Token<'src>>> for TokenList<'src> {
 impl fmt::Display for TokenList<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for (i, stoken) in self.0.iter().enumerate() {
-            write!(f, "{}", stoken.value)?;
+            write!(f, "{}", stoken.token)?;
             if i < self.0.len() - 1 {
                 write!(f, " ")?;
             }
@@ -86,12 +121,17 @@ pub struct IndentLevel {
     pub start_cursor: usize,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
-pub enum NewBlockType {
-    #[default]
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParseBlockMode {
     BeginInput,
     NewBlock,
     Continuation,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParseBlockEndType {
+    Delimiter,
+    EolOrEof,
 }
 
 pub type TOutput<'src> = TokenList<'src>;
@@ -107,16 +147,12 @@ pub fn py_escape_str(s: &str) -> String {
     for c in s.chars() {
         match c {
             // Handle common escape sequences
+            '\0' => escaped_string.push_str("\\0"), // Null character
             '\n' => escaped_string.push_str("\\n"),
             '\r' => escaped_string.push_str("\\r"),
             '\t' => escaped_string.push_str("\\t"),
             '\"' => escaped_string.push_str("\\\""),
             '\\' => escaped_string.push_str("\\\\"),
-
-            // Handle additional escape sequences
-            '\0' => escaped_string.push_str("\\0"), // Null character
-            '\x08' => escaped_string.push_str("\\b"), // Backspace
-            '\x0c' => escaped_string.push_str("\\f"), // Form feed
 
             // Handle all other ASCII control characters (0x00 to 0x1F) using hex escapes
             c if (c as u32) < 32 => {
@@ -142,7 +178,7 @@ pub fn py_escape_fstr(s: &str) -> String {
         .collect()
 }
 
-// TODO don't duplicate this with parser below
+// TODO don't duplicate this with parser below?
 pub fn is_valid_ident(s: &str) -> bool {
     if s.is_empty() {
         return false;
@@ -165,6 +201,8 @@ where
 {
     input: &'input mut InputRef<'src, 'parse, TInput, TExtra<'src>>,
     keywords: HashSet<String>,
+    keep_trivia: bool,
+    unassigned_trivia: Vec<Trivium<'src>>,
 }
 
 impl<'src: 'parse, 'parse, 'input, TInput> TokenizeCtx<'src, 'parse, 'input, TInput>
@@ -180,7 +218,12 @@ where
 
         let keywords = HashSet::<String>::from_iter(KEYWORDS.iter().map(|s| s.to_string()));
 
-        TokenizeCtx { input, keywords }
+        TokenizeCtx {
+            input,
+            keywords,
+            keep_trivia: false,
+            unassigned_trivia: Vec::new(),
+        }
     }
 
     fn cursor(&self) -> Cursor<'src, 'parse, TInput> {
@@ -240,7 +283,7 @@ where
         }
     }
 
-    fn parse_indentation(&mut self) -> TResult<'src, Spanned<usize>> {
+    fn parse_indentation(&mut self) -> TResult<'src, (usize, Span, Vec<Trivium<'src>>)> {
         let start = self.cursor();
         let mut indent_level: usize = 0;
 
@@ -260,11 +303,12 @@ where
             self.next();
         }
 
-        self.parse_nonsemantic()?;
-        Ok(indent_level.spanned(self.span_since(&start)))
+        let trivia = self.parse_trivia()?;
+
+        Ok((indent_level, self.span_since(&start), trivia))
     }
 
-    fn parse_ident_or_token(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
+    fn parse_ident_or_token(&mut self) -> TResult<'src, (Token<'src>, Span)> {
         let start = self.cursor();
 
         let c = self.peek();
@@ -281,22 +325,24 @@ where
         }
 
         let ident = self.slice_since(&start);
-        if self.keywords.contains(ident) {
-            return Ok(Token::Kw(ident).spanned(self.span_since(&start)));
-        }
+        let span = self.span_since(&start);
 
-        if ident == "True" {
-            return Ok(Token::Bool(true).spanned(self.span_since(&start)));
+        let token = if self.keywords.contains(ident) {
+            Token::Kw(ident)
+        } else if ident == "True" {
+            Token::Bool(true)
         } else if ident == "False" {
-            return Ok(Token::Bool(false).spanned(self.span_since(&start)));
+            Token::Bool(false)
         } else if ident == "None" {
-            return Ok(Token::None.spanned(self.span_since(&start)));
-        }
+            Token::None
+        } else {
+            Token::Ident(ident)
+        };
 
-        Ok(Token::Ident(self.slice_since(&start)).spanned(self.span_since(&start)))
+        Ok((token, span))
     }
 
-    fn parse_symbol(&mut self) -> TResult<'src, Spanned<Token<'src>>> {
+    fn parse_symbol(&mut self) -> TResult<'src, (Token<'src>, Span)> {
         const POLYGRAMS: &[&str] = &[
             "+=", "-=", "*=", "/=", "|=", "??=", "===", "<=>", "=>", "..", "==", "<>", "<=", ">=",
             "//", "**", "??", ".=", "::",
@@ -316,21 +362,22 @@ where
                 for _ in 0..polygram.len() {
                     self.next();
                 }
-                return Ok(Token::Symbol(polygram).spanned(self.span_since(&start)));
+                return Ok((Token::Symbol(polygram), self.span_since(&start)));
             }
         }
         for monogram in MONOGRAMS.chars() {
             if sl.starts_with(monogram) {
                 self.input.rewind(saved);
                 self.next();
-                return Ok(Token::Symbol(self.slice_since(&start)).spanned(self.span_since(&start)));
+                let symbol = self.slice_since(&start);
+                return Ok((Token::Symbol(symbol), self.span_since(&start)));
             }
         }
 
         Err(Rich::custom(self.span_since(&start), "expected a symbol"))
     }
 
-    fn parse_number(&mut self) -> TResult<'src, (Spanned<Token<'src>>, bool)> {
+    fn parse_number(&mut self) -> TResult<'src, (Token<'src>, Span, bool)> {
         let start = self.cursor();
 
         let c = self.peek();
@@ -374,65 +421,13 @@ where
             ));
         }
 
-        Ok((
-            Token::Num(self.slice_since(&start)).spanned(self.span_since(&start)),
-            after_dot,
-        ))
+        let span = self.span_since(&start);
+        let num_str = self.slice_since(&start);
+
+        Ok((Token::Num(num_str), span, after_dot))
     }
 
-    fn parse_block_comment_begin(&mut self) -> TResult<'src, ()> {
-        let start = self.cursor();
-
-        if self.next() != Some('#') || self.next() != Some('-') {
-            return Err(Rich::custom(
-                self.span_since(&start),
-                "expected block comment start",
-            ));
-        }
-
-        Ok(())
-    }
-
-    fn parse_block_comment_end(&mut self) -> TResult<'src, ()> {
-        let start = self.cursor();
-
-        if self.next() != Some('-') || self.next() != Some('#') {
-            return Err(Rich::custom(
-                self.span_since(&start),
-                "expected block comment end",
-            ));
-        }
-
-        Ok(())
-    }
-
-    fn parse_block_comment(&mut self) -> TResult<'src, ()> {
-        let start = self.cursor();
-
-        self.parse_block_comment_begin()?;
-
-        while let Some(_) = self.peek() {
-            if self.try_parse(|x| x.parse_block_comment_end()).is_ok() {
-                return Ok(());
-            }
-
-            if self
-                .look_ahead(TokenizeCtx::parse_block_comment_begin)
-                .is_ok()
-            {
-                self.parse_block_comment()?;
-            }
-
-            self.next();
-        }
-
-        return Err(Rich::custom(
-            self.span_since(&start),
-            "unterminated block comment",
-        ));
-    }
-
-    fn parse_newline(&mut self) -> TResult<'src, ()> {
+    fn parse_newline(&mut self) -> TResult<'src, Trivium<'src>> {
         let start = self.cursor();
         let mut err = false;
 
@@ -454,17 +449,24 @@ where
         if err {
             return Err(Rich::custom(self.span_since(&start), "expected newline"));
         } else {
-            Ok(())
+            Ok(Trivium {
+                span: self.span_since(&start),
+                typ: TriviumType::Newline,
+                value: self.slice_since(&start),
+            })
         }
     }
 
-    fn parse_newline_or_eof(&mut self) -> TResult<'src, ()> {
+    fn parse_newline_or_eof(&mut self) -> TResult<'src, Vec<Trivium<'src>>> {
         if self.peek().is_none() {
-            return Ok(());
+            return Ok(vec![]);
         }
 
-        if self.try_parse(TokenizeCtx::parse_newline).is_ok() {
-            return Ok(());
+        if let Ok(tr) = self.try_parse(TokenizeCtx::parse_newline) {
+            if self.keep_trivia {
+                return Ok(vec![tr]);
+            }
+            return Ok(vec![]);
         }
 
         return Err(Rich::custom(
@@ -473,46 +475,127 @@ where
         ));
     }
 
-    fn parse_nonsemantic(&mut self) -> TResult<'src, ()> {
+    fn parse_whitespace(&mut self) -> TResult<'src, Trivium<'src>> {
+        let start = self.cursor();
+        let mut found_one = false;
+
         while let Some(c) = self.peek() {
-            if c == ' ' || c == '\t' {
-                self.next();
-            } else if self
-                .look_ahead(TokenizeCtx::parse_block_comment_begin)
-                .is_ok()
-            {
-                self.parse_block_comment()?;
-            } else if c == '#' {
-                while self.look_ahead(TokenizeCtx::parse_newline_or_eof).is_err() {
-                    self.next();
-                }
-            } else {
+            if !c.is_whitespace() {
                 break;
             }
+
+            if c == '\n' || self.look_ahead(|ctx| ctx.parse_seq("\r\n")).is_ok() {
+                break;
+            }
+
+            found_one = true;
+            self.next();
         }
 
-        Ok(())
+        if !found_one {
+            return Err(Rich::custom(self.span_since(&start), "expected whitespace"));
+        }
+
+        Ok(Trivium {
+            span: self.span_since(&start),
+            typ: TriviumType::Whitespace,
+            value: self.slice_since(&start),
+        })
     }
 
-    fn parse_empty_line(&mut self) -> TResult<'src, ()> {
+    fn parse_empty_line(&mut self) -> TResult<'src, Vec<Trivium<'src>>> {
         if self.peek().is_none() {
             return Err(Rich::custom(
                 self.span_since(&self.cursor()),
-                "expected empty line, not eof",
+                "expected empty line, found eof",
             ));
         }
 
-        loop {
-            self.parse_nonsemantic()?;
+        let mut trivia = vec![];
+        if let Ok(t) = self.try_parse(|x| x.parse_whitespace()) {
+            trivia.push(t);
+        }
 
-            if self.try_parse(TokenizeCtx::parse_newline_or_eof).is_ok() {
-                return Ok(());
-            } else {
-                return Err(Rich::custom(
-                    self.span_since(&self.cursor()),
-                    "expected empty line",
-                ));
+        trivia.extend(self.try_parse(TokenizeCtx::parse_newline_or_eof)?);
+
+        Ok(trivia)
+    }
+
+    fn parse_line_comment(&mut self) -> TResult<'src, Trivium<'src>> {
+        let start = self.cursor();
+
+        if self.next() != Some('#') {
+            return Err(Rich::custom(
+                self.span_since(&start),
+                "expected line comment",
+            ));
+        }
+
+        while self.look_ahead(TokenizeCtx::parse_newline_or_eof).is_err() {
+            self.next();
+        }
+
+        Ok(Trivium {
+            span: self.span_since(&start),
+            typ: TriviumType::LineComment,
+            value: self.slice_since(&start),
+        })
+    }
+
+    fn parse_block_comment(&mut self) -> TResult<'src, Trivium<'src>> {
+        let start = self.cursor();
+
+        self.parse_seq("#-")?;
+
+        while let Some(_) = self.peek() {
+            if self.try_parse(|ctx| ctx.parse_seq("-#")).is_ok() {
+                return Ok(Trivium {
+                    span: self.span_since(&start),
+                    typ: TriviumType::BlockComment,
+                    value: self.slice_since(&start),
+                });
             }
+
+            // nesting
+            if self.try_parse(|ctx| ctx.parse_block_comment()).is_ok() {
+                continue;
+            }
+
+            self.next();
+        }
+
+        return Err(Rich::custom(
+            self.span_since(&start),
+            "unterminated block comment",
+        ));
+    }
+
+    fn parse_trivia(&mut self) -> TResult<'src, Vec<Trivium<'src>>> {
+        let mut trivia = Vec::new();
+
+        while self.peek().is_some() {
+            if let Ok(t) = self.try_parse(|x| x.parse_whitespace()) {
+                trivia.push(t);
+                continue;
+            }
+
+            if let Ok(t) = self.try_parse(|x| x.parse_block_comment()) {
+                trivia.push(t);
+                continue;
+            }
+
+            if let Ok(t) = self.try_parse(|x| x.parse_line_comment()) {
+                trivia.push(t);
+                continue;
+            }
+
+            break;
+        }
+
+        if self.keep_trivia {
+            Ok(trivia)
+        } else {
+            Ok(vec![])
         }
     }
 
@@ -600,13 +683,19 @@ where
                 seen_quotes += 1;
 
                 if seen_quotes == ending_char_count {
+                    let span = self.span_since(&marker);
                     if tokens.len() == 0 {
-                        tokens
-                            .push(Token::FstrBegin(current_str).spanned(self.span_since(&marker)));
+                        tokens.push(SToken::new(
+                            Token::FstrBegin(current_str),
+                            span,
+                            Vec::new(), // First token trivia will be assigned later.
+                        ));
                     } else {
-                        tokens.push(
-                            Token::FstrContinue(current_str).spanned(self.span_since(&marker)),
-                        );
+                        tokens.push(SToken::new(
+                            Token::FstrContinue(current_str),
+                            span,
+                            Vec::new(),
+                        ));
                     }
 
                     self.input.rewind(ending_marker);
@@ -628,44 +717,48 @@ where
             } else if self.try_parse(|x| x.parse_char('}')).is_ok() {
                 return Err(Rich::custom(self.span_since(&marker), "unexpected '}'"));
             } else if self.try_parse(|x| x.parse_char('{')).is_ok() {
-                if tokens.len() == 0 {
-                    tokens.push(Token::FstrBegin(current_str).spanned(self.span_since(&marker)));
+                let span = self.span_since(&marker);
+                let trivia = self.parse_trivia()?;
+
+                let mut new_token = if tokens.len() == 0 {
+                    SToken::new(Token::FstrBegin(current_str), span, Vec::new())
                 } else {
-                    tokens.push(Token::FstrContinue(current_str).spanned(self.span_since(&marker)));
-                }
+                    SToken::new(Token::FstrContinue(current_str), span, Vec::new())
+                };
+
+                new_token.trailing_trivia = trivia;
+                tokens.push(new_token);
                 current_str = String::new();
 
-                self.parse_nonsemantic()?;
-                while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
-
-                let sexpr = self.try_parse(|x| x.parse_block(0, NewBlockType::BeginInput))?;
-
-                while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
+                let (inner_tokens, _, inner_span) =
+                    self.try_parse(|x| x.parse_block(0, ParseBlockMode::BeginInput))?;
 
                 self.parse_indentation()?;
 
                 marker = self.cursor();
                 let mut format_tokens = vec![];
                 if self.try_parse(|x| x.parse_seq("!")).is_ok() {
-                    format_tokens.push(Token::Symbol("!").spanned(self.span_since(&marker)));
+                    format_tokens.push(SToken::new(
+                        Token::Symbol("!"),
+                        self.span_since(&marker),
+                        Vec::new(),
+                    ));
                     format_tokens.extend(self.parse_fstr_inner('}', 1, verbatim)?);
                 }
 
                 self.parse_seq("}")?;
 
-                tokens.push(Token::Indent.spanned(Span::new(
-                    sexpr.span.context,
-                    sexpr.span.start..sexpr.span.start,
-                )));
-                tokens.extend(sexpr.value);
-                tokens.push(Token::Eol.spanned(Span::new(
-                    sexpr.span.context,
-                    sexpr.span.end..sexpr.span.end,
-                )));
-                tokens.push(Token::Dedent.spanned(Span::new(
-                    sexpr.span.context,
-                    sexpr.span.end..sexpr.span.end,
-                )));
+                tokens.push(SToken::new(
+                    Token::Indent,
+                    Span::new(inner_span.context, inner_span.start..inner_span.start),
+                    Vec::new(),
+                ));
+                tokens.extend(inner_tokens.0);
+                tokens.push(SToken::new(
+                    Token::Dedent,
+                    Span::new(inner_span.context, inner_span.end..inner_span.end),
+                    Vec::new(),
+                ));
                 tokens.extend(format_tokens);
 
                 marker = self.cursor();
@@ -689,7 +782,7 @@ where
         }
     }
 
-    fn parse_regular_str(&mut self, ch: char) -> TResult<'src, Spanned<Token<'src>>> {
+    fn parse_regular_str(&mut self, ch: char) -> TResult<'src, (Token<'src>, Span)> {
         let start = self.cursor();
         let mut quote_count = 0;
 
@@ -700,7 +793,8 @@ where
         }
 
         if quote_count == 2 {
-            return Ok(Token::Str(String::new()).spanned(self.span_since(&start)));
+            let span = self.span_since(&start);
+            return Ok((Token::Str(String::new()), span));
         }
 
         verbatim |= quote_count >= 3;
@@ -722,7 +816,8 @@ where
 
                 if seen_quotes == quote_count {
                     self.next();
-                    return Ok(Token::Str(s).spanned(self.span_since(&start)));
+                    let span = self.span_since(&start);
+                    return Ok((Token::Str(s), span));
                 }
             } else {
                 for _ in 0..seen_quotes {
@@ -756,9 +851,12 @@ where
         }
 
         if quote_count == 2 {
-            return Ok(TokenList(vec![
-                Token::FstrBegin(String::new()).spanned(self.span_since(&start)),
-            ]));
+            let span = self.span_since(&start);
+            return Ok(TokenList(vec![SToken::new(
+                Token::FstrBegin(String::new()),
+                span,
+                Vec::new(),
+            )]));
         }
 
         verbatim |= quote_count >= 3;
@@ -806,13 +904,13 @@ where
         }
 
         if self.look_ahead(|x| x.parse_seq("r\"")).is_ok() {
-            let token = self.parse_regular_str('"')?;
-            return Ok(TokenList(vec![token]));
+            let (token, span) = self.parse_regular_str('"')?;
+            return Ok(TokenList(vec![SToken::new(token, span, Vec::new())]));
         }
 
         if self.look_ahead(|x| x.parse_seq("\"")).is_ok() {
-            let token = self.parse_regular_str('"')?;
-            return Ok(TokenList(vec![token]));
+            let (token, span) = self.parse_regular_str('"')?;
+            return Ok(TokenList(vec![SToken::new(token, span, Vec::new())]));
         }
 
         Err(Rich::custom(
@@ -824,81 +922,168 @@ where
     fn parse_block(
         &mut self,
         current_indent: usize,
-        block_type: NewBlockType,
-    ) -> TResult<'src, Spanned<TokenList<'src>>> {
+        mode: ParseBlockMode,
+    ) -> TResult<'src, (TokenList<'src>, ParseBlockEndType, Span)> {
+        let start = self.cursor();
+
         let mut tokens = vec![];
+        let mut line_tokens = vec![];
 
-        while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
-
-        let indent_level = self.try_parse(|x| x.parse_indentation()).map_err(|_| {
-            Rich::custom(
-                self.span_since(&self.cursor()),
-                "expected indentation at the beginning of parse_block",
-            )
-        })?;
-
-        match block_type {
-            NewBlockType::BeginInput => {}
-            NewBlockType::NewBlock => {
-                if indent_level.value <= current_indent {
-                    return Err(Rich::custom(
-                        indent_level.span,
-                        "expected new block indentation",
-                    ));
-                }
-            }
-            NewBlockType::Continuation => {
-                if indent_level.value <= current_indent {
-                    return Err(Rich::custom(indent_level.span, "expected continuation"));
-                }
-            }
-        }
+        let mut block_indent = None;
+        let mut cur_block_unassigned_trivia = std::mem::take(&mut self.unassigned_trivia);
 
         const OPEN_DELIMS: &[char] = &['{', '[', '('];
         const CLOSE_DELIMS: &[char] = &['}', ']', ')'];
         let mut delim_stack = vec![];
+        let mut expect_new_block = false;
 
-        loop {
-            // over lines
-            let mut expect_new_block = false;
-            let mut end_block = false;
+        let break_type = 'lines: loop {
+            if expect_new_block {
+                expect_new_block = false;
+
+                let new_block = self
+                    .try_parse(|x| x.parse_block(block_indent.unwrap(), ParseBlockMode::NewBlock));
+
+                let (new_block_tokens, new_block_break_type, new_block_span) = new_block?;
+
+                line_tokens.push(SToken::new(
+                    Token::Indent,
+                    Span::new(
+                        new_block_span.context,
+                        new_block_span.start..new_block_span.start,
+                    ),
+                    Vec::new(),
+                ));
+                line_tokens.extend(new_block_tokens.0);
+                line_tokens.push(SToken::new(
+                    Token::Dedent,
+                    Span::new(
+                        new_block_span.context,
+                        new_block_span.end..new_block_span.end,
+                    ),
+                    Vec::new(),
+                ));
+
+                if new_block_break_type == ParseBlockEndType::EolOrEof {
+                    continue 'lines;
+                }
+            } else {
+                // prune empty lines
+                while let Ok(empty_line_trivia) =
+                    self.try_parse(|ctx| TokenizeCtx::parse_empty_line(ctx))
+                {
+                    cur_block_unassigned_trivia.extend(empty_line_trivia);
+                }
+
+                let before_indentation = self.input.save();
+
+                let Ok((line_indent_level, line_indent_span, line_indent_trivia)) =
+                    self.try_parse(|x| x.parse_indentation())
+                else {
+                    // EOF
+                    break ParseBlockEndType::EolOrEof;
+                };
+
+                cur_block_unassigned_trivia.extend(line_indent_trivia);
+
+                if let Some(block_indent) = block_indent {
+                    if line_indent_level > block_indent {
+                        self.input.rewind(before_indentation);
+
+                        // handle continuation
+                        let (mut continuation_tokens, continuation_break_type, _span) = self
+                            .try_parse(|x| {
+                                x.parse_block(block_indent, ParseBlockMode::Continuation)
+                            })?;
+
+                        if let Some(first_token) = continuation_tokens.0.first_mut() {
+                            first_token
+                                .leading_trivia
+                                .extend(cur_block_unassigned_trivia.drain(..));
+
+                            line_tokens.extend(continuation_tokens.0);
+                        }
+
+                        if continuation_break_type == ParseBlockEndType::EolOrEof {
+                            continue 'lines;
+                        }
+                    } else if line_indent_level < block_indent {
+                        self.input.rewind(before_indentation);
+
+                        break ParseBlockEndType::EolOrEof;
+                    } else if !line_tokens.is_empty() {
+                        tokens.extend(line_tokens.drain(..));
+
+                        if mode != ParseBlockMode::Continuation {
+                            tokens.push(SToken::new(
+                                Token::Eol,
+                                self.span_since(&self.cursor()),
+                                Vec::new(),
+                            ));
+                        }
+                    }
+                } else {
+                    match mode {
+                        ParseBlockMode::BeginInput => {}
+                        ParseBlockMode::NewBlock => {
+                            if line_indent_level <= current_indent {
+                                return Err(Rich::custom(
+                                    line_indent_span,
+                                    "expected an indented block",
+                                ));
+                            }
+                        }
+                        ParseBlockMode::Continuation => {
+                            if line_indent_level <= current_indent {
+                                return Err(Rich::custom(
+                                    line_indent_span,
+                                    "expected an indented continuation",
+                                ));
+                            }
+                        }
+                    }
+                    block_indent = Some(line_indent_level);
+                }
+            }
+
+            cur_block_unassigned_trivia.extend(self.parse_trivia()?);
 
             loop {
                 // over tokens in line
                 if self.look_ahead(TokenizeCtx::parse_str_start).is_ok() {
                     let toks = self.parse_str()?;
-                    tokens.extend(toks.0);
+                    line_tokens.extend(toks.0);
                 } else {
                     let tok;
 
                     let start_curs = self.cursor();
                     let saved = self.input.save();
 
-                    if let Ok((token, after_dot)) = self.try_parse(TokenizeCtx::parse_number) {
+                    if let Ok((token, span, after_dot)) = self.try_parse(|ctx| ctx.parse_number()) {
                         if after_dot && self.peek() == Some('.') {
                             return Err(Rich::custom(
                                 self.span_since(&self.cursor()),
                                 "unexpected '.'",
                             ));
                         }
-
-                        tok = token;
-                    } else if let Ok(token) = self.try_parse(TokenizeCtx::parse_ident_or_token) {
-                        tok = token;
-                    } else if let Ok(token) = self.try_parse(TokenizeCtx::parse_symbol) {
-                        tok = token;
+                        tok = SToken::new(token, span, vec![]);
+                    } else if let Ok((token, span)) =
+                        self.try_parse(|ctx| ctx.parse_ident_or_token())
+                    {
+                        tok = SToken::new(token, span, vec![]);
+                    } else if let Ok((token, span)) = self.try_parse(|ctx| ctx.parse_symbol()) {
+                        tok = SToken::new(token, span, vec![]);
                     } else {
                         break;
                     }
 
-                    if let Token::Symbol("!") = &tok.value {
+                    if let Token::Symbol("!") = &tok.token {
                         // Format specifier delimiter; end block.
                         self.input.rewind(saved);
-                        end_block = true;
-                        break;
+                        break 'lines ParseBlockEndType::Delimiter;
                     }
 
-                    if let Token::Symbol(s) = &tok.value {
+                    if let Token::Symbol(s) = &tok.token {
                         let char = s.chars().next().unwrap_or('\0');
                         if OPEN_DELIMS.contains(&char) {
                             delim_stack.push((char, tok.span));
@@ -927,116 +1112,70 @@ where
                                     return Err(err);
                                 }
                             } else {
-                                // end the block - eol is emitted by caller
                                 self.input.rewind(saved);
-                                end_block = true;
-                                break;
+                                break 'lines ParseBlockEndType::Delimiter;
                             }
                         }
                     }
 
-                    tokens.push(tok);
+                    line_tokens.push(tok);
                 }
 
-                expect_new_block = false;
+                let trailing_trivia = self.parse_trivia()?;
+                let Some(last_token) = line_tokens.last_mut() else {
+                    panic!();
+                };
+                last_token.trailing_trivia.extend(trailing_trivia);
+            }
 
-                if let Some(last_token) = tokens.last() {
-                    if let Token::Symbol(s) = last_token.value {
-                        if s == "=>"
-                            || s == ":"
-                            || OPEN_DELIMS.contains(&s.chars().next().unwrap_or('\0'))
-                        {
-                            expect_new_block = true;
-                        }
+            if let Some(tok) = line_tokens.first_mut() {
+                tok.leading_trivia = {
+                    let mut vec = std::mem::take(&mut cur_block_unassigned_trivia);
+                    vec.extend(tok.leading_trivia.drain(..));
+                    vec
+                };
+            }
+
+            if let Some(last_token) = line_tokens.last() {
+                if let Token::Symbol(s) = last_token.token {
+                    if s == "=>"
+                        || s == ":"
+                        || OPEN_DELIMS.contains(&s.chars().next().unwrap_or('\0'))
+                    {
+                        expect_new_block = true;
                     }
                 }
-
-                self.parse_nonsemantic()?;
             }
 
-            if end_block || self.peek().is_none() {
-                break;
-            }
-
-            let before_newline = self.input.save();
-            let eol_span = self.span_since(&self.cursor());
-
-            if self.try_parse(|x| x.parse_newline()).is_err() {
-                // make sure that there aren't any unexpected characters
+            let Ok(newline_trivium) = self.try_parse(|x| x.parse_newline_or_eof()) else {
                 return Err(Rich::custom(
                     self.span_since(&self.cursor()),
                     format!("unexpected '{}'", self.peek().unwrap()),
                 ));
-            }
+            };
 
-            if expect_new_block {
-                let new_block =
-                    self.try_parse(|x| x.parse_block(indent_level.value, NewBlockType::NewBlock));
-
-                if let Ok(new_block) = new_block {
-                    tokens.push(Token::Indent.spanned(Span::new(
-                        new_block.span.context,
-                        new_block.span.start..new_block.span.start,
-                    )));
-                    tokens.extend(new_block.value);
-
-                    let end_span = Span::new(
-                        new_block.span.context,
-                        new_block.span.end..new_block.span.end,
-                    );
-
-                    // don't push another eol if the last token is already eol (edge case fix)
-                    if tokens.last().is_none_or(|t| t.value != Token::Eol) {
-                        tokens.push(Token::Eol.spanned(end_span));
-                    }
-
-                    tokens.push(Token::Dedent.spanned(end_span));
-
-                    // continue in order to catch trailing characters after the block
-                    continue;
-                } else if let Err(e) = new_block {
-                    while self.try_parse(TokenizeCtx::parse_newline_or_eof).is_err() {
-                        self.next();
-                    }
-
-                    return Err(e);
-                }
-            }
-
-            while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
-
-            if let Ok(cur_indent) = self.look_ahead(|x| x.parse_indentation()) {
-                if cur_indent.value > indent_level.value {
-                    // handle continuation
-                    let new_block = self.try_parse(|x| {
-                        x.parse_block(indent_level.value, NewBlockType::Continuation)
-                    })?;
-
-                    tokens.extend(new_block.value);
-
-                    continue;
-                } else if cur_indent.value < indent_level.value {
-                    // end of the block - rewind
-                    self.input.rewind(before_newline);
-                    break;
-                }
-
-                self.parse_indentation()?;
-
-                if block_type != NewBlockType::Continuation {
-                    // don't push another eol if the last token is already eol (edge case fix)
-                    if tokens.last().is_none_or(|t| t.value != Token::Eol) {
-                        tokens.push(Token::Eol.spanned(eol_span));
-                    }
-                }
+            if let Some(last_token) = line_tokens.last_mut() {
+                last_token.trailing_trivia.extend(newline_trivium);
             } else {
-                // couldn't parse indentation - end of file?
-                break;
+                cur_block_unassigned_trivia.extend(newline_trivium);
+            };
+        };
+
+        if !line_tokens.is_empty() {
+            tokens.extend(line_tokens.drain(..));
+
+            if mode != ParseBlockMode::Continuation {
+                tokens.push(SToken::new(
+                    Token::Eol,
+                    self.span_since(&self.cursor()),
+                    Vec::new(),
+                ));
             }
         }
 
-        // empty block is possible with some weird continuation layouts:
         /*
+         * empty block is possible with some weird continuation layouts:
+         *
          * x = [
          *      1
          *      2
@@ -1044,63 +1183,462 @@ where
          *
          *   ^ this is a continuation that immediately ends due to ]
          */
-        let block_span = if let Some(last_block_token) = tokens.last() {
-            Span::new(
-                indent_level.span.context,
-                indent_level.span.start..last_block_token.span.end,
-            )
+        let block_span = if let Some(last_block_token) = tokens.last_mut() {
+            last_block_token
+                .trailing_trivia
+                .extend(cur_block_unassigned_trivia.drain(..));
+
+            Span::new((), *start.inner()..last_block_token.span.end)
         } else {
-            Span::new(
-                indent_level.span.context,
-                indent_level.span.start..indent_level.span.end,
-            )
+            self.unassigned_trivia
+                .extend(cur_block_unassigned_trivia.drain(..));
+
+            Span::new((), *start.inner()..*start.inner())
         };
 
-        Ok(TokenList(tokens).spanned(block_span))
+        Ok((TokenList(tokens), break_type, block_span))
     }
 
     fn tokenize_input(&mut self) -> TResult<'src, TokenList<'src>> {
-        while self.try_parse(TokenizeCtx::parse_empty_line).is_ok() {}
-
         if let None = self.peek() {
             return Ok(TokenList(vec![]));
         }
 
         let mut tokens = TokenList(vec![]);
-        tokens
-            .0
-            .push(Token::Indent.spanned(self.span_since(&self.cursor())));
 
-        tokens
-            .0
-            .extend(self.parse_block(0, NewBlockType::BeginInput)?.value);
+        tokens.0.push(SToken::new(
+            Token::Indent,
+            self.span_since(&self.cursor()),
+            Vec::new(),
+        ));
 
-        tokens
-            .0
-            .push(Token::Eol.spanned(self.span_since(&self.cursor())));
+        let (block_tokens, _, _) = self.parse_block(0, ParseBlockMode::BeginInput)?;
+        tokens.0.extend(block_tokens.0);
 
-        tokens
-            .0
-            .push(Token::Dedent.spanned(self.span_since(&self.cursor())));
+        tokens.0.push(SToken::new(
+            Token::Dedent,
+            self.span_since(&self.cursor()),
+            Vec::new(),
+        ));
 
         Ok(tokens)
     }
 }
 
-fn lexer<'src, TInput>() -> impl Parser<'src, TInput, TOutput<'src>, TExtra<'src>>
+fn lexer<'src, TInput>(keep_trivia: bool) -> impl Parser<'src, TInput, TOutput<'src>, TExtra<'src>>
 where
     TInput: StrInput<'src, Token = char, Span = SimpleSpan, Slice = &'src str>,
 {
-    custom(|input| {
+    custom(move |input| {
         let mut ctx = TokenizeCtx::new(input);
+        if keep_trivia {
+            ctx.keep_trivia = true;
+        }
         ctx.tokenize_input()
     })
 }
 
-pub fn tokenize<'src>(s: &'src str) -> (Option<TokenList<'src>>, Vec<TError<'src>>) {
-    let output = lexer()
+pub fn tokenize<'src>(
+    s: &'src str,
+    keep_trivia: bool,
+) -> (Option<TokenList<'src>>, Vec<TError<'src>>) {
+    let output = lexer(keep_trivia)
         .parse(s.map_span(|s| Span::new(s.context, s.start()..s.end())))
         .into_output_errors();
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn match_trivia(expected: &Vec<Trivium>, actual: &Vec<Trivium>) -> bool {
+        if expected.len() != actual.len() {
+            return false;
+        }
+
+        for (a, b) in expected.iter().zip(actual.iter()) {
+            if a.typ != b.typ || a.value != b.value {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn assert_has_token_with_trivia(
+        token_list: &TokenList,
+        token: Token,
+        leading_trivia: Vec<Trivium>,
+        trailing_trivia: Vec<Trivium>,
+    ) {
+        let mut cands = vec![];
+
+        for t in token_list.0.iter() {
+            if t.token == token {
+                if match_trivia(&leading_trivia, &t.leading_trivia)
+                    && match_trivia(&trailing_trivia, &t.trailing_trivia)
+                {
+                    return;
+                }
+
+                cands.push(t);
+            }
+        }
+
+        println!("{:?}", token_list);
+
+        assert!(
+            false,
+            "Expected token '{}' not found. Candidates:\n{:?}",
+            token, cands
+        );
+    }
+
+    fn simple_tokenize(source: &str) -> TokenList {
+        let (tokens, errors) = tokenize(source, true);
+        if !errors.is_empty() {
+            assert!(false, "Errors during tokenization: {:?}", errors);
+        }
+        assert!(tokens.is_some());
+
+        tokens.unwrap()
+    }
+
+    fn simple_trivium(typ: TriviumType, value: &str) -> Trivium {
+        Trivium {
+            span: Span::new((), 0..0),
+            typ,
+            value,
+        }
+    }
+
+    fn newline_trivium() -> Trivium<'static> {
+        simple_trivium(TriviumType::Newline, "\n")
+    }
+
+    fn whitespace_trivium(value: &str) -> Trivium {
+        simple_trivium(TriviumType::Whitespace, value)
+    }
+
+    fn comment_trivium(value: &str) -> Trivium {
+        simple_trivium(TriviumType::LineComment, value)
+    }
+
+    fn block_comment_trivium(value: &str) -> Trivium {
+        simple_trivium(TriviumType::BlockComment, value)
+    }
+
+    #[test]
+    fn test_basic_trivia() {
+        let source = "  x   =    42  \n";
+        let token_list = simple_tokenize(source);
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Ident("x"),
+            vec![], // Leading trivia here is interpreted as indent.
+            vec![whitespace_trivium("   ")],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Symbol("="),
+            vec![],
+            vec![whitespace_trivium("    ")],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Num("42"),
+            vec![],
+            vec![whitespace_trivium("  "), newline_trivium()],
+        );
+    }
+
+    #[test]
+    fn test_basic_line_comment_trivia() {
+        let source = "x = 42  # This is a comment\ny = 10";
+        let token_list = simple_tokenize(source);
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Ident("x"),
+            vec![],
+            vec![whitespace_trivium(" ")],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Num("42"),
+            vec![],
+            vec![
+                whitespace_trivium("  "),
+                comment_trivium("# This is a comment"),
+                newline_trivium(),
+            ],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Ident("y"),
+            vec![],
+            vec![whitespace_trivium(" ")],
+        );
+    }
+
+    #[test]
+    fn test_block_comment_trivia() {
+        let source = "x = #- block comment -# 42\n";
+        let token_list = simple_tokenize(source);
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Ident("x"),
+            vec![],
+            vec![whitespace_trivium(" ")],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Symbol("="),
+            vec![],
+            vec![
+                whitespace_trivium(" "),
+                block_comment_trivium("#- block comment -#"),
+                whitespace_trivium(" "),
+            ],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Num("42"),
+            vec![],
+            vec![newline_trivium()],
+        );
+    }
+
+    #[test]
+    fn test_block_comment_trivia_2() {
+        let source = r#"#- Header comment -#
+x = 42  #- Block comment -#"#;
+        let token_list = simple_tokenize(source);
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Ident("x"),
+            vec![
+                block_comment_trivium("#- Header comment -#"),
+                newline_trivium(),
+            ],
+            vec![whitespace_trivium(" ")],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Num("42"),
+            vec![],
+            vec![
+                whitespace_trivium("  "),
+                block_comment_trivium("#- Block comment -#"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_basic_mixed_trivia() {
+        let source = "  #- Start comment -#\n  x = 42";
+        let token_list = simple_tokenize(source);
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Ident("x"),
+            vec![
+                block_comment_trivium("#- Start comment -#"),
+                newline_trivium(),
+            ],
+            vec![simple_trivium(TriviumType::Whitespace, " ")],
+        );
+    }
+
+    #[test]
+    fn test_indentation_trivia() {
+        let source = "if condition:\n    x  =  42";
+        let token_list = simple_tokenize(source);
+
+        assert_has_token_with_trivia(&token_list, Token::Ident("condition"), vec![], vec![]);
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Symbol(":"),
+            vec![],
+            vec![newline_trivium()],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Ident("x"),
+            vec![],
+            vec![simple_trivium(TriviumType::Whitespace, "  ")],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Symbol("="),
+            vec![],
+            vec![simple_trivium(TriviumType::Whitespace, "  ")],
+        );
+    }
+
+    #[test]
+    fn test_trailing_comment_trivia() {
+        let source = "if condition #-test-#:\n    x  =  42";
+        let token_list = simple_tokenize(source);
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Ident("condition"),
+            vec![],
+            vec![whitespace_trivium(" "), block_comment_trivium("#-test-#")],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Symbol(":"),
+            vec![],
+            vec![newline_trivium()],
+        );
+    }
+
+    #[test]
+    fn test_trailing_comment_trivia_2() {
+        let source = "if condition: # test \n    x  =  42";
+        let token_list = simple_tokenize(source);
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Symbol(":"),
+            vec![],
+            vec![
+                whitespace_trivium(" "),
+                comment_trivium("# test "),
+                newline_trivium(),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_consecutive_comments() {
+        let source = r#"
+#- Comment 1 -#
+#- Comment 2 -#
+#- Comment 3 -#
+x = 42
+"#;
+        let token_list = simple_tokenize(source);
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Ident("x"),
+            vec![
+                newline_trivium(),
+                block_comment_trivium("#- Comment 1 -#"),
+                newline_trivium(),
+                block_comment_trivium("#- Comment 2 -#"),
+                newline_trivium(),
+                block_comment_trivium("#- Comment 3 -#"),
+                newline_trivium(),
+            ],
+            vec![whitespace_trivium(" ")],
+        );
+    }
+
+    #[test]
+    fn test_string_literal_trivia() {
+        let source = r#"
+#- comment before string -# "hello world" # Comment after string
+"#;
+        let token_list = simple_tokenize(source);
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Str("hello world".into()),
+            vec![
+                newline_trivium(),
+                block_comment_trivium("#- comment before string -#"),
+                whitespace_trivium(" "),
+            ],
+            vec![
+                whitespace_trivium(" "),
+                comment_trivium("# Comment after string"),
+                newline_trivium(),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_fstring_literal_trivia() {
+        let source = r#"
+#- comment before string -# f"hello world" # Comment after string
+"#;
+        let token_list = simple_tokenize(source);
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::FstrBegin("hello world".into()),
+            vec![
+                newline_trivium(),
+                block_comment_trivium("#- comment before string -#"),
+                whitespace_trivium(" "),
+            ],
+            vec![
+                whitespace_trivium(" "),
+                comment_trivium("# Comment after string"),
+                newline_trivium(),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_block_end_comment_trivia() {
+        let source = r#"
+if condition:
+    # before
+    x = 1 # after
+    # end
+# after if
+"#;
+
+        let token_list = simple_tokenize(source);
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Ident("x"),
+            vec![
+                whitespace_trivium("    "),
+                comment_trivium("# before"),
+                newline_trivium(),
+            ],
+            vec![whitespace_trivium(" ")],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Num("1"),
+            vec![],
+            vec![
+                whitespace_trivium(" "),
+                comment_trivium("# after"),
+                newline_trivium(),
+                comment_trivium("# end"),
+            ],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::Dedent,
+            vec![],
+            vec![whitespace_trivium(" "), comment_trivium("# after if")],
+        );
+    }
 }
