@@ -20,104 +20,176 @@ pub struct Listing<T, TTree: Tree> {
 #[derive(Debug, Clone)]
 pub enum ImportLeaf<TTree: Tree> {
     Multi(Listing<ImportTree<TTree>, TTree>),
-    Single(TTree::Token, Option<TTree::Token>),
-    This(TTree::Token, Option<TTree::Token>),
-    Star,
+    Single {
+        name: TTree::Token,
+        // as, name
+        alias: Option<(TTree::Token, TTree::Token)>,
+    },
+    This {
+        // as, name
+        alias: Option<(TTree::Token, TTree::Token)>,
+    },
+    Star {
+        star: TTree::Token,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct ImportTree<TTree: Tree> {
-    pub trunk: Vec<TTree::Token>,
+    pub dots: Vec<TTree::Token>,
+    // ident, dot
+    pub trunk: Vec<(TTree::Token, TTree::Token)>,
     pub leaf: Spanned<ImportLeaf<TTree>>,
-    pub level: usize,
 }
 
 #[derive(Debug, Clone)]
 pub enum Stmt<TTree: Tree> {
-    // modifier, identifiers
-    Decl(TTree::Token, Vec<TTree::Token>),
+    // modifier, identifiers with commas
+    Decl {
+        modifier: TTree::Token,
+        names: Vec<(TTree::Token, Option<TTree::Token>)>, // ident, comma
+    },
 
-    // modifier, lhs, =, rhs
-    PatternAssign(
-        Option<TTree::Token>,
-        TTree::Pattern,
-        TTree::Token,
-        TTree::Expr,
-    ),
+    PatternAssign {
+        modifier: Option<TTree::Token>,
+        lhs: TTree::Pattern,
+        eq: TTree::Token,
+        rhs: TTree::Expr,
+    },
 
-    // lhs, op, =, rhs
-    Assign(TTree::Expr, Option<TTree::Token>, TTree::Token, TTree::Expr),
+    Assign {
+        lhs: TTree::Expr,
+        op: Option<TTree::Token>,
+        eq: TTree::Token,
+        rhs: TTree::Expr,
+    },
 
-    // while, cond, :, body
-    While(TTree::Token, TTree::Expr, TTree::Token, TTree::Expr),
+    While {
+        while_kw: TTree::Token,
+        cond: TTree::Expr,
+        colon: TTree::Token,
+        body: TTree::Expr,
+    },
 
-    // for, cursor, in, iterable, :, body
-    For(
-        TTree::Token,
-        TTree::Pattern,
-        TTree::Token,
-        TTree::Expr,
-        TTree::Token,
-        TTree::Expr,
-    ),
+    For {
+        for_kw: TTree::Token,
+        pattern: TTree::Pattern,
+        in_kw: TTree::Token,
+        iter: TTree::Expr,
+        colon: TTree::Token,
+        body: TTree::Expr,
+    },
 
-    // export, import, tree
-    Import(Option<TTree::Token>, TTree::Token, ImportTree<TTree>),
+    // export?, import, tree
+    Import {
+        export: Option<TTree::Token>,
+        import: TTree::Token,
+        tree: ImportTree<TTree>,
+    },
 
-    // try, expr, :, cases, (finally, :, expr)?
-    Try(
-        TTree::Token,
-        TTree::Expr,
-        TTree::Token,
-        Vec<MatchCase<TTree>>,
-        Option<(TTree::Token, TTree::Token, TTree::Expr)>,
-    ),
+    // try, expr, colon, cases, (finally, colon, expr)?
+    Try {
+        try_kw: TTree::Token,
+        expr: TTree::Expr,
+        colon: TTree::Token,
+        cases: Vec<MatchCase<TTree>>,
+        finally_clause: Option<(TTree::Token, TTree::Token, TTree::Expr)>,
+    },
 
-    Break(TTree::Token),
-    Continue(TTree::Token),
-    Return(TTree::Token, TTree::Expr),
-    Raise(TTree::Token, Option<TTree::Expr>),
-    Expr(TTree::Expr),
+    Break {
+        break_kw: TTree::Token,
+    },
+    Continue {
+        continue_kw: TTree::Token,
+    },
+    Return {
+        return_kw: TTree::Token,
+        expr: TTree::Expr,
+    },
+    Raise {
+        raise_kw: TTree::Token,
+        expr: Option<TTree::Expr>,
+    },
+    Expr {
+        expr: TTree::Expr,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct FmtExpr<TTree: Tree> {
     pub expr: TTree::Expr,
+    pub excl: Option<TTree::Token>,
     pub fmt: Option<TTree::Expr>,
 }
 
 #[derive(Debug, Clone)]
 pub enum ListItem<TTree: Tree> {
-    Item(TTree::Expr),
-    Spread(TTree::Expr),
+    Item {
+        expr: TTree::Expr,
+    },
+    Spread {
+        star: TTree::Token,
+        expr: TTree::Expr,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum MappingItem<TTree: Tree> {
-    Ident(TTree::Expr),
-    Item(TTree::Expr, TTree::Expr),
-    Spread(TTree::Expr),
+    Ident {
+        ident: TTree::Token,
+    },
+    Item {
+        key: TTree::Expr,
+        colon: TTree::Token,
+        value: TTree::Expr,
+    },
+    Spread {
+        stars: TTree::Token, // **
+        expr: TTree::Expr,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum CallItem<TTree: Tree> {
-    Arg(TTree::Expr),
-    Kwarg(TTree::Token, TTree::Expr),
-    ArgSpread(TTree::Expr),
-    KwargSpread(TTree::Expr),
+    Arg {
+        expr: TTree::Expr,
+    },
+    Kwarg {
+        name: TTree::Token,
+        eq: TTree::Token,
+        expr: TTree::Expr,
+    },
+    ArgSpread {
+        star: TTree::Token,
+        expr: TTree::Expr,
+    },
+    KwargSpread {
+        stars: TTree::Token, // **
+        expr: TTree::Expr,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum ArgDefItem<TTree: Tree> {
-    Arg(TTree::Pattern, Option<TTree::Expr>),
-    ArgSpread(TTree::Token),
-    KwargSpread(TTree::Token),
+    Arg {
+        pattern: TTree::Pattern,
+        default: Option<(TTree::Token, TTree::Expr)>, // =, expr
+    },
+    ArgSpread {
+        star: TTree::Token,
+        name: TTree::Token,
+    },
+    KwargSpread {
+        stars: TTree::Token, // **
+        name: TTree::Token,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct MatchCase<TTree: Tree> {
     pub pattern: Option<TTree::Pattern>,
-    pub guard: Option<TTree::Expr>,
+    pub guard: Option<(TTree::Token, TTree::Expr)>, // if, expr
+    pub arrow: TTree::Token,                        // =>
     pub body: TTree::Expr,
 }
 
@@ -130,93 +202,312 @@ pub trait Tree {
 
 #[derive(Debug, Clone)]
 pub enum Expr<TTree: Tree> {
-    Literal(TTree::Token),
-    Ident(TTree::Token),
-    Tuple(Listing<ListItem<TTree>, TTree>),
-    List(Listing<ListItem<TTree>, TTree>),
-    Mapping(Listing<MappingItem<TTree>, TTree>),
-    Slice(
-        Option<TTree::Expr>,
-        Option<TTree::Expr>,
-        Option<TTree::Expr>,
-    ),
+    Literal {
+        token: TTree::Token,
+    },
+    Ident {
+        token: TTree::Token,
+    },
+    Tuple {
+        listing: Listing<ListItem<TTree>, TTree>,
+    },
+    List {
+        listing: Listing<ListItem<TTree>, TTree>,
+    },
+    Mapping {
+        listing: Listing<MappingItem<TTree>, TTree>,
+    },
+    Slice {
+        start: Option<TTree::Expr>,
+        dots: TTree::Token,
+        end: Option<TTree::Expr>,
+        step_dots: Option<TTree::Token>,
+        step: Option<TTree::Expr>,
+    },
 
-    Unary(TTree::Token, TTree::Expr),
-    Binary(TTree::Token, TTree::Expr, TTree::Expr),
+    Unary {
+        op: TTree::Token,
+        expr: TTree::Expr,
+    },
+    Binary {
+        lhs: TTree::Expr,
+        op: TTree::Token,
+        rhs: TTree::Expr,
+    },
 
-    Await(TTree::Token, TTree::Expr),
-    Yield(TTree::Token, TTree::Expr),
-    YieldFrom(TTree::Token, TTree::Token, TTree::Expr),
-    Memo(
-        TTree::Token,
-        TTree::Token,
-        Option<TTree::Token>,
-        TTree::Expr,
-    ),
+    Await {
+        await_kw: TTree::Token,
+        expr: TTree::Expr,
+    },
+    Yield {
+        yield_kw: TTree::Token,
+        expr: TTree::Expr,
+    },
+    YieldFrom {
+        yield_kw: TTree::Token,
+        from_kw: TTree::Token,
+        expr: TTree::Expr,
+    },
+    Memo {
+        async_kw: Option<TTree::Token>,
+        memo_kw: TTree::Token,
+        colon: Option<TTree::Token>,
+        expr: TTree::Expr,
+    },
 
-    If(TTree::Expr, TTree::Expr, Option<TTree::Expr>),
+    If {
+        cond: TTree::Expr,
+        then_kw: TTree::Token,
+        then_clause: (TTree::Token, Option<TTree::Token>, TTree::Expr), // then, colon?, body
+        else_clause: Option<(TTree::Token, Option<TTree::Token>, TTree::Expr)>, // else, colon?, body
+    },
 
-    Match(TTree::Expr, Vec<MatchCase<TTree>>),
-    Matches(TTree::Expr, TTree::Pattern),
-    Class(Vec<CallItem<TTree>>, TTree::Expr),
+    ClassicIf {
+        if_kw: TTree::Token,
+        cond: TTree::Expr,
+        colon: TTree::Token,
+        body: TTree::Expr,
+        else_clause: Option<(TTree::Token, TTree::Token, TTree::Expr)>, // else, colon, body
+    },
 
-    With(TTree::Pattern, TTree::Expr, TTree::Expr),
+    Match {
+        scrutinee: TTree::Expr,
+        match_kw: TTree::Token,
+        colon: Option<TTree::Token>,
+        cases: Vec<MatchCase<TTree>>,
+    },
+    ClassicMatch {
+        match_kw: TTree::Token,
+        scrutinee: TTree::Expr,
+        colon: TTree::Token,
+        cases: Vec<MatchCase<TTree>>,
+    },
+    Matches {
+        lhs: TTree::Expr,
+        matches_kw: TTree::Token,
+        not_kw: Option<TTree::Token>,
+        pattern: TTree::Pattern,
+    },
+    Class {
+        class_kw: TTree::Token,
+        lparen: Option<TTree::Token>,
+        args: Vec<CallItem<TTree>>,
+        rparen: Option<TTree::Token>,
+        colon: TTree::Token,
+        body: TTree::Expr,
+    },
 
-    Call(TTree::Expr, Vec<CallItem<TTree>>),
-    Subscript(TTree::Expr, Vec<ListItem<TTree>>),
-    RawAttribute(TTree::Expr, TTree::Token),
-    ScopedAttribute(TTree::Expr, TTree::Expr),
-    Attribute(TTree::Expr, TTree::Token),
+    With {
+        with_kw: TTree::Token,
+        pattern: TTree::Pattern,
+        eq: TTree::Token,
+        value: TTree::Expr,
+        colon: TTree::Token,
+        body: TTree::Expr,
+    },
 
-    MappedCall(TTree::Expr, Vec<CallItem<TTree>>),
-    MappedSubscript(TTree::Expr, Vec<ListItem<TTree>>),
-    MappedRawAttribute(TTree::Expr, TTree::Token),
-    MappedScopedAttribute(TTree::Expr, TTree::Expr),
-    MappedAttribute(TTree::Expr, TTree::Token),
+    Call {
+        func: TTree::Expr,
+        lparen: TTree::Token,
+        args: Listing<CallItem<TTree>, TTree>,
+        rparen: TTree::Token,
+    },
+    Subscript {
+        expr: TTree::Expr,
+        lbracket: TTree::Token,
+        indices: Listing<ListItem<TTree>, TTree>,
+        rbracket: TTree::Token,
+    },
+    RawAttribute {
+        expr: TTree::Expr,
+        double_colon: TTree::Token,
+        attr: TTree::Token,
+    },
+    ScopedAttribute {
+        expr: TTree::Expr,
+        dot: TTree::Token,
+        lparen: TTree::Token,
+        rhs: TTree::Expr,
+        rparen: TTree::Token,
+    },
+    Attribute {
+        expr: TTree::Expr,
+        dot: TTree::Token,
+        attr: TTree::Token,
+    },
 
-    Checked(TTree::Expr, Option<TTree::Pattern>),
+    MappedCall {
+        func: TTree::Expr,
+        question: TTree::Token,
+        lparen: TTree::Token,
+        args: Listing<CallItem<TTree>, TTree>,
+        rparen: TTree::Token,
+    },
+    MappedSubscript {
+        expr: TTree::Expr,
+        question: TTree::Token,
+        lbracket: TTree::Token,
+        indices: Listing<ListItem<TTree>, TTree>,
+        rbracket: TTree::Token,
+    },
+    MappedRawAttribute {
+        expr: TTree::Expr,
+        question: TTree::Token,
+        double_colon: TTree::Token,
+        attr: TTree::Token,
+    },
+    MappedScopedAttribute {
+        expr: TTree::Expr,
+        question: TTree::Token,
+        dot: TTree::Token,
+        lparen: TTree::Token,
+        rhs: TTree::Expr,
+        rparen: TTree::Token,
+    },
+    MappedAttribute {
+        expr: TTree::Expr,
+        question: TTree::Token,
+        dot: TTree::Token,
+        attr: TTree::Token,
+    },
 
-    Block(Vec<TTree::Stmt>),
+    Checked {
+        try_kw: TTree::Token,
+        expr: TTree::Expr,
+        except_kw: Option<TTree::Token>,
+        pattern: Option<TTree::Pattern>,
+    },
 
-    Fn(Vec<ArgDefItem<TTree>>, TTree::Expr),
-    Fstr(Spanned<String>, Vec<(FmtExpr<TTree>, Spanned<String>)>),
+    Block {
+        indent: TTree::Token,
+        stmts: Vec<TTree::Stmt>,
+        dedent: TTree::Token,
+    },
+
+    Fn {
+        args: Listing<ArgDefItem<TTree>, TTree>,
+        arrow: TTree::Token,
+        body: TTree::Expr,
+    },
+
+    ParenthesizedFn {
+        lparen: TTree::Token,
+        args: Listing<ArgDefItem<TTree>, TTree>,
+        rparen: TTree::Token,
+        arrow: TTree::Token,
+        body: TTree::Expr,
+    },
+
+    Fstr {
+        begin: Spanned<String>,
+        parts: Vec<(FmtExpr<TTree>, Spanned<String>)>,
+    },
 
     // these are removed during desugaring
-    Decorated(TTree::Expr, TTree::Expr),
-    Placeholder,
+    Decorated {
+        expr: TTree::Expr,
+        ampersand: TTree::Token,
+        decorator: TTree::Expr,
+    },
+    Placeholder {
+        dollar: TTree::Token,
+    },
+
+    // Grouping expressions
+    Parenthesized {
+        lparen: TTree::Token,
+        expr: TTree::Expr,
+        rparen: TTree::Token,
+    },
 }
 
 // Patterns
 
 #[derive(Debug, Clone)]
 pub enum PatternSequenceItem<TTree: Tree> {
-    Item(TTree::Pattern),
-    Spread(Option<TTree::Token>),
+    Item {
+        pattern: TTree::Pattern,
+    },
+    Spread {
+        star: TTree::Token,
+        name: Option<TTree::Token>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum PatternMappingItem<TTree: Tree> {
-    Ident(TTree::Token),
-    Item(TTree::Expr, TTree::Pattern),
-    Spread(Option<TTree::Token>),
+    Ident {
+        name: TTree::Token,
+    },
+    Item {
+        key: TTree::Expr,
+        colon: TTree::Token,
+        pattern: TTree::Pattern,
+    },
+    Spread {
+        stars: TTree::Token, // **
+        name: Option<TTree::Token>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum PatternClassItem<TTree: Tree> {
-    Item(TTree::Pattern),
-    Kw(TTree::Token, TTree::Pattern),
+    Item {
+        pattern: TTree::Pattern,
+    },
+    Kw {
+        name: TTree::Token,
+        eq: TTree::Token,
+        pattern: TTree::Pattern,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum Pattern<TTree: Tree> {
-    Capture(Option<TTree::Token>),
-    Value(TTree::Expr),
-    As(TTree::Pattern, TTree::Token),
-    Or(Vec<TTree::Pattern>),
-    Literal(TTree::Token),
-    Sequence(Vec<PatternSequenceItem<TTree>>),
-    Mapping(Vec<PatternMappingItem<TTree>>),
-    Class(TTree::Expr, Vec<PatternClassItem<TTree>>),
+    Capture {
+        name: Option<TTree::Token>,
+    },
+    Value {
+        dot: TTree::Token,
+        expr: TTree::Expr,
+    },
+    As {
+        pattern: TTree::Pattern,
+        as_kw: TTree::Token,
+        name: TTree::Token,
+    },
+    Or {
+        patterns: Vec<(TTree::Pattern, Option<TTree::Token>)>, // pattern, |?
+    },
+    Literal {
+        token: TTree::Token,
+    },
+    Sequence {
+        lbracket: TTree::Token,
+        listing: Listing<PatternSequenceItem<TTree>, TTree>,
+        rbracket: TTree::Token,
+    },
+    TupleSequence {
+        lparen: TTree::Token,
+        listing: Listing<PatternSequenceItem<TTree>, TTree>,
+        rparen: TTree::Token,
+    },
+    Mapping {
+        lbrace: TTree::Token,
+        listing: Listing<PatternMappingItem<TTree>, TTree>,
+        rbrace: TTree::Token,
+    },
+    Class {
+        expr: TTree::Expr,
+        lparen: TTree::Token,
+        items: Listing<PatternClassItem<TTree>, TTree>,
+        rparen: TTree::Token,
+    },
+    Parenthesized {
+        lparen: TTree::Token,
+        pattern: TTree::Pattern,
+        rparen: TTree::Token,
+    },
 }
 
 // Spans

@@ -40,14 +40,14 @@ pub enum TriviumType {
     BlockComment,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Trivium<'src> {
     pub span: Span,
     pub typ: TriviumType,
     pub value: &'src str,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SToken<'src> {
     pub span: Span,
     pub token: Token<'src>,
@@ -1260,8 +1260,6 @@ pub fn tokenize<'src>(
 
 #[cfg(test)]
 mod tests {
-    use chumsky::text::newline;
-
     use super::*;
 
     fn match_trivia(expected: &Vec<Trivium>, actual: &Vec<Trivium>) -> bool {
