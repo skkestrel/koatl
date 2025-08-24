@@ -12,7 +12,7 @@ use std::{
 
 use crate::ast::Span;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum Token<'src> {
     Ident(&'src str),
     None,
@@ -978,6 +978,13 @@ where
                 let Ok((line_indent_level, line_indent_span, line_indent_trivia)) =
                     self.try_parse(|x| x.parse_indentation())
                 else {
+                    if block_indent.is_none() {
+                        return Err(Rich::custom(
+                            self.span_since(&self.cursor()),
+                            "expected an indented block",
+                        ));
+                    }
+
                     // EOF
                     break ParseBlockEndType::EolOrEof;
                 };
