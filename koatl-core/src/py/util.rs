@@ -1,6 +1,6 @@
 #![allow(unused_variables, dead_code)]
 
-use parser::lexer::Span;
+use koatl_parser::lexer::Span;
 
 use crate::py::ast::*;
 

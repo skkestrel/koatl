@@ -12,8 +12,8 @@ use crate::{
     types::Type,
     util::{LineColCache, RefHash, TlErrBuilder, TlErrs, TlResult},
 };
+use koatl_parser::{ast::*, lexer::Span};
 use once_cell::sync::Lazy;
-use parser::{ast::*, lexer::Span};
 use slotmap::SlotMap;
 use std::hash::{Hash, Hasher};
 

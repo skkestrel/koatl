@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use parser::ast::*;
+use koatl_parser::ast::*;
 
 use crate::{
     resolve_scopes::ResolveState,

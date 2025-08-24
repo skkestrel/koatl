@@ -1,14 +1,13 @@
 mod inference;
-pub mod parser;
 pub mod py;
 mod resolve_scopes;
 pub mod transform;
 mod types;
 pub mod util;
 
-use parser::ast::SExpr;
-use parser::lexer::Span;
-use parser::{TokenList, parse_tokens, tokenize};
+use koatl_parser::ast::SExpr;
+pub use koatl_parser::lexer::Span;
+use koatl_parser::{TokenList, parse_tokens, tokenize};
 
 use crate::py::ast::{PyAccessCtx, PyImportAlias, PyListItem, PyLiteral};
 use crate::py::util::PyAstBuilder;

@@ -2,14 +2,15 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Display;
 
-use parser::cst::Spannable;
-use parser::lexer::Span;
 use slotmap::SlotMap;
 use slotmap::new_key_type;
 
+use koatl_parser::ast::*;
+use koatl_parser::cst::Spannable;
+use koatl_parser::lexer::Span;
+
 use crate::types::Type;
 use crate::util::{RefHash, TlErrBuilder, TlErrs, TlResult};
-use parser::ast::*;
 
 new_key_type! { pub struct ScopeKey;}
 new_key_type! { pub struct DeclarationKey;}

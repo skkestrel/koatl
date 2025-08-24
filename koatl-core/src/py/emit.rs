@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use parser::{
+use koatl_parser::{
     lexer::Span,
     lexer::{py_escape_fstr, py_escape_str},
 };
@@ -889,7 +889,7 @@ impl SPyStmt<'_> {
 
 #[cfg(test)]
 mod tests {
-    use parser::lexer::Span;
+    use koatl_parser::lexer::Span;
 
     use crate::py::util::PyAstBuilder;
 

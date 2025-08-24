@@ -1,4 +1,4 @@
-use koatl_core::{parser::lexer::Span, py::ast::*, util::LineColCache};
+use koatl_core::{py::ast::*, util::LineColCache, Span};
 
 use pyo3::{
     call::PyCallArgs,
