@@ -456,7 +456,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             let question = optional!(self, |ctx: &mut Self| ctx.symbol("?"))?;
 
             let call = |ctx: &mut Self| {
-                let args = ctx.listing("[", "]", Token::Symbol(","), |ctx| ctx.call_item())?;
+                let args = ctx.listing("(", ")", Token::Symbol(","), |ctx| ctx.call_item())?;
 
                 Ok(Postfix::Call { args })
             };
@@ -480,50 +480,52 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
-        self.atom()
+        self.postfix_expr()
     }
 
     fn call_item(&mut self) -> ParseResult<SCallItem<'src, 'tok>> {
-        let start = self.cursor;
-
-        // Try **expr (kwarg spread)
-        if self.symbol("**").is_ok() {
-            let stars = &self.input[start];
-            let expr = self.expr()?;
-            return Ok(CallItem::KwargSpread {
+        let kwarg_spread = |ctx: &mut Self| {
+            let stars = ctx.symbol("**")?;
+            let expr = ctx.expr()?;
+            Ok(CallItem::KwargSpread {
                 stars,
                 expr: expr.boxed(),
-            });
-        }
+            })
+        };
 
-        // Try *expr (arg spread)
-        if self.symbol("*").is_ok() {
-            let star = &self.input[start];
-            let expr = self.expr()?;
-            return Ok(CallItem::ArgSpread {
+        let arg_spread = |ctx: &mut Self| {
+            let star = ctx.symbol("*")?;
+            let expr = ctx.expr()?;
+            Ok(CallItem::ArgSpread {
                 star,
                 expr: expr.boxed(),
-            });
-        }
+            })
+        };
 
-        // Try name=expr (keyword argument)
-        let checkpoint = self.cursor;
-        if let Ok(name) = self.ident() {
-            if self.symbol("=").is_ok() {
-                let eq = &self.input[self.cursor - 1];
-                let expr = self.expr()?;
-                return Ok(CallItem::Kwarg {
-                    name,
-                    eq,
-                    expr: expr.boxed(),
-                });
-            }
-        }
-        self.rewind(checkpoint);
+        let kwarg = |ctx: &mut Self| {
+            let name = ctx.ident()?;
+            let eq = ctx.symbol("=")?;
+            let expr = ctx.expr()?;
+            Ok(CallItem::Kwarg {
+                name,
+                eq,
+                expr: expr.boxed(),
+            })
+        };
 
-        // Default: expr (positional argument)
-        let expr = self.expr()?;
-        Ok(CallItem::Arg { expr: expr.boxed() })
+        let positional_arg = |ctx: &mut Self| {
+            let expr = ctx.expr()?;
+            Ok(CallItem::Arg { expr: expr.boxed() })
+        };
+
+        first_of!(
+            self,
+            "call item",
+            kwarg_spread,
+            arg_spread,
+            kwarg,
+            positional_arg
+        )
     }
 
     fn binary_op_precedence(&self, token: &Token<'src>) -> (u8, bool) {
@@ -552,7 +554,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let start = self.cursor;
 
         let expr = self.expr()?;
-        let newl = self.token(&Token::Eol)?;
+        let _newl = self.token(&Token::Eol)?;
 
         Ok(Stmt::Expr { expr: expr.boxed() }.spanned(self.span_from(start)))
     }
