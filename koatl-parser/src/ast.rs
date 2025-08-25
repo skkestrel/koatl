@@ -305,32 +305,11 @@ pub type SExprInner<'a> = Expr<'a, STree<'a>>;
 pub struct SExpr<'a> {
     pub value: SExprInner<'a>,
     pub span: Span,
-    pub leading_trivia: Vec<crate::lexer::Trivium<'a>>,
-    pub trailing_trivia: Vec<crate::lexer::Trivium<'a>>,
 }
 
 impl<'a> SExprInner<'a> {
     pub fn spanned(self, span: Span) -> SExpr<'a> {
-        SExpr {
-            value: self,
-            span,
-            leading_trivia: Vec::new(),
-            trailing_trivia: Vec::new(),
-        }
-    }
-
-    pub fn spanned_with_trivia(
-        self,
-        span: Span,
-        leading_trivia: Vec<crate::lexer::Trivium<'a>>,
-        trailing_trivia: Vec<crate::lexer::Trivium<'a>>,
-    ) -> SExpr<'a> {
-        SExpr {
-            value: self,
-            span,
-            leading_trivia,
-            trailing_trivia,
-        }
+        SExpr { value: self, span }
     }
 }
 
@@ -338,26 +317,7 @@ pub type SStmtInner<'a> = Stmt<'a, STree<'a>>;
 
 impl<'a> SStmtInner<'a> {
     pub fn spanned(self, span: Span) -> SStmt<'a> {
-        SStmt {
-            value: self,
-            span,
-            leading_trivia: Vec::new(),
-            trailing_trivia: Vec::new(),
-        }
-    }
-
-    pub fn spanned_with_trivia(
-        self,
-        span: Span,
-        leading_trivia: Vec<crate::lexer::Trivium<'a>>,
-        trailing_trivia: Vec<crate::lexer::Trivium<'a>>,
-    ) -> SStmt<'a> {
-        SStmt {
-            value: self,
-            span,
-            leading_trivia,
-            trailing_trivia,
-        }
+        SStmt { value: self, span }
     }
 }
 
@@ -365,8 +325,6 @@ impl<'a> SStmtInner<'a> {
 pub struct SStmt<'a> {
     pub value: SStmtInner<'a>,
     pub span: Span,
-    pub leading_trivia: Vec<crate::lexer::Trivium<'a>>,
-    pub trailing_trivia: Vec<crate::lexer::Trivium<'a>>,
 }
 
 pub type SListItem<'a> = ListItem<STree<'a>>;

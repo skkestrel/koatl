@@ -307,66 +307,30 @@ pub enum Expr<TTree: Tree> {
     },
 
     Call {
-        func: TTree::Expr,
-        lparen: TTree::Token,
+        expr: TTree::Expr,
+        question: Option<TTree::Token>,
         args: Listing<CallItem<TTree>, TTree>,
-        rparen: TTree::Token,
     },
     Subscript {
         expr: TTree::Expr,
-        lbracket: TTree::Token,
+        question: Option<TTree::Token>,
         indices: Listing<ListItem<TTree>, TTree>,
-        rbracket: TTree::Token,
     },
     RawAttribute {
         expr: TTree::Expr,
+        question: Option<TTree::Token>,
         double_colon: TTree::Token,
         attr: TTree::Token,
     },
     ScopedAttribute {
         expr: TTree::Expr,
+        question: Option<TTree::Token>,
         dot: TTree::Token,
-        lparen: TTree::Token,
         rhs: TTree::Expr,
-        rparen: TTree::Token,
     },
     Attribute {
         expr: TTree::Expr,
-        dot: TTree::Token,
-        attr: TTree::Token,
-    },
-
-    MappedCall {
-        func: TTree::Expr,
-        question: TTree::Token,
-        lparen: TTree::Token,
-        args: Listing<CallItem<TTree>, TTree>,
-        rparen: TTree::Token,
-    },
-    MappedSubscript {
-        expr: TTree::Expr,
-        question: TTree::Token,
-        lbracket: TTree::Token,
-        indices: Listing<ListItem<TTree>, TTree>,
-        rbracket: TTree::Token,
-    },
-    MappedRawAttribute {
-        expr: TTree::Expr,
-        question: TTree::Token,
-        double_colon: TTree::Token,
-        attr: TTree::Token,
-    },
-    MappedScopedAttribute {
-        expr: TTree::Expr,
-        question: TTree::Token,
-        dot: TTree::Token,
-        lparen: TTree::Token,
-        rhs: TTree::Expr,
-        rparen: TTree::Token,
-    },
-    MappedAttribute {
-        expr: TTree::Expr,
-        question: TTree::Token,
+        question: Option<TTree::Token>,
         dot: TTree::Token,
         attr: TTree::Token,
     },
@@ -379,6 +343,7 @@ pub enum Expr<TTree: Tree> {
     },
 
     Block {
+        starter: Option<TTree::Token>,
         indent: TTree::Token,
         stmts: Vec<TTree::Stmt>,
         dedent: TTree::Token,
@@ -391,9 +356,7 @@ pub enum Expr<TTree: Tree> {
     },
 
     ParenthesizedFn {
-        lparen: TTree::Token,
         args: Listing<ArgDefItem<TTree>, TTree>,
-        rparen: TTree::Token,
         arrow: TTree::Token,
         body: TTree::Expr,
     },
