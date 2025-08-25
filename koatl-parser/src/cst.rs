@@ -591,6 +591,7 @@ pub struct SStmt<'src, 'tok> {
     pub span: Span,
 }
 
+pub type SListing<'src, 'tok, T> = Listing<T, STree<'src, 'tok>>;
 pub type SListItem<'src, 'tok> = ListItem<STree<'src, 'tok>>;
 pub type SMappingItem<'src, 'tok> = MappingItem<STree<'src, 'tok>>;
 pub type SMatchCase<'src, 'tok> = MatchCase<STree<'src, 'tok>>;
