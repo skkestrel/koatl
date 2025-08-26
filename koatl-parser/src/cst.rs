@@ -246,7 +246,23 @@ pub enum TupleKind<TTree: Tree> {
 }
 
 #[derive(Debug, Clone)]
+pub enum BlockKind<TTree: Tree> {
+    Fused {
+        starter: TTree::Token,
+        indent: TTree::Token,
+        body: Vec<TTree::Stmt>,
+        dedent: TTree::Token,
+    },
+
+    Program {
+        body: Vec<TTree::Stmt>,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub enum Expr<TTree: Tree> {
+    Block(BlockKind<TTree>),
+
     Literal(TTree::Token),
     Ident(TTree::Token),
     Tuple(TupleKind<TTree>),
@@ -297,16 +313,15 @@ pub enum Expr<TTree: Tree> {
     If {
         cond: TTree::Expr,
         then_kw: TTree::Token,
-        then_clause: (TTree::Token, Option<TTree::Token>, TTree::Expr), // then, colon?, body
-        else_clause: Option<(TTree::Token, Option<TTree::Token>, TTree::Expr)>, // else, colon?, body
+        then: TTree::Expr,
+        else_clause: Option<(TTree::Token, TTree::Expr)>,
     },
 
     ClassicIf {
         if_kw: TTree::Token,
         cond: TTree::Expr,
-        colon: TTree::Token,
-        body: TTree::Expr,
-        else_clause: Option<(TTree::Token, TTree::Token, TTree::Expr)>, // else, colon, body
+        then: TTree::Expr,
+        else_clause: Option<(TTree::Token, TTree::Expr)>,
     },
 
     Match {
@@ -388,13 +403,6 @@ pub enum Expr<TTree: Tree> {
         expr: TTree::Expr,
         except_kw: Option<TTree::Token>,
         pattern: Option<TTree::Pattern>,
-    },
-
-    Block {
-        starter: Option<TTree::Token>,
-        indent: TTree::Token,
-        stmts: Vec<TTree::Stmt>,
-        dedent: TTree::Token,
     },
 
     Fn {
@@ -600,6 +608,7 @@ pub struct SStmt<'src, 'tok> {
     pub span: Span,
 }
 
+pub type SFusedBlock<'src, 'tok> = BlockKind<STree<'src, 'tok>>;
 pub type SListing<'src, 'tok, T> = Listing<T, STree<'src, 'tok>>;
 pub type SListItem<'src, 'tok> = ListItem<STree<'src, 'tok>>;
 pub type SMappingItem<'src, 'tok> = MappingItem<STree<'src, 'tok>>;
@@ -755,14 +764,21 @@ impl<'src, 'tok> SExprInner<'src, 'tok> {
                     format!("({}..{})", start_str, end_str)
                 }
             }
-            Expr::Block { stmts, .. } => {
-                let stmts_str = stmts
+            Expr::Block(block) => match block {
+                BlockKind::Fused { starter, body, .. } => {
+                    let stmts_str = body
+                        .iter()
+                        .map(|stmt| stmt.value.simple_fmt())
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    format!("{} Block({})", starter.simple_fmt(), stmts_str)
+                }
+                BlockKind::Program { body, .. } => body
                     .iter()
                     .map(|stmt| stmt.value.simple_fmt())
                     .collect::<Vec<_>>()
-                    .join(";\n");
-                format!("{}", stmts_str)
-            }
+                    .join("\n"),
+            },
             _ => format!("{:?}", self).chars().take(50).collect::<String>() + "...",
         }
     }

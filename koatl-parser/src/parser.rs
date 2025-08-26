@@ -346,6 +346,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
             let parenthesized_expr = |ctx: &mut Self| {
                 let expr = ctx.open_expr()?;
+                let _newl = optional!(ctx, |ctx: &mut Self| ctx.token(&Token::Eol))?;
                 let rparen = ctx.symbol(")")?;
                 Ok(Expr::Parenthesized {
                     lparen,
@@ -401,23 +402,23 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         precedence: u8,
     ) -> ParseResult<(Option<&'tok SToken<'src>>, &'tok SToken<'src>, BinaryOp)> {
         match precedence {
-            7 => {
+            11 => {
                 let op = self.symbol("|")?;
                 Ok((None, op, BinaryOp::Pipe))
             }
-            6 => {
+            10 => {
                 let op = self.keyword("or")?;
                 Ok((None, op, BinaryOp::Or))
             }
-            5 => {
+            9 => {
                 let op = self.keyword("and")?;
                 Ok((None, op, BinaryOp::And))
             }
-            4 => {
+            8 => {
                 let op = self.symbol("??")?;
                 Ok((None, op, BinaryOp::Coalesce))
             }
-            3 => {
+            7 => {
                 let res = first_of!(
                     self,
                     "binary3",
@@ -437,7 +438,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                             (">", BinaryOp::Gt),
                             (">=", BinaryOp::Geq),
                             ("==", BinaryOp::Eq),
-                            ("!=", BinaryOp::Neq),
+                            ("<>", BinaryOp::Neq),
+                            ("===", BinaryOp::Is),
+                            ("<=>", BinaryOp::Nis),
                         ])?;
 
                         Ok((None, tok, kind))
@@ -446,6 +449,10 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
                 Ok(res)
             }
+            6 => Err(()), // Bitwise or
+            5 => Err(()), // Bitwise xor
+            4 => Err(()), // Bitwise and
+            3 => Err(()), // Bit shift
             2 => self
                 .symbol_table(&[("+", BinaryOp::Add), ("-", BinaryOp::Sub)])
                 .map(|(tok, kind)| (None, tok, kind)),
@@ -471,10 +478,16 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         prec: u8,
         next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
     ) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
         let mut lhs = next_level(self)?;
 
         loop {
             let before_op = self.save();
+
+            self.set_error(
+                self.cursor,
+                ParseErr::expected("binary operation", self.cursor..self.cursor + 1),
+            );
 
             match self.binary_op(prec) {
                 Ok((not_token, op, op_kind)) => {
@@ -491,7 +504,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         self.parse(next_level)?
                     };
 
-                    let span = lhs.span.start..rhs.span.end;
                     lhs = Expr::Binary {
                         lhs: lhs.boxed(),
                         not: not_token,
@@ -499,7 +511,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         op_kind,
                         rhs: rhs.boxed(),
                     }
-                    .spanned(Span::from(span));
+                    .spanned(self.span_from(start));
                 }
                 Err(_) => {
                     self.rewind(before_op);
@@ -804,15 +816,84 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let binary2 = |ctx: &mut Self| ctx.binary_expr(2, &binary1);
         let binary3 = |ctx: &mut Self| ctx.binary_expr(3, &binary2);
         let binary4 = |ctx: &mut Self| ctx.binary_expr(4, &binary3);
-        let slice = |ctx: &mut Self| ctx.slice_expr(&binary4);
-        let binary5 = |ctx: &mut Self| ctx.binary_expr(5, &slice);
+        let binary5 = |ctx: &mut Self| ctx.binary_expr(5, &binary4);
         let binary6 = |ctx: &mut Self| ctx.binary_expr(6, &binary5);
         let binary7 = |ctx: &mut Self| ctx.binary_expr(7, &binary6);
+        let binary8 = |ctx: &mut Self| ctx.binary_expr(8, &binary7);
+        let slice = |ctx: &mut Self| ctx.slice_expr(&binary8);
+        let binary9 = |ctx: &mut Self| ctx.binary_expr(9, &slice);
+        let binary10 = |ctx: &mut Self| ctx.binary_expr(10, &binary9);
+        let if_ = |ctx: &mut Self| ctx.if_expr(&binary10);
+        let binary11 = |ctx: &mut Self| ctx.binary_expr(11, &if_);
 
-        match self.parse(binary7) {
+        match self.parse(binary11) {
             Ok(expr) => Ok(expr),
             Err(err) => Err(err),
         }
+    }
+
+    fn fused_block(&mut self, s: &'static str) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
+        let starter = self.symbol(s)?;
+        let indent = self.token(&Token::Indent)?;
+        let body = self.stmts()?;
+        let dedent = self.token(&Token::Dedent)?;
+
+        Ok(Expr::Block(BlockKind::Fused {
+            starter,
+            indent,
+            body,
+            dedent,
+        })
+        .spanned(self.span_from(start)))
+    }
+
+    fn fused_colon_block(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
+        first_of!(
+            self,
+            "expression or block",
+            |ctx: &mut Self| ctx.fused_block(":"),
+            |ctx: &mut Self| ctx.expr()
+        )
+    }
+
+    fn fused_arrow_block(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
+        self.fused_block("->")
+    }
+
+    fn if_expr(
+        &mut self,
+        next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
+    ) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
+        let mut expr = next_level(self)?;
+
+        let parsed = optional!(self, |ctx: &mut Self| {
+            let then_kw = ctx.keyword("then")?;
+            let then = ctx.fused_colon_block()?.boxed();
+
+            let else_clause = optional!(ctx, |ctx: &mut Self| {
+                let else_kw = ctx.keyword("else")?;
+                let else_body = ctx.fused_colon_block()?;
+                Ok((else_kw, else_body.boxed()))
+            })?;
+
+            Ok((then_kw, then, else_clause))
+        })?;
+
+        if let Some((then_kw, then, else_clause)) = parsed {
+            expr = Expr::If {
+                cond: expr.boxed(),
+                then_kw,
+                then,
+                else_clause,
+            }
+            .spanned(self.span_from(start));
+        }
+
+        Ok(expr)
     }
 
     fn open_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
@@ -942,24 +1023,25 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         Ok(Stmt::Expr { expr: expr.boxed() }.spanned(self.span_from(start)))
     }
 
-    fn block(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
-        let indent = self.token(&Token::Indent)?;
-
+    fn stmts(&mut self) -> ParseResult<Vec<Box<SStmt<'src, 'tok>>>> {
         let mut stmts = Vec::new();
 
         'outer: loop {
+            if self.peek_token().is_none() {
+                break 'outer;
+            }
+
+            if matches!(self.peek_token(), Some(tok) if tok.token == Token::Dedent) {
+                break 'outer;
+            }
+
             let before = self.save();
+
             if let Ok(stmt) = self.stmt() {
                 stmts.push(Box::new(stmt));
             } else {
-                if matches!(self.peek_token(), Some(tok) if tok.token == Token::Dedent) {
-                    break 'outer;
-                }
-
                 let error = self.take_error().1;
                 self.errors.push(error);
-
-                println!("Error at {} {:?}", self.cursor, self.peek_token());
 
                 // Recover
                 self.rewind(before);
@@ -981,21 +1063,25 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        let dedent = self.token(&Token::Dedent)?;
-
-        Ok(SExpr {
-            value: Expr::Block {
-                starter: None,
-                indent,
-                stmts,
-                dedent,
-            },
-            span: Span::from(indent.span.start..dedent.span.end),
-        })
+        Ok(stmts)
     }
 
     fn program(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
-        Ok(self.block()?)
+        let start = self.cursor;
+
+        let body = self.stmts()?;
+
+        if self.cursor != self.input.len() {
+            return Err(self.set_error(
+                self.cursor,
+                ParseErr::custom(
+                    "Unexpected tokens after program end",
+                    self.cursor..self.input.len(),
+                ),
+            ));
+        }
+
+        Ok(Expr::Block(BlockKind::Program { body }).spanned(self.span_from(start)))
     }
 }
 

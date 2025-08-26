@@ -1215,20 +1215,8 @@ where
 
         let mut tokens = TokenList(vec![]);
 
-        tokens.0.push(SToken::new(
-            Token::Indent,
-            self.span_since(&self.cursor()),
-            Vec::new(),
-        ));
-
         let (block_tokens, _, _) = self.parse_block(0, ParseBlockMode::BeginInput)?;
         tokens.0.extend(block_tokens.0);
-
-        tokens.0.push(SToken::new(
-            Token::Dedent,
-            self.span_since(&self.cursor()),
-            Vec::new(),
-        ));
 
         Ok(tokens)
     }
