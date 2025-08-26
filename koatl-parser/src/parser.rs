@@ -214,43 +214,31 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let item_parser2 = item_parser.clone();
 
         let block_body = |ctx: &mut Self| {
-            let begin_tok = ctx.symbol(begin)?;
             let indent = ctx.token(&Token::Indent)?;
 
             let mut acc = vec![];
+
             loop {
-                let before_item = ctx.save();
+                let parsed = optional!(ctx, |ctx: &mut Self| {
+                    let item = ctx.parse(&item_parser)?;
+                    let separator =
+                        optional!(ctx, |ctx: &mut Self| ctx.token(&optional_separator))?;
+                    let newline = optional!(ctx, |ctx: &mut Self| ctx.token(&Token::Eol))?;
 
-                if let Ok(item) = item_parser(ctx) {
-                    let mut separator = None;
-                    let before_sep = ctx.save();
+                    Ok((item, separator, newline))
+                })?;
 
-                    if let Ok(sep) = ctx.token(&optional_separator) {
-                        separator = Some(sep);
-                    } else {
-                        ctx.rewind(before_sep);
-                    }
+                let Some((item, separator, newline)) = parsed else {
+                    break;
+                };
 
-                    let mut newline = None;
-                    let before_newl = ctx.save();
+                acc.push(ListingItem {
+                    item,
+                    separator,
+                    newline,
+                });
 
-                    if let Ok(newl) = ctx.token(&Token::Eol) {
-                        newline = Some(newl);
-                    } else {
-                        ctx.rewind(before_newl);
-                    }
-
-                    acc.push(ListingItem {
-                        item,
-                        separator,
-                        newline,
-                    });
-
-                    if newline.is_none() && separator.is_none() {
-                        break;
-                    }
-                } else {
-                    ctx.rewind(before_item);
+                if newline.is_none() && separator.is_none() {
                     break;
                 }
             }
@@ -258,51 +246,45 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             let dedent = ctx.token(&Token::Dedent)?;
             let newline = optional!(ctx, |ctx: &mut Self| ctx.token(&Token::Eol))?;
 
-            let end_tok = ctx.symbol(end)?;
-
-            Ok((begin_tok, Some(indent), acc, Some(dedent), newline, end_tok))
+            Ok((Some(indent), acc, Some(dedent), newline))
         };
 
         let inline_body = |ctx: &mut Self| {
             let mut acc = vec![];
 
-            let begin_tok = ctx.symbol(begin)?;
-
             loop {
-                let before_item = ctx.save();
+                let parsed = optional!(ctx, |ctx: &mut Self| {
+                    let item = ctx.parse(&item_parser2)?;
+                    let separator =
+                        optional!(ctx, |ctx: &mut Self| ctx.token(&optional_separator))?;
 
-                if let Ok(item) = item_parser2(ctx) {
-                    let mut separator = None;
-                    let before_sep = ctx.save();
+                    Ok((item, separator))
+                })?;
 
-                    if let Ok(sep) = ctx.token(&optional_separator) {
-                        separator = Some(sep);
-                    } else {
-                        ctx.rewind(before_sep);
-                    }
+                let Some((item, separator)) = parsed else {
+                    break;
+                };
 
-                    acc.push(ListingItem {
-                        item,
-                        separator,
-                        newline: None,
-                    });
+                acc.push(ListingItem {
+                    item,
+                    separator,
+                    newline: None,
+                });
 
-                    if separator.is_none() {
-                        break;
-                    }
-                } else {
-                    ctx.rewind(before_item);
+                if separator.is_none() {
                     break;
                 }
             }
 
-            let end_tok = ctx.symbol(end)?;
-
-            Ok((begin_tok, None, acc, None, None, end_tok))
+            Ok((None, acc, None, None))
         };
 
-        let (begin, indent, items, dedent, newline, end) =
+        let begin = self.symbol(begin)?;
+
+        let (indent, items, dedent, newline) =
             first_of!(self, "listing body", block_body, inline_body)?;
+
+        let end = self.symbol(end)?;
 
         Ok(Listing {
             begin,
