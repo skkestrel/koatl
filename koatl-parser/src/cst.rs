@@ -256,7 +256,7 @@ pub enum Expr<TTree: Tree> {
     Slice {
         start: Option<TTree::Expr>,
         dots: TTree::Token,
-        end: Option<TTree::Expr>,
+        stop: Option<TTree::Expr>,
         step_dots: Option<TTree::Token>,
         step: Option<TTree::Expr>,
     },
@@ -348,6 +348,13 @@ pub enum Expr<TTree: Tree> {
     Call {
         expr: TTree::Expr,
         question: Option<TTree::Token>,
+        args: Listing<CallItem<TTree>, TTree>,
+    },
+    MethodCall {
+        expr: TTree::Expr,
+        question: Option<TTree::Token>,
+        dot: TTree::Token,
+        method: TTree::Token,
         args: Listing<CallItem<TTree>, TTree>,
     },
     Subscript {
@@ -731,6 +738,22 @@ impl<'src, 'tok> SExprInner<'src, 'tok> {
                     question_str,
                     attr.simple_fmt()
                 )
+            }
+            Expr::Slice {
+                start,
+                dots: _,
+                stop: end,
+                step_dots: _,
+                step,
+            } => {
+                let start_str = start.as_ref().map(|s| s.simple_fmt()).unwrap_or_default();
+                let end_str = end.as_ref().map(|e| e.simple_fmt()).unwrap_or_default();
+
+                if let Some(step) = step {
+                    format!("({}..{}..{})", start_str, end_str, step.simple_fmt())
+                } else {
+                    format!("({}..{})", start_str, end_str)
+                }
             }
             Expr::Block { stmts, .. } => {
                 let stmts_str = stmts

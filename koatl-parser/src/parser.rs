@@ -50,7 +50,9 @@ struct ParseCtx<'src: 'tok, 'tok> {
     input: &'tok [SToken<'src>],
     cursor: usize,
 
-    error: Option<(usize, ParseErr<'src>)>,
+    errors: Vec<ParseErr<'src>>,
+
+    cur_error: Option<(usize, ParseErr<'src>)>,
 }
 
 macro_rules! first_of {
@@ -95,7 +97,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         self.cursor = cursor;
     }
 
-    fn peek_token(&mut self) -> Option<&'tok SToken<'src>> {
+    fn peek_token(&self) -> Option<&'tok SToken<'src>> {
         self.input.get(self.cursor)
     }
 
@@ -104,7 +106,11 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn span(&self, start: usize, end: usize) -> Span {
-        let start = self.input[start].span.start;
+        let start = if start < self.input.len() {
+            self.input[start].span.start
+        } else {
+            self.src.len()
+        };
 
         let end = if end <= self.input.len() {
             self.input[end.saturating_sub(1)].span.end
@@ -116,17 +122,17 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn set_error(&mut self, cursor: usize, err: ParseErr<'src>) {
-        if let Some((furthest_cursor, _)) = &self.error {
+        if let Some((furthest_cursor, _)) = &self.cur_error {
             if cursor > *furthest_cursor {
-                self.error = Some((cursor, err));
+                self.cur_error = Some((cursor, err));
             }
         } else {
-            self.error = Some((cursor, err));
+            self.cur_error = Some((cursor, err));
         }
     }
 
     fn take_error(&mut self) -> (usize, ParseErr<'src>) {
-        self.error
+        self.cur_error
             .take()
             .unwrap_or((0, ParseErr::expected("unknown error", 0..0)))
     }
@@ -556,6 +562,11 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             Call {
                 args: SListing<'src, 'tok, SCallItem<'src, 'tok>>,
             },
+            MethodCall {
+                dot: &'tok SToken<'src>,
+                method: &'tok SToken<'src>,
+                args: SListing<'src, 'tok, SCallItem<'src, 'tok>>,
+            },
             Subscript {
                 indices: SListing<'src, 'tok, SListItem<'src, 'tok>>,
             },
@@ -612,6 +623,12 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     ctx,
                     "attribute",
                     |ctx| {
+                        let method = ctx.any_ident()?;
+                        let args =
+                            ctx.listing("(", ")", Token::Symbol(","), |ctx| ctx.call_item())?;
+                        Ok(Postfix::MethodCall { dot, method, args })
+                    },
+                    |ctx| {
                         let attr = ctx.any_ident()?;
                         Ok(Postfix::Attribute { dot, attr })
                     },
@@ -641,6 +658,14 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     Postfix::Call { args } => Expr::Call {
                         expr: expr.boxed(),
                         question,
+                        args,
+                    }
+                    .spanned(self.span_from(start)),
+                    Postfix::MethodCall { dot, method, args } => Expr::MethodCall {
+                        expr: expr.boxed(),
+                        question,
+                        dot,
+                        method,
                         args,
                     }
                     .spanned(self.span_from(start)),
@@ -688,6 +713,84 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         Ok(expr)
     }
 
+    fn slice_expr(
+        &mut self,
+        next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
+    ) -> ParseResult<SExpr<'src, 'tok>> {
+        first_of!(
+            self,
+            "slice",
+            |ctx: &mut Self| {
+                let start_cursor = ctx.cursor;
+
+                let expr = ctx.parse(next_level)?;
+                let stop = optional!(ctx, |ctx: &mut Self| {
+                    let dots = ctx.symbol("..")?;
+                    let expr = optional!(ctx, |ctx: &mut Self| ctx.parse(next_level))?;
+                    Ok((dots, expr))
+                })?;
+                let step = optional!(ctx, |ctx: &mut Self| {
+                    let dots = ctx.symbol("..")?;
+                    let expr = optional!(ctx, |ctx: &mut Self| ctx.parse(next_level))?;
+                    Ok((dots, expr))
+                })?;
+
+                if let Some((dots, stop)) = stop {
+                    if let Some((step_dots, step)) = step {
+                        return Ok(Expr::Slice {
+                            start: Some(expr.boxed()),
+                            dots,
+                            stop: stop.map(|x| x.boxed()),
+                            step_dots: Some(step_dots),
+                            step: step.map(|x| x.boxed()),
+                        }
+                        .spanned(ctx.span_from(start_cursor)));
+                    }
+
+                    return Ok(Expr::Slice {
+                        start: Some(expr.boxed()),
+                        dots,
+                        stop: stop.map(|x| x.boxed()),
+                        step_dots: None,
+                        step: None,
+                    }
+                    .spanned(ctx.span_from(start_cursor)));
+                }
+
+                return Ok(expr);
+            },
+            |ctx: &mut Self| {
+                let dots = ctx.symbol("..")?;
+                let stop = optional!(ctx, |ctx: &mut Self| ctx.parse(next_level))?;
+                let step = optional!(ctx, |ctx: &mut Self| {
+                    let dots = ctx.symbol("..")?;
+                    let expr = optional!(ctx, |ctx: &mut Self| ctx.parse(next_level))?;
+                    Ok((dots, expr))
+                })?;
+
+                if let Some((step_dots, step)) = step {
+                    Ok(Expr::Slice {
+                        start: None,
+                        dots,
+                        stop: stop.map(|x| x.boxed()),
+                        step_dots: Some(step_dots),
+                        step: step.map(|x| x.boxed()),
+                    }
+                    .spanned(ctx.span_from(dots.span.start)))
+                } else {
+                    Ok(Expr::Slice {
+                        start: None,
+                        dots,
+                        stop: stop.map(|x| x.boxed()),
+                        step_dots: None,
+                        step: None,
+                    }
+                    .spanned(ctx.span_from(dots.span.start)))
+                }
+            }
+        )
+    }
+
     fn expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
         self.set_error(
             self.cursor,
@@ -702,7 +805,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let binary2 = |ctx: &mut Self| ctx.binary_expr(2, &binary1);
         let binary3 = |ctx: &mut Self| ctx.binary_expr(3, &binary2);
         let binary4 = |ctx: &mut Self| ctx.binary_expr(4, &binary3);
-        let binary5 = |ctx: &mut Self| ctx.binary_expr(5, &binary4);
+        let slice = |ctx: &mut Self| ctx.slice_expr(&binary4);
+        let binary5 = |ctx: &mut Self| ctx.binary_expr(5, &slice);
         let binary6 = |ctx: &mut Self| ctx.binary_expr(6, &binary5);
         let binary7 = |ctx: &mut Self| ctx.binary_expr(7, &binary6);
 
@@ -844,13 +948,37 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let mut stmts = Vec::new();
 
-        loop {
+        'outer: loop {
             let before = self.save();
             if let Ok(stmt) = self.stmt() {
                 stmts.push(Box::new(stmt));
             } else {
+                if matches!(self.peek_token(), Some(tok) if tok.token == Token::Dedent) {
+                    break 'outer;
+                }
+
+                let error = self.take_error().1;
+                self.errors.push(error);
+
+                println!("Error at {} {:?}", self.cursor, self.peek_token());
+
+                // Recover
                 self.rewind(before);
-                break;
+                loop {
+                    match self.peek_token() {
+                        Some(tok) if tok.token == Token::Eol => {
+                            self.next();
+                            break;
+                        }
+                        Some(tok) if tok.token == Token::Dedent => {
+                            break 'outer;
+                        }
+                        None => break 'outer,
+                        _ => {
+                            self.next();
+                        }
+                    }
+                }
             }
         }
 
@@ -880,27 +1008,34 @@ pub fn parse_tokens<'src: 'tok, 'tok>(
         src,
         input: &tokens.0,
         cursor: 0,
-        error: None,
+        errors: vec![],
+        cur_error: None,
     };
 
-    match ctx.program() {
+    println!("{}", tokens);
+
+    let expr = match ctx.program() {
         Ok(expr) => {
             println!("{}", expr.simple_fmt());
-            (Some(expr), vec![])
+            Some(expr)
         }
         Err(()) => {
             let err = ctx.take_error().1;
+            ctx.errors.push(err);
+            None
+        }
+    };
 
-            println!("Parse error: {:#?}", err);
-            println!("Tokens: {}", tokens);
-
-            (
-                None,
-                vec![TriviaRich::custom(
+    (
+        expr,
+        ctx.errors
+            .iter()
+            .map(|err| {
+                TriviaRich::custom(
                     ctx.span(err.span.start, err.span.end),
                     format!("{:?}", err.message),
-                )],
-            )
-        }
-    }
+                )
+            })
+            .collect(),
+    )
 }

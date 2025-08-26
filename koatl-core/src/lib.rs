@@ -66,9 +66,13 @@ pub fn transpile_to_py_ast<'src>(
     filename: &'src str,
     options: TranspileOptions,
 ) -> TlResult<PyBlock<'src>> {
-    let tl_ast = parse_tl(src)?;
+    let (tl_ast, tl_errs) = parse_tl(src);
 
-    let mut errs = TlErrs::new();
+    let Some(tl_ast) = tl_ast else {
+        return Err(tl_errs);
+    };
+
+    let mut errs = tl_errs;
 
     let (resolve_state, errors, tl_ast) =
         resolve_scopes::resolve_names(src, tl_ast, options.allow_await);
@@ -240,7 +244,7 @@ pub fn format_errs(errs: &TlErrs, filename: &str, src: &str) -> Vec<u8> {
     writer
 }
 
-pub fn parse_tl<'src>(src: &'src str) -> TlResult<SExpr<'src>> {
+pub fn parse_tl<'src>(src: &'src str) -> (Option<SExpr<'src>>, TlErrs) {
     let mut errs = TlErrs::new();
 
     let (tokens, token_errs) = tokenize(&src, true);
@@ -261,11 +265,11 @@ pub fn parse_tl<'src>(src: &'src str) -> TlResult<SExpr<'src>> {
 
     let tokens: TokenList<'src> = match tokens {
         Some(tokens) => tokens,
-        None => return Err(errs),
+        None => return (None, errs),
     };
     // println!("tokens: {tokens}");
 
-    let (tl_cst, parser_errs) = parse_tokens(&src, &tokens);
+    let (_tl_cst, parser_errs) = parse_tokens(&src, &tokens);
     errs.extend(TlErrs(
         parser_errs
             .into_iter()
@@ -281,8 +285,5 @@ pub fn parse_tl<'src>(src: &'src str) -> TlResult<SExpr<'src>> {
             .collect(),
     ));
 
-    let _tl_cst = tl_cst.ok_or_else(|| errs)?;
-    // println!("cst: {tl_cst:#?}");
-
-    panic!("Parsed successfully");
+    (None, errs)
 }
