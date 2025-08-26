@@ -1289,7 +1289,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             let pattern = ctx.ident("pattern")?;
             println!("Parsing pattern");
             let pat = ctx.pattern()?;
-            println!("Parsed pattern: {:?}", pat);
+            println!("Parsed pattern: {}", pat.simple_fmt());
             Ok(Stmt::Break { break_kw: debug })
         };
 

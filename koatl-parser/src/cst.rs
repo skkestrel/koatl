@@ -828,6 +828,121 @@ impl<'src, 'tok> CallItem<STree<'src, 'tok>> {
     }
 }
 
+impl<'src, 'tok> SPattern<'src, 'tok> {
+    pub fn simple_fmt(&self) -> String {
+        self.value.simple_fmt()
+    }
+}
+
+impl<'src, 'tok> Pattern<STree<'src, 'tok>> {
+    pub fn simple_fmt(&self) -> String {
+        match self {
+            Pattern::Capture { name } => name.simple_fmt(),
+            Pattern::Value { expr, .. } => {
+                format!(".{}", expr.simple_fmt())
+            }
+            Pattern::As { pattern, name, .. } => {
+                format!("{} as {}", pattern.simple_fmt(), name.simple_fmt())
+            }
+            Pattern::Or { head, rest } => {
+                let mut parts = vec![head.simple_fmt()];
+                for (_, pattern) in rest {
+                    parts.push(pattern.simple_fmt());
+                }
+                parts.join(" | ")
+            }
+            Pattern::Literal { token } => token.simple_fmt(),
+            Pattern::Sequence { listing } => {
+                let items_str = listing
+                    .items
+                    .iter()
+                    .map(|item| item.item.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("[{}]", items_str)
+            }
+            Pattern::TupleSequence { listing } => {
+                let items_str = listing
+                    .items
+                    .iter()
+                    .map(|item| item.item.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if listing.items.len() == 1 {
+                    format!("({},)", items_str)
+                } else {
+                    format!("({})", items_str)
+                }
+            }
+            Pattern::Mapping { listing } => {
+                let items_str = listing
+                    .items
+                    .iter()
+                    .map(|item| item.item.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{{{}}}", items_str)
+            }
+            Pattern::Class { expr, items, .. } => {
+                let items_str = items
+                    .items
+                    .iter()
+                    .map(|item| item.item.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}({})", expr.simple_fmt(), items_str)
+            }
+            Pattern::Parenthesized { pattern, .. } => {
+                format!("({})", pattern.simple_fmt())
+            }
+        }
+    }
+}
+
+impl<'src, 'tok> PatternSequenceItem<STree<'src, 'tok>> {
+    pub fn simple_fmt(&self) -> String {
+        match self {
+            PatternSequenceItem::Item { pattern } => pattern.simple_fmt(),
+            PatternSequenceItem::Spread { name, .. } => {
+                if let Some(name) = name {
+                    format!("*{}", name.simple_fmt())
+                } else {
+                    "*".to_string()
+                }
+            }
+        }
+    }
+}
+
+impl<'src, 'tok> PatternMappingItem<STree<'src, 'tok>> {
+    pub fn simple_fmt(&self) -> String {
+        match self {
+            PatternMappingItem::Ident { name } => name.simple_fmt(),
+            PatternMappingItem::Item { key, pattern, .. } => {
+                format!("{}: {}", key.simple_fmt(), pattern.simple_fmt())
+            }
+            PatternMappingItem::Spread { name, .. } => {
+                if let Some(name) = name {
+                    format!("**{}", name.simple_fmt())
+                } else {
+                    "**".to_string()
+                }
+            }
+        }
+    }
+}
+
+impl<'src, 'tok> PatternClassItem<STree<'src, 'tok>> {
+    pub fn simple_fmt(&self) -> String {
+        match self {
+            PatternClassItem::Item { pattern } => pattern.simple_fmt(),
+            PatternClassItem::Kw { name, pattern, .. } => {
+                format!("{}={}", name.simple_fmt(), pattern.simple_fmt())
+            }
+        }
+    }
+}
+
 impl<'src> SToken<'src> {
     pub fn simple_fmt(&self) -> String {
         self.token.simple_fmt()
