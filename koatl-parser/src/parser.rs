@@ -617,15 +617,83 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             )
         };
 
+        let checked_expr = |ctx: &mut Self| ctx.checked_expr();
+
+        let class_expr = |ctx: &mut Self| ctx.class_expr();
+
         first_of!(
             self,
             "atom",
+            checked_expr,
+            class_expr,
             literal_expr,
             ident_expr,
             placeholder,
             list,
             parenthesized
         )
+    }
+
+    fn checked_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
+        let try_kw = self.keyword("try")?;
+        let expr = self.atom()?;
+        let except_clause = optional!(self, |ctx: &mut Self| {
+            let except_kw = ctx.keyword("except")?;
+            let pattern = optional!(ctx, |ctx: &mut Self| ctx.pattern())?;
+            Ok((except_kw, pattern))
+        })?;
+
+        let (except_kw, pattern) = if let Some((except_kw, pattern)) = except_clause {
+            (Some(except_kw), pattern.map(|p| p.boxed()))
+        } else {
+            (None, None)
+        };
+
+        Ok(Expr::Checked {
+            try_kw,
+            expr: expr.boxed(),
+            except_kw,
+            pattern,
+        }
+        .spanned(self.span_from(start)))
+    }
+
+    fn class_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
+        let class_kw = self.keyword("class")?;
+        let (lparen, args, rparen) = optional!(self, |ctx: &mut Self| {
+            let lparen = ctx.symbol("(")?;
+
+            // Simple call args parsing - just expressions for now
+            let args = ctx.listing("", "", Token::Symbol(","), |ctx| {
+                let expr = ctx.atom()?;
+                Ok(CallItem::Arg { expr: expr.boxed() })
+            })?;
+
+            let rparen = ctx.symbol(")")?;
+            Ok((
+                Some(lparen),
+                args.items.into_iter().map(|item| item.item).collect(),
+                Some(rparen),
+            ))
+        })?
+        .unwrap_or_else(|| (None, Vec::new(), None));
+
+        let colon = self.symbol(":")?;
+        let body = self.fused_colon_block()?;
+
+        Ok(Expr::Class {
+            class_kw,
+            lparen,
+            args,
+            rparen,
+            colon,
+            body: body.boxed(),
+        }
+        .spanned(self.span_from(start)))
     }
 
     fn symbol_table<T: Clone>(
@@ -1055,6 +1123,143 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         first_of!(self, "slice", has_start, no_start)
     }
 
+    fn match_expr(
+        &mut self,
+        next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
+    ) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
+        let mut expr = next_level(self)?;
+
+        let parsed = optional!(self, |ctx: &mut Self| {
+            let match_kw = ctx.keyword("match")?;
+            let colon = optional!(ctx, |ctx: &mut Self| ctx.symbol(":"))?;
+            let cases = ctx.match_cases()?;
+            Ok((match_kw, colon, cases))
+        })?;
+
+        if let Some((match_kw, colon, cases)) = parsed {
+            expr = Expr::Match {
+                scrutinee: expr.boxed(),
+                match_kw,
+                colon,
+                cases,
+            }
+            .spanned(self.span_from(start));
+        }
+
+        Ok(expr)
+    }
+
+    fn with_expr(
+        &mut self,
+        next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
+    ) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
+        let with_variant = optional!(self, |ctx: &mut Self| {
+            let with_kw = ctx.keyword("with")?;
+            let pattern = ctx.pattern()?;
+            let eq = ctx.symbol("=")?;
+            let value = ctx.parse(next_level)?;
+            let colon = ctx.symbol(":")?;
+            let body = ctx.fused_colon_block()?;
+
+            Ok(Expr::With {
+                with_kw,
+                pattern: pattern.boxed(),
+                eq,
+                value: value.boxed(),
+                colon,
+                body: body.boxed(),
+            }
+            .spanned(ctx.span_from(start)))
+        })?;
+
+        if let Some(with_expr) = with_variant {
+            Ok(with_expr)
+        } else {
+            next_level(self)
+        }
+    }
+
+    fn control_expr(
+        &mut self,
+        next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
+    ) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
+        let await_variant = optional!(self, |ctx: &mut Self| {
+            let await_kw = ctx.keyword("await")?;
+            let expr = ctx.parse(next_level)?;
+
+            Ok(Expr::Await {
+                await_kw,
+                expr: expr.boxed(),
+            }
+            .spanned(ctx.span_from(start)))
+        })?;
+
+        if let Some(await_expr) = await_variant {
+            return Ok(await_expr);
+        }
+
+        let yield_variant = optional!(self, |ctx: &mut Self| {
+            let yield_kw = ctx.keyword("yield")?;
+            let from_kw = optional!(ctx, |ctx: &mut Self| ctx.keyword("from"))?;
+            let expr = ctx.parse(next_level)?;
+
+            if let Some(from_kw) = from_kw {
+                Ok(Expr::YieldFrom {
+                    yield_kw,
+                    from_kw,
+                    expr: expr.boxed(),
+                }
+                .spanned(ctx.span_from(start)))
+            } else {
+                Ok(Expr::Yield {
+                    yield_kw,
+                    expr: expr.boxed(),
+                }
+                .spanned(ctx.span_from(start)))
+            }
+        })?;
+
+        if let Some(yield_expr) = yield_variant {
+            return Ok(yield_expr);
+        }
+
+        next_level(self)
+    }
+
+    fn memo_expr(
+        &mut self,
+        next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
+    ) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
+        let memo_variant = optional!(self, |ctx: &mut Self| {
+            let async_kw = optional!(ctx, |ctx: &mut Self| ctx.keyword("async"))?;
+            let memo_kw = ctx.keyword("memo")?;
+            let colon = optional!(ctx, |ctx: &mut Self| ctx.symbol(":"))?;
+            let expr = ctx.fused_colon_block()?;
+
+            Ok(Expr::Memo {
+                async_kw,
+                memo_kw,
+                colon,
+                expr: expr.boxed(),
+            }
+            .spanned(ctx.span_from(start)))
+        })?;
+
+        if let Some(memo_expr) = memo_variant {
+            Ok(memo_expr)
+        } else {
+            next_level(self)
+        }
+    }
+
     fn expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
         self.set_error(
             self.cursor,
@@ -1064,7 +1269,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let atom = |ctx: &mut Self| ctx.atom();
         let postfix = |ctx: &mut Self| ctx.postfix_expr(&atom);
         let unary = |ctx: &mut Self| ctx.unary_expr(&postfix);
-        let binary0 = |ctx: &mut Self| ctx.binary_expr(0, &unary);
+        let control = |ctx: &mut Self| ctx.control_expr(&unary);
+        let binary0 = |ctx: &mut Self| ctx.binary_expr(0, &control);
         let binary1 = |ctx: &mut Self| ctx.binary_expr(1, &binary0);
         let binary2 = |ctx: &mut Self| ctx.binary_expr(2, &binary1);
         let binary3 = |ctx: &mut Self| ctx.binary_expr(3, &binary2);
@@ -1076,8 +1282,11 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let slice = |ctx: &mut Self| ctx.slice_expr(&binary8);
         let binary9 = |ctx: &mut Self| ctx.binary_expr(9, &slice);
         let binary10 = |ctx: &mut Self| ctx.binary_expr(10, &binary9);
-        let if_ = |ctx: &mut Self| ctx.if_expr(&binary10);
-        let binary11 = |ctx: &mut Self| ctx.binary_expr(11, &if_);
+        let memo = |ctx: &mut Self| ctx.memo_expr(&binary10);
+        let with_ = |ctx: &mut Self| ctx.with_expr(&memo);
+        let if_ = |ctx: &mut Self| ctx.if_expr(&with_);
+        let match_ = |ctx: &mut Self| ctx.match_expr(&if_);
+        let binary11 = |ctx: &mut Self| ctx.binary_expr(11, &match_);
 
         match self.parse(binary11) {
             Ok(expr) => Ok(expr),
@@ -1100,6 +1309,55 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             dedent,
         })
         .spanned(self.span_from(start)))
+    }
+
+    fn match_cases(&mut self) -> ParseResult<Vec<MatchCase<STree<'src, 'tok>>>> {
+        let mut cases = Vec::new();
+
+        loop {
+            // Try to parse a case
+            let case_start = self.cursor;
+
+            // Parse case pattern - can be None for default case
+            let pattern = optional!(self, |ctx: &mut Self| ctx.pattern())?;
+
+            // Parse optional guard
+            let guard = optional!(self, |ctx: &mut Self| {
+                let if_kw = ctx.keyword("if")?;
+                let guard_expr = ctx.expr()?;
+                Ok((if_kw, guard_expr))
+            })?;
+
+            // Parse arrow
+            let arrow = match self.symbol("=>") {
+                Ok(arrow) => arrow,
+                Err(_) => {
+                    self.rewind(case_start);
+                    break;
+                }
+            };
+
+            // Parse case body
+            let body = self.expr()?;
+
+            cases.push(MatchCase {
+                pattern: pattern.map(|p| p.boxed()),
+                guard: guard.map(|(kw, expr)| (kw, expr.boxed())),
+                arrow,
+                body: body.boxed(),
+            });
+
+            // Check for end of cases
+            if !self
+                .peek_token()
+                .map_or(false, |t| matches!(t.token, Token::Eol))
+            {
+                break;
+            }
+            let _ = self.token(&Token::Eol);
+        }
+
+        Ok(cases)
     }
 
     fn fused_colon_block(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
@@ -1272,10 +1530,12 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     fn stmt(&mut self, inline: bool) -> ParseResult<SStmt<'src, 'tok>> {
         let start = self.cursor;
 
-        let expr: &dyn Parser<SExpr> = if inline {
-            &|ctx: &mut Self| ctx.expr()
+        let expr = if inline { Self::expr } else { Self::open_expr };
+
+        let pattern = if inline {
+            Self::atom_pattern
         } else {
-            &|ctx: &mut Self| ctx.open_expr()
+            Self::pattern
         };
 
         let expr_stmt = |ctx: &mut Self| {
@@ -1286,17 +1546,17 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let pattern_debug = |ctx: &mut Self| {
             let debug = ctx.ident("debug")?;
-            let pattern = ctx.ident("pattern")?;
-            println!("Parsing pattern");
-            let pat = ctx.pattern()?;
-            println!("Parsed pattern: {}", pat.simple_fmt());
+            let _pattern = ctx.ident("pattern")?;
+            let pat = ctx.parse(&pattern)?;
+            // println!("Parsed pattern: {}", pat.simple_fmt());
             Ok(Stmt::Break { break_kw: debug })
         };
 
         let pattern_assign = |ctx: &mut Self| {
-            let pat = ctx.pattern()?;
+            let pat = ctx.parse(&pattern)?;
+            // println!("Parsed pattern: {}", pat.simple_fmt());
             let eq = ctx.symbol("=")?;
-            let expr = ctx.expr()?;
+            let expr = ctx.parse(&expr)?;
 
             Ok(Stmt::PatternAssign {
                 modifier: None,
@@ -1306,7 +1566,138 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             })
         };
 
-        let stmt = first_of!(self, "statement", pattern_debug, expr_stmt, pattern_assign)?;
+        let assign = |ctx: &mut Self| -> ParseResult<SStmtInner<'src, 'tok>> {
+            let lhs = ctx.parse(&expr)?;
+
+            let parsed = optional!(ctx, |ctx: &mut Self| {
+                let aug_assign = |ctx: &mut Self| {
+                    let (tok, kind) = ctx.symbol_table(&[
+                        ("+=", BinaryOp::Add),
+                        ("-=", BinaryOp::Sub),
+                        ("*=", BinaryOp::Mul),
+                        ("/=", BinaryOp::Div),
+                        ("//=", BinaryOp::FloorDiv),
+                        ("%=", BinaryOp::Mod),
+                        ("@=", BinaryOp::MatMul),
+                        ("**=", BinaryOp::Exp),
+                        ("|=", BinaryOp::Pipe),
+                        ("??=", BinaryOp::Coalesce),
+                    ])?;
+                    Ok((tok, Some(kind)))
+                };
+
+                let reg_assign = |ctx: &mut Self| {
+                    let eq = ctx.symbol("=")?;
+                    Ok((eq, None))
+                };
+
+                let (tok, kind) = first_of!(ctx, "assignment operator", aug_assign, reg_assign)?;
+                let rhs = ctx.parse(&expr)?;
+
+                Ok((tok, kind, rhs))
+            })?;
+
+            if let Some((tok, kind, rhs)) = parsed {
+                return Ok(Stmt::Assign {
+                    lhs: lhs.boxed(),
+                    op: kind,
+                    eq: tok,
+                    rhs: rhs.boxed(),
+                });
+            }
+
+            Ok(Stmt::Expr { expr: lhs.boxed() })
+        };
+
+        let while_stmt = |ctx: &mut Self| {
+            let while_kw = ctx.keyword("while")?;
+            let cond = ctx.expr()?;
+            let body = ctx.fused_colon_block()?;
+
+            Ok(Stmt::While {
+                while_kw,
+                cond: cond.boxed(),
+                body: body.boxed(),
+            })
+        };
+
+        let for_stmt = |ctx: &mut Self| {
+            let for_kw = ctx.keyword("for")?;
+            let pattern = ctx.pattern()?;
+            let in_kw = ctx.keyword("in")?;
+            let iter = ctx.expr()?;
+            let body = ctx.fused_colon_block()?;
+
+            Ok(Stmt::For {
+                for_kw,
+                pattern: pattern.boxed(),
+                in_kw,
+                iter: iter.boxed(),
+                body: body.boxed(),
+            })
+        };
+
+        let try_stmt = |ctx: &mut Self| {
+            let try_kw = ctx.keyword("try")?;
+            let expr = ctx.fused_colon_block()?;
+            let cases = ctx.match_cases()?;
+            let finally_clause = optional!(ctx, |ctx: &mut Self| {
+                let finally_kw = ctx.keyword("finally")?;
+                let expr = ctx.fused_colon_block()?;
+                Ok((finally_kw, expr.boxed()))
+            })?;
+
+            Ok(Stmt::Try {
+                try_kw,
+                expr: expr.boxed(),
+                cases,
+                finally_clause,
+            })
+        };
+
+        let break_stmt = |ctx: &mut Self| {
+            let break_kw = ctx.keyword("break")?;
+            Ok(Stmt::Break { break_kw })
+        };
+
+        let continue_stmt = |ctx: &mut Self| {
+            let continue_kw = ctx.keyword("continue")?;
+            Ok(Stmt::Continue { continue_kw })
+        };
+
+        let return_stmt = |ctx: &mut Self| {
+            let return_kw = ctx.keyword("return")?;
+            let expr = ctx.expr()?;
+            Ok(Stmt::Return {
+                return_kw,
+                expr: expr.boxed(),
+            })
+        };
+
+        let raise_stmt = |ctx: &mut Self| {
+            let raise_kw = ctx.keyword("raise")?;
+            let expr = optional!(ctx, |ctx: &mut Self| ctx.expr())?;
+            Ok(Stmt::Raise {
+                raise_kw,
+                expr: expr.map(|e| e.boxed()),
+            })
+        };
+
+        let stmt = first_of!(
+            self,
+            "statement",
+            pattern_debug,
+            pattern_assign,
+            assign,
+            expr_stmt,
+            while_stmt,
+            for_stmt,
+            try_stmt,
+            break_stmt,
+            continue_stmt,
+            return_stmt,
+            raise_stmt
+        )?;
 
         let _newl = self.token(&Token::Eol)?;
 

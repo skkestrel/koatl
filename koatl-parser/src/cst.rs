@@ -66,7 +66,7 @@ pub enum Stmt<TTree: Tree> {
 
     Assign {
         lhs: TTree::Expr,
-        op: Option<TTree::Token>,
+        op: Option<BinaryOp>,
         eq: TTree::Token,
         rhs: TTree::Expr,
     },
@@ -74,7 +74,6 @@ pub enum Stmt<TTree: Tree> {
     While {
         while_kw: TTree::Token,
         cond: TTree::Expr,
-        colon: TTree::Token,
         body: TTree::Expr,
     },
 
@@ -83,7 +82,6 @@ pub enum Stmt<TTree: Tree> {
         pattern: TTree::Pattern,
         in_kw: TTree::Token,
         iter: TTree::Expr,
-        colon: TTree::Token,
         body: TTree::Expr,
     },
 
@@ -98,9 +96,8 @@ pub enum Stmt<TTree: Tree> {
     Try {
         try_kw: TTree::Token,
         expr: TTree::Expr,
-        colon: TTree::Token,
         cases: Vec<MatchCase<TTree>>,
-        finally_clause: Option<(TTree::Token, TTree::Token, TTree::Expr)>,
+        finally_clause: Option<(TTree::Token, TTree::Expr)>,
     },
 
     Break {
