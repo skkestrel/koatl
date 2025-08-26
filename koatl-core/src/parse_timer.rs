@@ -11,17 +11,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n = 1000;
 
     for _ in 0..n {
-        match parse_tl(&src) {
-            Ok(_) => {}
-            Err(errs) => {
-                errs.0.into_iter().for_each(|e| {
-                    eprintln!("Error: {}", e.message);
-                    if let Some(span) = e.span {
-                        eprintln!("At span: {:?}", span);
-                    }
-                });
-                return Err("Parsing failed".into());
-            }
+        let (_, errs) = parse_tl(&src);
+
+        if !errs.0.is_empty() {
+            errs.0.into_iter().for_each(|e| {
+                eprintln!("Error: {}", e.message);
+                if let Some(span) = e.span {
+                    eprintln!("At span: {:?}", span);
+                }
+            });
+            return Err("Parsing failed".into());
         }
     }
 

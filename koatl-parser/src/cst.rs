@@ -470,7 +470,7 @@ pub enum PatternClassItem<TTree: Tree> {
 #[derive(Debug, Clone)]
 pub enum Pattern<TTree: Tree> {
     Capture {
-        name: Option<TTree::Token>,
+        name: TTree::Token,
     },
     Value {
         dot: TTree::Token,
@@ -482,31 +482,24 @@ pub enum Pattern<TTree: Tree> {
         name: TTree::Token,
     },
     Or {
-        patterns: Vec<(TTree::Pattern, Option<TTree::Token>)>, // pattern, |?
+        head: TTree::Pattern,
+        rest: Vec<(TTree::Token, TTree::Pattern)>,
     },
     Literal {
         token: TTree::Token,
     },
     Sequence {
-        lbracket: TTree::Token,
         listing: Listing<PatternSequenceItem<TTree>, TTree>,
-        rbracket: TTree::Token,
     },
     TupleSequence {
-        lparen: TTree::Token,
         listing: Listing<PatternSequenceItem<TTree>, TTree>,
-        rparen: TTree::Token,
     },
     Mapping {
-        lbrace: TTree::Token,
         listing: Listing<PatternMappingItem<TTree>, TTree>,
-        rbrace: TTree::Token,
     },
     Class {
         expr: TTree::Expr,
-        lparen: TTree::Token,
         items: Listing<PatternClassItem<TTree>, TTree>,
-        rparen: TTree::Token,
     },
     Parenthesized {
         lparen: TTree::Token,
@@ -554,6 +547,12 @@ pub type SPatternInner<'src, 'tok> = Pattern<STree<'src, 'tok>>;
 pub struct SPattern<'src, 'tok> {
     pub value: SPatternInner<'src, 'tok>,
     pub span: Span,
+}
+
+impl<'src, 'tok> SPattern<'src, 'tok> {
+    pub fn boxed(self) -> Box<SPattern<'src, 'tok>> {
+        Box::new(self)
+    }
 }
 
 impl<'src, 'tok> SPatternInner<'src, 'tok> {

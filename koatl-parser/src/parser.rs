@@ -21,7 +21,7 @@ struct ParseErr<'a> {
     message: ErrMsg<'a>,
 }
 
-trait Parser<'src, 'tok, O>: Clone + Fn(&mut ParseCtx<'src, 'tok>) -> ParseResult<O> {}
+trait Parser<'src, 'tok, O>: Fn(&mut ParseCtx<'src, 'tok>) -> ParseResult<O> {}
 impl<'src, 'tok, O, F> Parser<'src, 'tok, O> for F where
     F: Clone + Fn(&mut ParseCtx<'src, 'tok>) -> ParseResult<O>
 {
@@ -217,8 +217,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         optional_separator: Token<'src>,
         item_parser: impl Parser<'src, 'tok, O>,
     ) -> ParseResult<SListing<'src, 'tok, O>> {
-        let item_parser2 = item_parser.clone();
-
         let block_body = |ctx: &mut Self| {
             let indent = ctx.token(&Token::Indent)?;
 
@@ -260,7 +258,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
             loop {
                 let parsed = optional!(ctx, |ctx: &mut Self| {
-                    let item = ctx.parse(&item_parser2)?;
+                    let item = ctx.parse(&item_parser)?;
                     let separator =
                         optional!(ctx, |ctx: &mut Self| ctx.token(&optional_separator))?;
 
@@ -300,6 +298,261 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             newline,
             end,
         })
+    }
+
+    // Patterns
+
+    fn qualified_ident(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+        let mut expr = Expr::Ident(self.any_ident()?).spanned(self.span_from(start));
+
+        loop {
+            let parsed = optional!(self, |ctx| {
+                let dot = ctx.symbol(".")?;
+                let attr = ctx.any_ident()?;
+                Ok((dot, attr))
+            })?;
+
+            let Some((dot, attr)) = parsed else {
+                break;
+            };
+
+            expr = Expr::Attribute {
+                expr: expr.boxed(),
+                question: None,
+                dot,
+                attr,
+            }
+            .spanned(self.span_from(start));
+        }
+
+        Ok(expr)
+    }
+
+    fn pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
+        first_of!(self, "pattern", |ctx| ctx.as_pattern(), |ctx| ctx
+            .atom_pattern())
+    }
+
+    fn as_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
+        let start = self.cursor;
+        let pattern = self.or_pattern()?;
+
+        let parsed = optional!(self, |ctx| {
+            let as_kw = ctx.keyword("as")?;
+            let name = ctx.any_ident()?;
+            Ok((as_kw, name))
+        })?;
+
+        if let Some((as_kw, name)) = parsed {
+            return Ok(Pattern::As {
+                pattern: pattern.boxed(),
+                as_kw,
+                name,
+            }
+            .spanned(self.span_from(start)));
+        }
+
+        Ok(pattern)
+    }
+
+    fn or_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
+        let start = self.cursor;
+        let first = self.atom_pattern()?;
+
+        let mut alts = vec![];
+
+        loop {
+            let parsed = optional!(self, |ctx| {
+                let pipe = ctx.symbol("|")?;
+                let pattern = ctx.atom_pattern()?;
+                Ok((pipe, pattern))
+            })?;
+
+            let Some((pipe, pattern)) = parsed else {
+                break;
+            };
+
+            alts.push((pipe, pattern.boxed()));
+        }
+
+        if !alts.is_empty() {
+            return Ok(Pattern::Or {
+                head: first.boxed(),
+                rest: alts,
+            }
+            .spanned(self.span_from(start)));
+        }
+
+        Ok(first)
+    }
+
+    fn atom_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
+        first_of!(
+            self,
+            "atom pattern",
+            |ctx| ctx.literal_pattern(),
+            |ctx| ctx.class_pattern(),
+            |ctx| ctx.capture_pattern(),
+            |ctx| ctx.value_pattern(),
+            |ctx| ctx.parenthesized_pattern(),
+            |ctx| ctx.sequence_pattern(),
+            |ctx| ctx.tuple_sequence_pattern(),
+            |ctx| ctx.mapping_pattern()
+        )
+    }
+
+    fn literal_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
+        let start = self.cursor;
+        let token = self.literal()?;
+        Ok(Pattern::Literal { token }.spanned(self.span_from(start)))
+    }
+
+    fn capture_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
+        let start = self.cursor;
+        let name = self.any_ident()?;
+        Ok(Pattern::Capture { name }.spanned(self.span_from(start)))
+    }
+
+    fn value_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
+        let start = self.cursor;
+        let dot = self.symbol(".")?;
+        let expr = self.expr()?.boxed();
+        Ok(Pattern::Value { dot, expr }.spanned(self.span_from(start)))
+    }
+
+    fn parenthesized_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
+        let start = self.cursor;
+        let lparen = self.symbol("(")?;
+        let pattern = self.pattern()?.boxed();
+        let rparen = self.symbol(")")?;
+        Ok(Pattern::Parenthesized {
+            lparen,
+            pattern,
+            rparen,
+        }
+        .spanned(self.span_from(start)))
+    }
+
+    fn sequence_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
+        let start = self.cursor;
+        let listing = self.listing("[", "]", Token::Symbol(","), |ctx| {
+            ctx.pattern_sequence_item()
+        })?;
+        Ok(Pattern::Sequence { listing }.spanned(self.span_from(start)))
+    }
+
+    fn tuple_sequence_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
+        let start = self.cursor;
+        let listing = self.listing("(", ")", Token::Symbol(","), |ctx| {
+            ctx.pattern_sequence_item()
+        })?;
+        Ok(Pattern::TupleSequence { listing }.spanned(self.span_from(start)))
+    }
+
+    fn mapping_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
+        let start = self.cursor;
+        let listing = self.listing("{", "}", Token::Symbol(","), |ctx| {
+            ctx.pattern_mapping_item()
+        })?;
+        Ok(Pattern::Mapping { listing }.spanned(self.span_from(start)))
+    }
+
+    fn class_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
+        let start = self.cursor;
+        let cls = self.qualified_ident()?;
+        let items = self.listing("(", ")", Token::Symbol(","), |ctx| ctx.pattern_class_item())?;
+        Ok(Pattern::Class {
+            expr: cls.boxed(),
+            items,
+        }
+        .spanned(self.span_from(start)))
+    }
+
+    fn pattern_sequence_item(&mut self) -> ParseResult<PatternSequenceItem<STree<'src, 'tok>>> {
+        first_of!(
+            self,
+            "pattern sequence item",
+            |ctx| {
+                let star = ctx.symbol("*")?;
+                let name = optional!(ctx, |ctx: &mut Self| ctx.any_ident())?;
+                Ok(PatternSequenceItem::Spread { star, name })
+            },
+            |ctx| {
+                let pattern = ctx.pattern()?;
+                Ok(PatternSequenceItem::Item {
+                    pattern: pattern.boxed(),
+                })
+            }
+        )
+    }
+
+    fn pattern_mapping_item(&mut self) -> ParseResult<PatternMappingItem<STree<'src, 'tok>>> {
+        first_of!(
+            self,
+            "pattern mapping item",
+            |ctx| {
+                let stars = ctx.symbol("**")?;
+                let name = optional!(ctx, |ctx: &mut Self| ctx.any_ident())?;
+                Ok(PatternMappingItem::Spread { stars, name })
+            },
+            |ctx| {
+                let key = first_of!(
+                    ctx,
+                    "mapping key",
+                    |ctx| {
+                        let name = ctx.any_ident()?;
+                        // Convert ident to string literal expression
+                        let literal_token = name; // Reuse the ident token as a string literal
+                        Ok(Expr::Literal(literal_token).spanned(name.span))
+                    },
+                    |ctx| {
+                        let literal_token = ctx.literal()?;
+                        Ok(Expr::Literal(literal_token).spanned(literal_token.span))
+                    },
+                    |ctx| {
+                        let _lparen = ctx.symbol("(")?;
+                        let expr = ctx.expr()?;
+                        let _rparen = ctx.symbol(")")?;
+                        Ok(expr) // Return the parenthesized expression
+                    }
+                )?;
+                let colon = ctx.symbol(":")?;
+                let pattern = ctx.pattern()?;
+                Ok(PatternMappingItem::Item {
+                    key: key.boxed(),
+                    colon,
+                    pattern: pattern.boxed(),
+                })
+            },
+            |ctx| {
+                let name = ctx.any_ident()?;
+                Ok(PatternMappingItem::Ident { name })
+            }
+        )
+    }
+
+    fn pattern_class_item(&mut self) -> ParseResult<PatternClassItem<STree<'src, 'tok>>> {
+        first_of!(
+            self,
+            "pattern class item",
+            |ctx| {
+                let name = ctx.any_ident()?;
+                let eq = ctx.symbol("=")?;
+                let pattern = ctx.pattern()?;
+                Ok(PatternClassItem::Kw {
+                    name,
+                    eq,
+                    pattern: pattern.boxed(),
+                })
+            },
+            |ctx| {
+                let pattern = ctx.pattern()?;
+                Ok(PatternClassItem::Item {
+                    pattern: pattern.boxed(),
+                })
+            }
+        )
     }
 
     // Expressions
@@ -1014,13 +1267,50 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         )
     }
 
-    fn stmt(&mut self) -> ParseResult<SStmt<'src, 'tok>> {
+    // Statements
+
+    fn stmt(&mut self, inline: bool) -> ParseResult<SStmt<'src, 'tok>> {
         let start = self.cursor;
 
-        let expr = self.open_expr()?;
+        let expr: &dyn Parser<SExpr> = if inline {
+            &|ctx: &mut Self| ctx.expr()
+        } else {
+            &|ctx: &mut Self| ctx.open_expr()
+        };
+
+        let expr_stmt = |ctx: &mut Self| {
+            Ok(Stmt::Expr {
+                expr: ctx.parse(expr)?.boxed(),
+            })
+        };
+
+        let pattern_debug = |ctx: &mut Self| {
+            let debug = ctx.ident("debug")?;
+            let pattern = ctx.ident("pattern")?;
+            println!("Parsing pattern");
+            let pat = ctx.pattern()?;
+            println!("Parsed pattern: {:?}", pat);
+            Ok(Stmt::Break { break_kw: debug })
+        };
+
+        let pattern_assign = |ctx: &mut Self| {
+            let pat = ctx.pattern()?;
+            let eq = ctx.symbol("=")?;
+            let expr = ctx.expr()?;
+
+            Ok(Stmt::PatternAssign {
+                modifier: None,
+                lhs: pat.boxed(),
+                eq,
+                rhs: expr.boxed(),
+            })
+        };
+
+        let stmt = first_of!(self, "statement", pattern_debug, expr_stmt, pattern_assign)?;
+
         let _newl = self.token(&Token::Eol)?;
 
-        Ok(Stmt::Expr { expr: expr.boxed() }.spanned(self.span_from(start)))
+        Ok(stmt.spanned(self.span_from(start)))
     }
 
     fn stmts(&mut self) -> ParseResult<Vec<Box<SStmt<'src, 'tok>>>> {
@@ -1037,7 +1327,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
             let before = self.save();
 
-            if let Ok(stmt) = self.stmt() {
+            if let Ok(stmt) = self.stmt(false) {
                 stmts.push(Box::new(stmt));
             } else {
                 let error = self.take_error().1;
