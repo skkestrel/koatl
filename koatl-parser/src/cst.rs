@@ -365,7 +365,9 @@ pub enum Expr<TTree: Tree> {
         expr: TTree::Expr,
         question: Option<TTree::Token>,
         dot: TTree::Token,
+        lparen: TTree::Token,
         rhs: TTree::Expr,
+        rparen: TTree::Token,
     },
     Attribute {
         expr: TTree::Expr,
@@ -679,6 +681,47 @@ impl<'src, 'tok> SExprInner<'src, 'tok> {
                 }
             },
             Expr::Parenthesized { expr, .. } => expr.simple_fmt(),
+            Expr::Subscript {
+                expr,
+                question,
+                indices,
+            } => {
+                let question_str = if question.is_some() { "?" } else { "" };
+                let indices_str = indices
+                    .items
+                    .iter()
+                    .map(|item| item.item.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}{}[{}]", expr.simple_fmt(), question_str, indices_str)
+            }
+            Expr::RawAttribute {
+                expr,
+                question,
+                attr,
+                ..
+            } => {
+                let question_str = if question.is_some() { "?" } else { "" };
+                format!("{}{}::{}", expr.simple_fmt(), question_str, attr.simple_fmt())
+            }
+            Expr::ScopedAttribute {
+                expr,
+                question,
+                rhs,
+                ..
+            } => {
+                let question_str = if question.is_some() { "?" } else { "" };
+                format!("{}{}.{}", expr.simple_fmt(), question_str, rhs.simple_fmt())
+            }
+            Expr::Attribute {
+                expr,
+                question,
+                attr,
+                ..
+            } => {
+                let question_str = if question.is_some() { "?" } else { "" };
+                format!("{}{}.{}", expr.simple_fmt(), question_str, attr.simple_fmt())
+            }
             Expr::Block { stmts, .. } => {
                 let stmts_str = stmts
                     .iter()

@@ -556,6 +556,23 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             Call {
                 args: SListing<'src, 'tok, SCallItem<'src, 'tok>>,
             },
+            Subscript {
+                indices: SListing<'src, 'tok, SListItem<'src, 'tok>>,
+            },
+            RawAttribute {
+                double_colon: &'tok SToken<'src>,
+                attr: &'tok SToken<'src>,
+            },
+            ScopedAttribute {
+                dot: &'tok SToken<'src>,
+                lparen: &'tok SToken<'src>,
+                rhs: SExpr<'src, 'tok>,
+                rparen: &'tok SToken<'src>,
+            },
+            Attribute {
+                dot: &'tok SToken<'src>,
+                attr: &'tok SToken<'src>,
+            },
         }
 
         loop {
@@ -565,16 +582,100 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
             let call = |ctx: &mut Self| {
                 let args = ctx.listing("(", ")", Token::Symbol(","), |ctx| ctx.call_item())?;
-
                 Ok(Postfix::Call { args })
             };
 
-            expr = match first_of!(self, "postfix", call) {
+            let subscript = |ctx: &mut Self| {
+                let indices = ctx.listing("[", "]", Token::Symbol(","), |ctx| {
+                    let star = optional!(ctx, |ctx: &mut Self| ctx.symbol("*"))?;
+                    let expr = ctx.expr()?.boxed();
+
+                    if let Some(star) = star {
+                        Ok(ListItem::Spread { star, expr })
+                    } else {
+                        Ok(ListItem::Item { expr })
+                    }
+                })?;
+                Ok(Postfix::Subscript { indices })
+            };
+
+            let raw_attribute = |ctx: &mut Self| {
+                let double_colon = ctx.symbol("::")?;
+                let attr = ctx.any_ident()?;
+                Ok(Postfix::RawAttribute { double_colon, attr })
+            };
+
+            let dot_attribute = |ctx: &mut Self| {
+                let dot = ctx.symbol(".")?;
+
+                first_of!(
+                    ctx,
+                    "attribute",
+                    |ctx| {
+                        let attr = ctx.any_ident()?;
+                        Ok(Postfix::Attribute { dot, attr })
+                    },
+                    |ctx| {
+                        let lparen = ctx.symbol("(")?;
+                        let rhs = ctx.expr()?;
+                        let rparen = ctx.symbol(")")?;
+                        Ok(Postfix::ScopedAttribute {
+                            dot,
+                            lparen,
+                            rhs,
+                            rparen,
+                        })
+                    }
+                )
+            };
+
+            expr = match first_of!(
+                self,
+                "postfix",
+                call,
+                subscript,
+                raw_attribute,
+                dot_attribute
+            ) {
                 Ok(item) => match item {
                     Postfix::Call { args } => Expr::Call {
                         expr: expr.boxed(),
                         question,
                         args,
+                    }
+                    .spanned(self.span_from(start)),
+                    Postfix::Subscript { indices } => Expr::Subscript {
+                        expr: expr.boxed(),
+                        question,
+                        indices,
+                    }
+                    .spanned(self.span_from(start)),
+                    Postfix::RawAttribute { double_colon, attr } => Expr::RawAttribute {
+                        expr: expr.boxed(),
+                        question,
+                        double_colon,
+                        attr,
+                    }
+                    .spanned(self.span_from(start)),
+                    Postfix::ScopedAttribute {
+                        dot,
+                        lparen,
+                        rhs,
+                        rparen,
+                    } => Expr::ScopedAttribute {
+                        expr: expr.boxed(),
+                        question,
+                        dot,
+                        lparen,
+                        rhs: rhs.boxed(),
+                        rparen,
+                    }
+                    .spanned(self.span_from(start)),
+                    Postfix::Attribute { dot, attr } => Expr::Attribute {
+                        expr: expr.boxed(),
+                        question,
+                        dot,
+                        attr,
                     }
                     .spanned(self.span_from(start)),
                 },
