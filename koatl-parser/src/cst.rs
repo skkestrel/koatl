@@ -317,25 +317,13 @@ pub enum Expr<TTree: Tree> {
         else_clause: Option<(TTree::Token, TTree::Expr)>,
     },
 
-    ClassicIf {
-        if_kw: TTree::Token,
-        cond: TTree::Expr,
-        then: TTree::Expr,
-        else_clause: Option<(TTree::Token, TTree::Expr)>,
-    },
-
     Match {
         scrutinee: TTree::Expr,
         match_kw: TTree::Token,
         colon: Option<TTree::Token>,
         cases: Vec<MatchCase<TTree>>,
     },
-    ClassicMatch {
-        match_kw: TTree::Token,
-        scrutinee: TTree::Expr,
-        colon: TTree::Token,
-        cases: Vec<MatchCase<TTree>>,
-    },
+
     Matches {
         lhs: TTree::Expr,
         matches_kw: TTree::Token,
@@ -618,7 +606,6 @@ pub type SArgDefItem<'src, 'tok> = ArgDefItem<STree<'src, 'tok>>;
 pub type SFmtExpr<'src, 'tok> = FmtExpr<STree<'src, 'tok>>;
 
 impl<'src, 'tok> SExpr<'src, 'tok> {
-    /// Print a simplified view of the CST for debugging, excluding trivia and detailed token info
     pub fn simple_fmt(&self) -> String {
         self.value.simple_fmt()
     }
@@ -696,6 +683,24 @@ impl<'src, 'tok> SExprInner<'src, 'tok> {
                     format!("({})", items_str)
                 }
             },
+            Expr::If {
+                cond,
+                then_kw: _,
+                then,
+                else_clause,
+            } => {
+                let else_str = if let Some((_, expr)) = else_clause {
+                    format!(" else {}", expr.simple_fmt())
+                } else {
+                    String::new()
+                };
+                format!(
+                    "{} then {}{}",
+                    cond.simple_fmt(),
+                    then.simple_fmt(),
+                    else_str
+                )
+            }
             Expr::Parenthesized { expr, .. } => expr.simple_fmt(),
             Expr::Subscript {
                 expr,
@@ -765,13 +770,13 @@ impl<'src, 'tok> SExprInner<'src, 'tok> {
                 }
             }
             Expr::Block(block) => match block {
-                BlockKind::Fused { starter, body, .. } => {
+                BlockKind::Fused { body, .. } => {
                     let stmts_str = body
                         .iter()
                         .map(|stmt| stmt.value.simple_fmt())
                         .collect::<Vec<_>>()
                         .join("; ");
-                    format!("{} Block({})", starter.simple_fmt(), stmts_str)
+                    format!("Block({})", stmts_str)
                 }
                 BlockKind::Program { body, .. } => body
                     .iter()
