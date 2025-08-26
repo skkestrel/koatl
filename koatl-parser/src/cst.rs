@@ -1,4 +1,11 @@
-use crate::lexer::{SToken, Span};
+use crate::lexer::{SToken, Span, Token};
+
+pub trait Tree {
+    type Expr: std::fmt::Debug + Clone;
+    type Pattern: std::fmt::Debug + Clone;
+    type Stmt: std::fmt::Debug + Clone;
+    type Token: std::fmt::Debug + Clone;
+}
 
 #[derive(Debug, Clone)]
 pub struct ListingItem<T, TTree: Tree> {
@@ -188,35 +195,64 @@ pub enum ArgDefItem<TTree: Tree> {
 #[derive(Debug, Clone)]
 pub struct MatchCase<TTree: Tree> {
     pub pattern: Option<TTree::Pattern>,
-    pub guard: Option<(TTree::Token, TTree::Expr)>, // if, expr
-    pub arrow: TTree::Token,                        // =>
+    pub guard: Option<(TTree::Token, TTree::Expr)>,
+    pub arrow: TTree::Token,
     pub body: TTree::Expr,
 }
 
-pub trait Tree {
-    type Expr;
-    type Pattern;
-    type Stmt;
-    type Token;
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    MatMul,
+    Div,
+    Exp,
+
+    FloorDiv,
+    Mod,
+
+    In,
+    Nin,
+    Lt,
+    Leq,
+    Gt,
+    Geq,
+    Eq,
+    Neq,
+    Is,
+    Nis,
+
+    And,
+    Or,
+
+    Coalesce,
+    Pipe,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum UnaryOp {
+    Inv,
+    Pos,
+    Neg,
+    Not,
+    Bind,
+}
+
+#[derive(Debug, Clone)]
+pub enum TupleKind<TTree: Tree> {
+    Unit(TTree::Token, TTree::Token),
+    Listing(Vec<ListingItem<ListItem<TTree>, TTree>>),
 }
 
 #[derive(Debug, Clone)]
 pub enum Expr<TTree: Tree> {
-    Literal {
-        token: TTree::Token,
-    },
-    Ident {
-        token: TTree::Token,
-    },
-    Tuple {
-        listing: Listing<ListItem<TTree>, TTree>,
-    },
-    List {
-        listing: Listing<ListItem<TTree>, TTree>,
-    },
-    Mapping {
-        listing: Listing<MappingItem<TTree>, TTree>,
-    },
+    Literal(TTree::Token),
+    Ident(TTree::Token),
+    Tuple(TupleKind<TTree>),
+    List(Listing<ListItem<TTree>, TTree>),
+    Mapping(Listing<MappingItem<TTree>, TTree>),
+
     Slice {
         start: Option<TTree::Expr>,
         dots: TTree::Token,
@@ -227,11 +263,14 @@ pub enum Expr<TTree: Tree> {
 
     Unary {
         op: TTree::Token,
+        op_kind: UnaryOp,
         expr: TTree::Expr,
     },
     Binary {
         lhs: TTree::Expr,
+        not: Option<TTree::Token>,
         op: TTree::Token,
+        op_kind: BinaryOp,
         rhs: TTree::Expr,
     },
 
@@ -372,9 +411,7 @@ pub enum Expr<TTree: Tree> {
         ampersand: TTree::Token,
         decorator: TTree::Expr,
     },
-    Placeholder {
-        dollar: TTree::Token,
-    },
+    Placeholder(TTree::Token),
 
     // Grouping expressions
     Parenthesized {
@@ -561,3 +598,157 @@ pub type SMatchCase<'src, 'tok> = MatchCase<STree<'src, 'tok>>;
 pub type SCallItem<'src, 'tok> = CallItem<STree<'src, 'tok>>;
 pub type SArgDefItem<'src, 'tok> = ArgDefItem<STree<'src, 'tok>>;
 pub type SFmtExpr<'src, 'tok> = FmtExpr<STree<'src, 'tok>>;
+
+impl<'src, 'tok> SExpr<'src, 'tok> {
+    /// Print a simplified view of the CST for debugging, excluding trivia and detailed token info
+    pub fn simple_fmt(&self) -> String {
+        self.value.simple_fmt()
+    }
+}
+
+impl<'src, 'tok> SExprInner<'src, 'tok> {
+    pub fn simple_fmt(&self) -> String {
+        match self {
+            Expr::Literal(token) => token.simple_fmt(),
+            Expr::Ident(token) => token.simple_fmt(),
+            Expr::Placeholder(token) => token.simple_fmt(),
+            Expr::Binary {
+                lhs,
+                not,
+                op,
+                op_kind: _,
+                rhs,
+            } => {
+                let not_str = if let Some(not_token) = not {
+                    format!("{} ", not_token.simple_fmt())
+                } else {
+                    String::new()
+                };
+
+                format!(
+                    "({} {}{} {})",
+                    lhs.simple_fmt(),
+                    not_str,
+                    op.simple_fmt(),
+                    rhs.simple_fmt()
+                )
+            }
+            Expr::Unary {
+                op_kind: _,
+                op,
+                expr,
+            } => {
+                format!("({} {})", op.token, expr.simple_fmt())
+            }
+            Expr::Call {
+                expr,
+                question,
+                args,
+            } => {
+                let question_str = if question.is_some() { "?" } else { "" };
+                let args_str = args
+                    .items
+                    .iter()
+                    .map(|item| item.item.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}{}({})", expr.simple_fmt(), question_str, args_str)
+            }
+            Expr::List(listing) => {
+                let items_str = listing
+                    .items
+                    .iter()
+                    .map(|item| item.item.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("[{}]", items_str)
+            }
+            Expr::Tuple(kind) => match kind {
+                TupleKind::Unit(..) => format!("()"),
+                TupleKind::Listing(items) => {
+                    if items.len() == 1 {
+                        return format!("({},)", items[0].item.simple_fmt());
+                    }
+
+                    let items_str = items
+                        .iter()
+                        .map(|item| item.item.simple_fmt())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("({})", items_str)
+                }
+            },
+            Expr::Parenthesized { expr, .. } => expr.simple_fmt(),
+            Expr::Block { stmts, .. } => {
+                let stmts_str = stmts
+                    .iter()
+                    .map(|stmt| stmt.value.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join(";\n");
+                format!("{}", stmts_str)
+            }
+            _ => format!("{:?}", self).chars().take(50).collect::<String>() + "...",
+        }
+    }
+}
+
+impl<'src, 'tok> SStmt<'src, 'tok> {
+    pub fn simple_fmt(&self) -> String {
+        self.value.simple_fmt()
+    }
+}
+
+impl<'src, 'tok> SStmtInner<'src, 'tok> {
+    pub fn simple_fmt(&self) -> String {
+        match self {
+            Stmt::Expr { expr } => expr.simple_fmt(),
+            Stmt::Assign { lhs, rhs, .. } => {
+                format!("{} = {}", lhs.simple_fmt(), rhs.simple_fmt())
+            }
+            _ => format!("{:?}", self).chars().take(30).collect::<String>() + "...",
+        }
+    }
+}
+
+impl<'src, 'tok> ListItem<STree<'src, 'tok>> {
+    pub fn simple_fmt(&self) -> String {
+        match self {
+            ListItem::Item { expr } => expr.simple_fmt(),
+            ListItem::Spread { expr, .. } => format!("*{}", expr.simple_fmt()),
+        }
+    }
+}
+
+impl<'src, 'tok> CallItem<STree<'src, 'tok>> {
+    pub fn simple_fmt(&self) -> String {
+        match self {
+            CallItem::Arg { expr } => expr.simple_fmt(),
+            CallItem::Kwarg { name, expr, .. } => {
+                format!("{}={}", name.simple_fmt(), expr.simple_fmt())
+            }
+            CallItem::ArgSpread { expr, .. } => format!("*{}", expr.simple_fmt()),
+            CallItem::KwargSpread { expr, .. } => format!("**{}", expr.simple_fmt()),
+        }
+    }
+}
+
+impl<'src> SToken<'src> {
+    pub fn simple_fmt(&self) -> String {
+        self.token.simple_fmt()
+    }
+}
+
+impl<'src> Token<'src> {
+    pub fn simple_fmt(&self) -> String {
+        match self {
+            Token::Ident(s) => s.to_string(),
+            Token::Num(s) => s.to_string(),
+            Token::Str(s) => format!("\"{}\"", s),
+            Token::Bool(b) => b.to_string(),
+            Token::None => "None".to_string(),
+            Token::Symbol(s) => s.to_string(),
+            Token::Kw(s) => s.to_string(),
+            _ => format!("{:?}", self),
+        }
+    }
+}

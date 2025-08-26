@@ -62,10 +62,7 @@ macro_rules! first_of {
             $(
                 let before = $ctx.save();
                 match $ctx.parse($parser) {
-                    Ok(result) => {
-                        $ctx.take_error();
-                        break 'first_of Ok(result);
-                    }
+                    Ok(result) => break 'first_of Ok(result),
                     Err(()) => {}
                 }
                 $ctx.rewind(before);
@@ -79,7 +76,7 @@ macro_rules! first_of {
 macro_rules! optional {
     ($ctx:expr, $parser:expr) => {{
         let start = $ctx.cursor;
-        Ok(match $parser($ctx) {
+        Ok(match $ctx.parse($parser) {
             Ok(result) => Some(result),
             Err(_) => {
                 $ctx.rewind(start);
@@ -120,7 +117,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
     fn set_error(&mut self, cursor: usize, err: ParseErr<'src>) {
         if let Some((furthest_cursor, _)) = &self.error {
-            if cursor >= *furthest_cursor {
+            if cursor > *furthest_cursor {
                 self.error = Some((cursor, err));
             }
         } else {
@@ -161,12 +158,10 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        self.set_error(
+        Err(self.set_error(
             start,
             ParseErr::expected(format!("{}", token), start..self.cursor),
-        );
-
-        Err(())
+        ))
     }
 
     fn symbol(&mut self, sym: &'static str) -> ParseResult<&'tok SToken<'src>> {
@@ -177,7 +172,11 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         self.token(&Token::Kw(kw))
     }
 
-    fn ident(&mut self) -> ParseResult<&'tok SToken<'src>> {
+    fn ident(&mut self, ident: &'static str) -> ParseResult<&'tok SToken<'src>> {
+        self.token(&Token::Ident(ident))
+    }
+
+    fn any_ident(&mut self) -> ParseResult<&'tok SToken<'src>> {
         let start = self.cursor;
 
         let next: Option<&SToken<'src>> = self.next_token();
@@ -188,9 +187,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        self.set_error(start, ParseErr::expected("identifier", start..self.cursor));
-
-        Err(())
+        Err(self.set_error(start, ParseErr::expected("identifier", start..self.cursor)))
     }
 
     fn literal(&mut self) -> ParseResult<&'tok SToken<'src>> {
@@ -204,9 +201,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        self.set_error(start, ParseErr::expected("literal", start..self.cursor));
-
-        Err(())
+        Err(self.set_error(start, ParseErr::expected("literal", start..self.cursor)))
     }
 
     fn listing<O: std::fmt::Debug>(
@@ -326,17 +321,17 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let literal_expr = |ctx: &mut Self| {
             let token = ctx.literal()?;
-            Ok(Expr::Literal { token }.spanned(ctx.span_from(start)))
+            Ok(Expr::Literal(token).spanned(ctx.span_from(start)))
         };
 
         let ident_expr = |ctx: &mut Self| {
-            let token = ctx.ident()?;
-            Ok(Expr::Ident { token }.spanned(ctx.span_from(start)))
+            let token = ctx.any_ident()?;
+            Ok(Expr::Ident(token).spanned(ctx.span_from(start)))
         };
 
         let placeholder = |ctx: &mut Self| {
             let dollar = ctx.symbol("$")?;
-            Ok(Expr::Placeholder { dollar }.spanned(ctx.span_from(start)))
+            Ok(Expr::Placeholder(dollar).spanned(ctx.span_from(start)))
         };
 
         let list = |ctx: &mut Self| {
@@ -350,34 +345,34 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     Ok(ListItem::Item { expr })
                 }
             })?;
-            Ok(Expr::List { listing }.spanned(ctx.span_from(start)))
+            Ok(Expr::List(listing).spanned(ctx.span_from(start)))
         };
 
         let parenthesized = |ctx: &mut Self| {
             let lparen = ctx.symbol("(")?;
 
-            // Check for empty tuple
-            if ctx.symbol(")").is_ok() {
-                let rparen = &ctx.input[ctx.cursor - 1];
-                let listing = Listing {
-                    begin: lparen,
-                    indent: None,
-                    items: vec![],
-                    dedent: None,
-                    newline: None,
-                    end: rparen,
-                };
-                return Ok(Expr::Tuple { listing }.spanned(ctx.span_from(start)));
-            }
+            let empty_tuple = |ctx: &mut Self| {
+                let rparen = ctx.symbol(")")?;
+                Ok(Expr::Tuple(TupleKind::Unit(lparen, rparen)).spanned(ctx.span_from(start)))
+            };
 
-            let expr = ctx.expr()?;
-            let rparen = ctx.symbol(")")?;
-            Ok(Expr::Parenthesized {
-                lparen,
-                expr: expr.boxed(),
-                rparen,
-            }
-            .spanned(ctx.span_from(start)))
+            let parenthesized_expr = |ctx: &mut Self| {
+                let expr = ctx.open_expr()?;
+                let rparen = ctx.symbol(")")?;
+                Ok(Expr::Parenthesized {
+                    lparen,
+                    expr: expr.boxed(),
+                    rparen,
+                }
+                .spanned(ctx.span_from(start)))
+            };
+
+            first_of!(
+                ctx,
+                "parenthesized expression",
+                empty_tuple,
+                parenthesized_expr
+            )
         };
 
         first_of!(
@@ -391,32 +386,158 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         )
     }
 
-    fn binary_expr(&mut self, min_prec: u8) -> ParseResult<SExpr<'src, 'tok>> {
-        let mut lhs = self.unary_expr()?;
+    fn symbol_table<T: Clone>(
+        &mut self,
+        symbols: &[(&str, T)],
+    ) -> ParseResult<(&'tok SToken<'src>, T)> {
+        let start = self.cursor;
 
-        while let Some(op_token) = self.peek_token() {
-            let (prec, right_assoc) = self.binary_op_precedence(&op_token.token);
-            if prec < min_prec {
-                break;
+        let next: Option<&SToken<'src>> = self.next_token();
+
+        if let Some(found) = next {
+            if let Token::Symbol(sym) = found.token {
+                if let Some(matched) = symbols.iter().find(|(s, _)| *s == sym) {
+                    return Ok((found, matched.1.clone()));
+                }
             }
+        }
 
-            let op = self.next_token().unwrap();
-            let next_min_prec = if right_assoc { prec } else { prec + 1 };
-            let rhs = self.binary_expr(next_min_prec)?;
+        Err(self.set_error(
+            start,
+            ParseErr::expected("specific symbol", start..self.cursor),
+        ))
+    }
 
-            let span = lhs.span.start..rhs.span.end;
-            lhs = Expr::Binary {
-                lhs: lhs.boxed(),
-                op,
-                rhs: rhs.boxed(),
+    fn binary_op(
+        &mut self,
+        precedence: u8,
+    ) -> ParseResult<(Option<&'tok SToken<'src>>, &'tok SToken<'src>, BinaryOp)> {
+        match precedence {
+            7 => {
+                let op = self.symbol("|")?;
+                Ok((None, op, BinaryOp::Pipe))
             }
-            .spanned(Span::from(span));
+            6 => {
+                let op = self.keyword("or")?;
+                Ok((None, op, BinaryOp::Or))
+            }
+            5 => {
+                let op = self.keyword("and")?;
+                Ok((None, op, BinaryOp::And))
+            }
+            4 => {
+                let op = self.symbol("??")?;
+                Ok((None, op, BinaryOp::Coalesce))
+            }
+            3 => {
+                let res = first_of!(
+                    self,
+                    "binary3",
+                    |ctx| {
+                        let not = ctx.keyword("not")?;
+                        let in_ = ctx.keyword("in")?;
+                        Ok((Some(not), in_, BinaryOp::Nin))
+                    },
+                    |ctx| {
+                        let in_ = ctx.keyword("in")?;
+                        Ok((None, in_, BinaryOp::In))
+                    },
+                    |ctx| {
+                        let (tok, kind) = ctx.symbol_table(&[
+                            ("<", BinaryOp::Lt),
+                            ("<=", BinaryOp::Leq),
+                            (">", BinaryOp::Gt),
+                            (">=", BinaryOp::Geq),
+                            ("==", BinaryOp::Eq),
+                            ("!=", BinaryOp::Neq),
+                        ])?;
+
+                        Ok((None, tok, kind))
+                    }
+                )?;
+
+                Ok(res)
+            }
+            2 => self
+                .symbol_table(&[("+", BinaryOp::Add), ("-", BinaryOp::Sub)])
+                .map(|(tok, kind)| (None, tok, kind)),
+            1 => self
+                .symbol_table(&[
+                    ("*", BinaryOp::Mul),
+                    ("/", BinaryOp::Div),
+                    ("//", BinaryOp::FloorDiv),
+                    ("%", BinaryOp::Mod),
+                    ("@", BinaryOp::MatMul),
+                ])
+                .map(|(tok, kind)| (None, tok, kind)),
+            0 => {
+                let op = self.symbol("**")?;
+                Ok((None, op, BinaryOp::Exp))
+            }
+            _ => panic!(),
+        }
+    }
+
+    fn binary_expr(
+        &mut self,
+        prec: u8,
+        next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
+    ) -> ParseResult<SExpr<'src, 'tok>> {
+        let mut lhs = next_level(self)?;
+
+        loop {
+            let before_op = self.save();
+
+            match self.binary_op(prec) {
+                Ok((not_token, op, op_kind)) => {
+                    let is_right_associative = op.token == Token::Symbol("**");
+
+                    let rhs = if is_right_associative {
+                        first_of!(
+                            self,
+                            "right-assoc",
+                            |ctx| ctx.binary_expr(prec, next_level),
+                            |ctx| ctx.parse(next_level)
+                        )?
+                    } else {
+                        self.parse(next_level)?
+                    };
+
+                    let span = lhs.span.start..rhs.span.end;
+                    lhs = Expr::Binary {
+                        lhs: lhs.boxed(),
+                        not: not_token,
+                        op,
+                        op_kind,
+                        rhs: rhs.boxed(),
+                    }
+                    .spanned(Span::from(span));
+                }
+                Err(_) => {
+                    self.rewind(before_op);
+                    break;
+                }
+            }
         }
 
         Ok(lhs)
     }
 
-    fn unary_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
+    fn token_to_unary_op(token: &Token) -> Option<UnaryOp> {
+        match token {
+            Token::Symbol("+") => Some(UnaryOp::Pos),
+            Token::Symbol("-") => Some(UnaryOp::Neg),
+            Token::Symbol("~") => Some(UnaryOp::Inv),
+            Token::Symbol("@") => Some(UnaryOp::Bind),
+            Token::Kw("not") => Some(UnaryOp::Not),
+            _ => None,
+        }
+    }
+
+    fn unary_expr(
+        &mut self,
+        postfix: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
+    ) -> ParseResult<SExpr<'src, 'tok>> {
         let start = self.cursor;
 
         if let Some(token) = self.peek_token() {
@@ -429,20 +550,25 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     | Token::Kw("not")
             ) {
                 let op = self.next_token().unwrap();
-                let expr = self.unary_expr()?;
+                let op_kind = Self::token_to_unary_op(&op.token).unwrap();
+                let expr = self.unary_expr(postfix)?;
                 return Ok(Expr::Unary {
                     op,
+                    op_kind,
                     expr: expr.boxed(),
                 }
                 .spanned(self.span_from(start)));
             }
         }
 
-        self.postfix_expr()
+        self.parse(postfix)
     }
 
-    fn postfix_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
-        let mut expr = self.atom()?;
+    fn postfix_expr(
+        &mut self,
+        atom: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
+    ) -> ParseResult<SExpr<'src, 'tok>> {
+        let mut expr = self.parse(atom)?;
 
         enum Postfix<'src, 'tok> {
             Call {
@@ -480,7 +606,100 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
-        self.postfix_expr()
+        self.set_error(
+            self.cursor,
+            ParseErr::expected("expression", self.cursor..self.cursor + 1),
+        );
+
+        let atom = |ctx: &mut Self| ctx.atom();
+        let postfix = |ctx: &mut Self| ctx.postfix_expr(&atom);
+        let unary = |ctx: &mut Self| ctx.unary_expr(&postfix);
+        let binary0 = |ctx: &mut Self| ctx.binary_expr(0, &unary);
+        let binary1 = |ctx: &mut Self| ctx.binary_expr(1, &binary0);
+        let binary2 = |ctx: &mut Self| ctx.binary_expr(2, &binary1);
+        let binary3 = |ctx: &mut Self| ctx.binary_expr(3, &binary2);
+        let binary4 = |ctx: &mut Self| ctx.binary_expr(4, &binary3);
+        let binary5 = |ctx: &mut Self| ctx.binary_expr(5, &binary4);
+        let binary6 = |ctx: &mut Self| ctx.binary_expr(6, &binary5);
+        let binary7 = |ctx: &mut Self| ctx.binary_expr(7, &binary6);
+
+        match self.parse(binary7) {
+            Ok(expr) => Ok(expr),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn open_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
+        self.set_error(
+            self.cursor,
+            ParseErr::expected("open expression", self.cursor..self.cursor + 1),
+        );
+
+        let before_star = self.cursor;
+
+        let star = optional!(self, |ctx: &mut Self| ctx.symbol("*"))?;
+        let expr = self.expr()?;
+        let comma = optional!(self, |ctx: &mut Self| ctx.symbol(","))?;
+
+        if comma.is_none() {
+            if let Some(_) = star {
+                return Err(self.set_error(
+                    before_star,
+                    ParseErr::custom(
+                        "Spread is not allowed outside of tuples",
+                        before_star..before_star + 1,
+                    ),
+                ));
+            }
+
+            return Ok(expr);
+        }
+
+        let mut acc = vec![ListingItem {
+            item: match star {
+                Some(star) => ListItem::Spread {
+                    star,
+                    expr: expr.boxed(),
+                },
+                None => ListItem::Item { expr: expr.boxed() },
+            },
+            separator: comma,
+            newline: None,
+        }];
+
+        loop {
+            self.set_error(
+                self.cursor,
+                ParseErr::expected("expression or spread", self.cursor..self.cursor + 1),
+            );
+
+            let parsed = optional!(self, |ctx: &mut Self| {
+                let star = optional!(ctx, |ctx: &mut Self| ctx.symbol("*"))?;
+                let expr = ctx.expr()?.boxed();
+                let comma = optional!(ctx, |ctx: &mut Self| ctx.symbol(","))?;
+
+                Ok((star, expr, comma))
+            })?;
+
+            let Some((star, expr, comma)) = parsed else {
+                break;
+            };
+
+            acc.push(ListingItem {
+                item: match star {
+                    Some(star) => ListItem::Spread { star, expr },
+                    None => ListItem::Item { expr },
+                },
+                separator: comma,
+                newline: None,
+            });
+
+            if comma.is_none() {
+                break;
+            }
+        }
+
+        Ok(Expr::Tuple(TupleKind::Listing(acc)).spanned(self.span_from(before_star)))
     }
 
     fn call_item(&mut self) -> ParseResult<SCallItem<'src, 'tok>> {
@@ -503,7 +722,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         };
 
         let kwarg = |ctx: &mut Self| {
-            let name = ctx.ident()?;
+            let name = ctx.any_ident()?;
             let eq = ctx.symbol("=")?;
             let expr = ctx.expr()?;
             Ok(CallItem::Kwarg {
@@ -528,32 +747,10 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         )
     }
 
-    fn binary_op_precedence(&self, token: &Token<'src>) -> (u8, bool) {
-        match token {
-            Token::Symbol("**") => (8, true), // right associative
-            Token::Symbol("*") | Token::Symbol("/") | Token::Symbol("//") | Token::Symbol("%") => {
-                (7, false)
-            }
-            Token::Symbol("+") | Token::Symbol("-") => (6, false),
-            Token::Symbol("<")
-            | Token::Symbol("<=")
-            | Token::Symbol(">")
-            | Token::Symbol(">=")
-            | Token::Symbol("==")
-            | Token::Symbol("!=")
-            | Token::Symbol("===")
-            | Token::Symbol("!==") => (5, false),
-            Token::Kw("and") => (4, false),
-            Token::Kw("or") => (3, false),
-            Token::Symbol("|") => (2, false),
-            _ => (0, false),
-        }
-    }
-
     fn stmt(&mut self) -> ParseResult<SStmt<'src, 'tok>> {
         let start = self.cursor;
 
-        let expr = self.expr()?;
+        let expr = self.open_expr()?;
         let _newl = self.token(&Token::Eol)?;
 
         Ok(Stmt::Expr { expr: expr.boxed() }.spanned(self.span_from(start)))
@@ -604,7 +801,10 @@ pub fn parse_tokens<'src: 'tok, 'tok>(
     };
 
     match ctx.program() {
-        Ok(expr) => (Some(expr), vec![]),
+        Ok(expr) => {
+            println!("{}", expr.simple_fmt());
+            (Some(expr), vec![])
+        }
         Err(()) => {
             let err = ctx.take_error().1;
 

@@ -1,6 +1,7 @@
 use std::{borrow::Cow, fmt::Display};
 
-use crate::{cst::Spanned, lexer::Span};
+pub use crate::cst::{BinaryOp, Spannable, Spanned, UnaryOp};
+pub use crate::lexer::Span;
 
 pub type Indirect<T> = Box<T>;
 
@@ -28,45 +29,6 @@ impl<T> IntoIndirect<T> for T {
     fn indirect(self) -> Indirect<T> {
         Box::new(self)
     }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum BinaryOp {
-    Add,
-    Sub,
-    Mul,
-    MatMul,
-    Div,
-    Exp,
-
-    FloorDiv,
-    Mod,
-
-    In,
-    Nin,
-    Lt,
-    Leq,
-    Gt,
-    Geq,
-    Eq,
-    Neq,
-    Is,
-    Nis,
-
-    And,
-    Or,
-
-    Coalesce,
-    Pipe,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum UnaryOp {
-    Inv,
-    Pos,
-    Neg,
-    Not,
-    Bind,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]

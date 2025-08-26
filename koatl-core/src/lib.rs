@@ -263,7 +263,7 @@ pub fn parse_tl<'src>(src: &'src str) -> TlResult<SExpr<'src>> {
         Some(tokens) => tokens,
         None => return Err(errs),
     };
-    println!("tokens: {tokens}");
+    // println!("tokens: {tokens}");
 
     let (tl_cst, parser_errs) = parse_tokens(&src, &tokens);
     errs.extend(TlErrs(
@@ -281,8 +281,8 @@ pub fn parse_tl<'src>(src: &'src str) -> TlResult<SExpr<'src>> {
             .collect(),
     ));
 
-    let tl_cst = tl_cst.ok_or_else(|| errs)?;
-    println!("cst: {tl_cst:#?}");
+    let _tl_cst = tl_cst.ok_or_else(|| errs)?;
+    // println!("cst: {tl_cst:#?}");
 
-    panic!();
+    panic!("Parsed successfully");
 }
