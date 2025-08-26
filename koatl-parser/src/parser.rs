@@ -717,78 +717,77 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         &mut self,
         next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
     ) -> ParseResult<SExpr<'src, 'tok>> {
-        first_of!(
-            self,
-            "slice",
-            |ctx: &mut Self| {
-                let start_cursor = ctx.cursor;
+        let has_start = |ctx: &mut Self| {
+            let start_cursor = ctx.cursor;
 
-                let expr = ctx.parse(next_level)?;
-                let stop = optional!(ctx, |ctx: &mut Self| {
-                    let dots = ctx.symbol("..")?;
-                    let expr = optional!(ctx, |ctx: &mut Self| ctx.parse(next_level))?;
-                    Ok((dots, expr))
-                })?;
-                let step = optional!(ctx, |ctx: &mut Self| {
-                    let dots = ctx.symbol("..")?;
-                    let expr = optional!(ctx, |ctx: &mut Self| ctx.parse(next_level))?;
-                    Ok((dots, expr))
-                })?;
+            let expr = ctx.parse(next_level)?;
+            let stop = optional!(ctx, |ctx: &mut Self| {
+                let dots = ctx.symbol("..")?;
+                let expr = optional!(ctx, next_level)?;
+                Ok((dots, expr))
+            })?;
+            let step = optional!(ctx, |ctx: &mut Self| {
+                let dots = ctx.symbol("..")?;
+                let expr = optional!(ctx, next_level)?;
+                Ok((dots, expr))
+            })?;
 
-                if let Some((dots, stop)) = stop {
-                    if let Some((step_dots, step)) = step {
-                        return Ok(Expr::Slice {
-                            start: Some(expr.boxed()),
-                            dots,
-                            stop: stop.map(|x| x.boxed()),
-                            step_dots: Some(step_dots),
-                            step: step.map(|x| x.boxed()),
-                        }
-                        .spanned(ctx.span_from(start_cursor)));
-                    }
-
+            if let Some((dots, stop)) = stop {
+                if let Some((step_dots, step)) = step {
                     return Ok(Expr::Slice {
                         start: Some(expr.boxed()),
-                        dots,
-                        stop: stop.map(|x| x.boxed()),
-                        step_dots: None,
-                        step: None,
-                    }
-                    .spanned(ctx.span_from(start_cursor)));
-                }
-
-                return Ok(expr);
-            },
-            |ctx: &mut Self| {
-                let dots = ctx.symbol("..")?;
-                let stop = optional!(ctx, |ctx: &mut Self| ctx.parse(next_level))?;
-                let step = optional!(ctx, |ctx: &mut Self| {
-                    let dots = ctx.symbol("..")?;
-                    let expr = optional!(ctx, |ctx: &mut Self| ctx.parse(next_level))?;
-                    Ok((dots, expr))
-                })?;
-
-                if let Some((step_dots, step)) = step {
-                    Ok(Expr::Slice {
-                        start: None,
                         dots,
                         stop: stop.map(|x| x.boxed()),
                         step_dots: Some(step_dots),
                         step: step.map(|x| x.boxed()),
                     }
-                    .spanned(ctx.span_from(dots.span.start)))
-                } else {
-                    Ok(Expr::Slice {
-                        start: None,
-                        dots,
-                        stop: stop.map(|x| x.boxed()),
-                        step_dots: None,
-                        step: None,
-                    }
-                    .spanned(ctx.span_from(dots.span.start)))
+                    .spanned(ctx.span_from(start_cursor)));
                 }
+
+                return Ok(Expr::Slice {
+                    start: Some(expr.boxed()),
+                    dots,
+                    stop: stop.map(|x| x.boxed()),
+                    step_dots: None,
+                    step: None,
+                }
+                .spanned(ctx.span_from(start_cursor)));
             }
-        )
+
+            return Ok(expr);
+        };
+
+        let no_start = |ctx: &mut Self| {
+            let dots = ctx.symbol("..")?;
+            let stop = optional!(ctx, next_level)?;
+            let step = optional!(ctx, |ctx: &mut Self| {
+                let dots = ctx.symbol("..")?;
+                let expr = optional!(ctx, next_level)?;
+                Ok((dots, expr))
+            })?;
+
+            if let Some((step_dots, step)) = step {
+                Ok(Expr::Slice {
+                    start: None,
+                    dots,
+                    stop: stop.map(|x| x.boxed()),
+                    step_dots: Some(step_dots),
+                    step: step.map(|x| x.boxed()),
+                }
+                .spanned(ctx.span_from(dots.span.start)))
+            } else {
+                Ok(Expr::Slice {
+                    start: None,
+                    dots,
+                    stop: stop.map(|x| x.boxed()),
+                    step_dots: None,
+                    step: None,
+                }
+                .spanned(ctx.span_from(dots.span.start)))
+            }
+        };
+
+        first_of!(self, "slice", has_start, no_start)
     }
 
     fn expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
