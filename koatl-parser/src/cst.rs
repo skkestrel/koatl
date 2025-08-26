@@ -702,7 +702,12 @@ impl<'src, 'tok> SExprInner<'src, 'tok> {
                 ..
             } => {
                 let question_str = if question.is_some() { "?" } else { "" };
-                format!("{}{}::{}", expr.simple_fmt(), question_str, attr.simple_fmt())
+                format!(
+                    "{}{}::{}",
+                    expr.simple_fmt(),
+                    question_str,
+                    attr.simple_fmt()
+                )
             }
             Expr::ScopedAttribute {
                 expr,
@@ -720,7 +725,12 @@ impl<'src, 'tok> SExprInner<'src, 'tok> {
                 ..
             } => {
                 let question_str = if question.is_some() { "?" } else { "" };
-                format!("{}{}.{}", expr.simple_fmt(), question_str, attr.simple_fmt())
+                format!(
+                    "{}{}.{}",
+                    expr.simple_fmt(),
+                    question_str,
+                    attr.simple_fmt()
+                )
             }
             Expr::Block { stmts, .. } => {
                 let stmts_str = stmts
