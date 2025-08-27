@@ -1,4 +1,4 @@
-use crate::lexer::{SToken, Span, Token};
+use crate::lexer::{SToken, Span, Token, py_escape_fstr};
 
 pub trait Tree {
     type Expr: std::fmt::Debug + Clone;
@@ -63,7 +63,6 @@ pub struct ImportTree<TTree: Tree> {
 
 #[derive(Debug, Clone)]
 pub enum Stmt<TTree: Tree> {
-    // modifier, identifiers with commas
     Decl {
         modifier: TTree::Token,
         names: Vec<(TTree::Token, Option<TTree::Token>)>, // ident, comma
@@ -132,8 +131,7 @@ pub enum Stmt<TTree: Tree> {
 #[derive(Debug, Clone)]
 pub struct FmtExpr<TTree: Tree> {
     pub expr: TTree::Expr,
-    pub excl: Option<TTree::Token>,
-    pub fmt: Option<TTree::Expr>,
+    pub fmt: Option<(TTree::Token, TTree::Expr)>,
 }
 
 #[derive(Debug, Clone)]
@@ -148,17 +146,32 @@ pub enum ListItem<TTree: Tree> {
 }
 
 #[derive(Debug, Clone)]
+pub enum MappingKey<TTree: Tree> {
+    Ident {
+        token: TTree::Token,
+    },
+    Literal {
+        token: TTree::Token,
+    },
+    Expr {
+        lparen: TTree::Token,
+        key: TTree::Expr,
+        rparen: TTree::Token,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub enum MappingItem<TTree: Tree> {
     Ident {
         ident: TTree::Token,
     },
     Item {
-        key: TTree::Expr,
+        key: MappingKey<TTree>,
         colon: TTree::Token,
         value: TTree::Expr,
     },
     Spread {
-        stars: TTree::Token, // **
+        stars: TTree::Token,
         expr: TTree::Expr,
     },
 }
@@ -354,7 +367,9 @@ pub enum Expr<TTree: Tree> {
         scrutinee: TTree::Expr,
         match_kw: TTree::Token,
         colon: Option<TTree::Token>,
+        indent: TTree::Token,
         cases: Vec<MatchCase<TTree>>,
+        dedent: TTree::Token,
     },
 
     Matches {
@@ -436,8 +451,8 @@ pub enum Expr<TTree: Tree> {
     },
 
     Fstr {
-        begin: Spanned<String>,
-        parts: Vec<(FmtExpr<TTree>, Spanned<String>)>,
+        begin: TTree::Token,
+        parts: Vec<(FmtExpr<TTree>, TTree::Token)>,
     },
 
     // these are removed during desugaring
@@ -450,12 +465,13 @@ pub enum Expr<TTree: Tree> {
         token: TTree::Token,
     },
 
-    // Grouping expressions
     Parenthesized {
         lparen: TTree::Token,
         expr: TTree::Expr,
         rparen: TTree::Token,
     },
+
+    Error,
 }
 
 // Patterns
@@ -908,13 +924,19 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
             Expr::ParenthesizedFn { args, body, .. } => {
                 format!("{} => {}", args.simple_fmt(), body.simple_fmt())
             }
-            Expr::Fstr { parts, .. } => {
-                let parts_str = parts
-                    .iter()
-                    .map(|(fmt_expr, _)| fmt_expr.simple_fmt())
-                    .collect::<Vec<_>>()
-                    .join("");
-                format!("f\"{}\"", parts_str)
+            Expr::Fstr { begin, parts } => {
+                if parts.is_empty() {
+                    format!("f\"{}\"", begin.token.simple_fmt())
+                } else {
+                    let parts_str = parts
+                        .iter()
+                        .map(|(fmt_expr, cont)| {
+                            format!("{{{}}}{}", fmt_expr.simple_fmt(), cont.simple_fmt())
+                        })
+                        .collect::<Vec<_>>()
+                        .join("");
+                    format!("f\"{}{}\"", begin.token.simple_fmt(), parts_str)
+                }
             }
             Expr::Decorated {
                 expr, decorator, ..
@@ -1091,6 +1113,16 @@ impl<'src, 'tok> SimpleFmt for CallItem<STree<'src, 'tok>> {
     }
 }
 
+impl<'src, 'tok> SimpleFmt for MappingKey<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
+        match self {
+            MappingKey::Ident { token } => token.simple_fmt(),
+            MappingKey::Literal { token } => token.simple_fmt(),
+            MappingKey::Expr { key, .. } => format!("({})", key.simple_fmt()),
+        }
+    }
+}
+
 impl<'src, 'tok> SimpleFmt for MappingItem<STree<'src, 'tok>> {
     fn simple_fmt(&self) -> String {
         match self {
@@ -1145,10 +1177,8 @@ impl<'src, 'tok> SimpleFmt for ArgDefItem<STree<'src, 'tok>> {
 impl<'src, 'tok> SimpleFmt for FmtExpr<STree<'src, 'tok>> {
     fn simple_fmt(&self) -> String {
         let expr_str = self.expr.simple_fmt();
-        if let Some(fmt) = &self.fmt {
-            format!("{}:{}", expr_str, fmt.simple_fmt())
-        } else if self.excl.is_some() {
-            format!("{}!", expr_str)
+        if let Some((_, fmt)) = &self.fmt {
+            format!("{}!{}", expr_str, fmt.simple_fmt())
         } else {
             expr_str
         }
@@ -1278,6 +1308,8 @@ impl<'src> SimpleFmt for Token<'src> {
             Token::None => "None".to_string(),
             Token::Symbol(s) => s.to_string(),
             Token::Kw(s) => s.to_string(),
+            Token::FstrBegin(s) => py_escape_fstr(s),
+            Token::FstrContinue(s) => py_escape_fstr(s),
             _ => format!("{:?}", self),
         }
     }

@@ -96,9 +96,10 @@ macro_rules! optional {
     }};
 }
 
-enum BinaryExprPrecLevel {
-    BelowFn,
+enum ExprPrec {
+    CaseGuard,
     All,
+    Tryable,
 }
 
 impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
@@ -391,6 +392,12 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let before_star = self.cursor;
 
         let item = self.pattern_sequence_item()?;
+
+        self.set_error(
+            self.cursor,
+            ParseErr::unexpected(self.cursor..self.cursor + 1),
+        );
+
         let comma = optional!(self, |ctx: &mut Self| ctx.symbol(","))?;
 
         if comma.is_none() {
@@ -667,6 +674,10 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             Ok(Expr::List { listing }.spanned(ctx.span_from(start)))
         };
 
+        let mapping = Self::mapping_expr;
+
+        let fstr = Self::fstr_expr;
+
         let parenthesized = |ctx: &mut Self| {
             let lparen = ctx.symbol("(")?;
 
@@ -698,9 +709,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             )
         };
 
-        let checked_expr = |ctx: &mut Self| ctx.checked_expr();
+        let checked_expr = Self::checked_expr;
 
-        let class_expr = |ctx: &mut Self| ctx.class_expr();
+        let class_expr = Self::class_expr;
 
         first_of!(
             self,
@@ -711,6 +722,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             ident_expr,
             placeholder,
             list,
+            mapping,
+            fstr,
             parenthesized
         )
     }
@@ -719,7 +732,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let start = self.cursor;
 
         let try_kw = self.keyword("try")?;
-        let expr = self.atom()?;
+        let expr = self.expr_with_prec(ExprPrec::Tryable)?;
         let except_clause = optional!(self, |ctx: &mut Self| {
             let except_kw = ctx.keyword("except")?;
             let pattern = optional!(ctx, |ctx: &mut Self| ctx.atom_pattern())?;
@@ -760,6 +773,116 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             body: body.boxed(),
         }
         .spanned(self.span_from(start)))
+    }
+
+    fn mapping_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+        let listing = self.listing("{", "}", Token::Symbol(","), |ctx| {
+            first_of!(
+                ctx,
+                "mapping item",
+                |ctx| {
+                    let stars = ctx.symbol("**")?;
+                    let expr = ctx.expr()?;
+                    Ok(MappingItem::Spread {
+                        stars,
+                        expr: expr.boxed(),
+                    })
+                },
+                |ctx| {
+                    let key = first_of!(
+                        ctx,
+                        "mapping key",
+                        |ctx| {
+                            let name = ctx.any_ident()?;
+                            Ok(MappingKey::Ident { token: name })
+                        },
+                        |ctx| {
+                            let token = ctx.literal()?;
+                            Ok(MappingKey::Literal { token })
+                        },
+                        |ctx| {
+                            let lparen = ctx.symbol("(")?;
+                            let key = ctx.expr()?;
+                            let rparen = ctx.symbol(")")?;
+                            Ok(MappingKey::Expr {
+                                lparen,
+                                key: key.boxed(),
+                                rparen,
+                            })
+                        }
+                    )?;
+                    let colon = ctx.symbol(":")?;
+                    let value = ctx.expr()?;
+                    Ok(MappingItem::Item {
+                        key,
+                        colon,
+                        value: value.boxed(),
+                    })
+                },
+                |ctx| {
+                    let ident = ctx.any_ident()?;
+                    Ok(MappingItem::Ident { ident })
+                }
+            )
+        })?;
+        Ok(Expr::Mapping { listing }.spanned(self.span_from(start)))
+    }
+
+    fn fstr_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
+        let begin = 'block: {
+            let next = self.next_token();
+            if let Some(token) = next {
+                if let Token::FstrBegin(_) = token.token {
+                    break 'block token;
+                }
+            }
+
+            return Err(self.set_error(
+                start,
+                ParseErr::expected("f-string begin", start..self.cursor),
+            ));
+        };
+
+        let mut parts = Vec::new();
+
+        loop {
+            let Some(expr) = optional!(self, |ctx| ctx.generic_block(false))? else {
+                break;
+            };
+
+            // Optional format specification after !
+            let fmt = optional!(self, |ctx: &mut Self| {
+                let excl = ctx.symbol("!")?;
+                let fmt_expr = ctx.expr()?.boxed();
+                Ok((excl, fmt_expr))
+            })?;
+
+            let fmt_expr = FmtExpr {
+                expr: expr.boxed(),
+                fmt,
+            };
+
+            let cont = 'block: {
+                let next = self.next_token();
+                if let Some(token) = next {
+                    if let Token::FstrContinue(_) = token.token {
+                        break 'block token;
+                    }
+                }
+
+                return Err(self.set_error(
+                    start,
+                    ParseErr::expected("f-string continue", start..self.cursor),
+                ));
+            };
+
+            parts.push((fmt_expr, cont));
+        }
+
+        Ok(Expr::Fstr { begin, parts }.spanned(self.span_from(start)))
     }
 
     fn symbol_table<T: Clone>(
@@ -808,7 +931,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             7 => {
                 let res = first_of!(
                     self,
-                    "binary3",
+                    "binary op",
                     |ctx| {
                         let not = ctx.keyword("not")?;
                         let in_ = ctx.keyword("in")?;
@@ -983,6 +1106,10 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 dot: &'tok SToken<'src>,
                 attr: &'tok SToken<'src>,
             },
+            Decorator {
+                ampersand: &'tok SToken<'src>,
+                decorator: SExpr<'src, 'tok>,
+            },
         }
 
         loop {
@@ -1018,6 +1145,15 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 let double_colon = ctx.symbol("::")?;
                 let attr = ctx.any_ident()?;
                 Ok(Postfix::RawAttribute { double_colon, attr })
+            };
+
+            let decorator = |ctx: &mut Self| {
+                let ampersand = ctx.symbol("&")?;
+                let decorator = ctx.expr()?;
+                Ok(Postfix::Decorator {
+                    ampersand,
+                    decorator,
+                })
             };
 
             let dot_attribute = |ctx: &mut Self| {
@@ -1056,6 +1192,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 call,
                 subscript,
                 raw_attribute,
+                decorator,
                 dot_attribute
             ) {
                 Ok(item) => match item {
@@ -1107,6 +1244,26 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         attr,
                     }
                     .spanned(self.span_from(start)),
+                    Postfix::Decorator {
+                        ampersand,
+                        decorator,
+                    } => {
+                        if question.is_some() {
+                            return Err(self.set_error(
+                                start,
+                                ParseErr::custom(
+                                    "Decorator cannot be used with ? operator",
+                                    start..self.cursor,
+                                ),
+                            ));
+                        }
+                        Expr::Decorated {
+                            expr: expr.boxed(),
+                            ampersand,
+                            decorator: decorator.boxed(),
+                        }
+                        .spanned(self.span_from(start))
+                    }
                 },
                 Err(_) => {
                     break;
@@ -1203,18 +1360,22 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let mut expr = next_level(self)?;
 
         let parsed = optional!(self, |ctx: &mut Self| {
-            let match_kw = ctx.keyword("match")?;
+            let match_kw = ctx.ident("match")?;
             let colon = optional!(ctx, |ctx: &mut Self| ctx.symbol(":"))?;
+            let indent = ctx.token(&Token::Indent)?;
             let cases = ctx.match_cases()?;
-            Ok((match_kw, colon, cases))
+            let dedent = ctx.token(&Token::Dedent)?;
+            Ok((match_kw, colon, indent, cases, dedent))
         })?;
 
-        if let Some((match_kw, colon, cases)) = parsed {
+        if let Some((match_kw, colon, indent, cases, dedent)) = parsed {
             expr = Expr::Match {
                 scrutinee: expr.boxed(),
                 match_kw,
                 colon,
+                indent,
                 cases,
+                dedent,
             }
             .spanned(self.span_from(start));
         }
@@ -1331,7 +1492,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         }
     }
 
-    fn expr_with_prec(&mut self, level: BinaryExprPrecLevel) -> ParseResult<SExpr<'src, 'tok>> {
+    fn expr_with_prec(&mut self, level: ExprPrec) -> ParseResult<SExpr<'src, 'tok>> {
         self.set_error(
             self.cursor,
             ParseErr::expected("expression", self.cursor..self.cursor + 1),
@@ -1351,22 +1512,25 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let binary7 = |ctx: &mut Self| ctx.binary_expr(7, &binary6);
         let binary8 = |ctx: &mut Self| ctx.binary_expr(8, &binary7);
         let slice = |ctx: &mut Self| ctx.slice_expr(&binary8);
-        let binary9 = |ctx: &mut Self| ctx.binary_expr(9, &slice);
+        let matches = |ctx: &mut Self| ctx.matches_expr(&slice);
+        let binary9 = |ctx: &mut Self| ctx.binary_expr(9, &matches);
         let binary10 = |ctx: &mut Self| ctx.binary_expr(10, &binary9);
         let memo = |ctx: &mut Self| ctx.memo_expr(&binary10);
         let with_ = |ctx: &mut Self| ctx.with_expr(&memo);
         let if_ = |ctx: &mut Self| ctx.if_expr(&with_);
         let match_ = |ctx: &mut Self| ctx.match_expr(&if_);
-        let binary11 = |ctx: &mut Self| ctx.binary_expr(11, &match_);
+        let function = |ctx: &mut Self| ctx.function_expr(&match_);
+        let binary11 = |ctx: &mut Self| ctx.binary_expr(11, &function);
 
         match level {
-            BinaryExprPrecLevel::All => binary11(self),
-            BinaryExprPrecLevel::BelowFn => if_(self),
+            ExprPrec::All => binary11(self),
+            ExprPrec::CaseGuard => if_(self),
+            ExprPrec::Tryable => binary7(self),
         }
     }
 
     fn expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
-        self.expr_with_prec(BinaryExprPrecLevel::All)
+        self.expr_with_prec(ExprPrec::All)
     }
 
     fn match_cases(&mut self) -> ParseResult<Vec<MatchCase<STree<'src, 'tok>>>> {
@@ -1379,7 +1543,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 }
             }
 
-            let pattern = self.open_pattern()?;
+            let pattern = self.as_pattern()?;
 
             let guard = optional!(self, |ctx: &mut Self| {
                 let if_kw = ctx.keyword("if")?;
@@ -1388,6 +1552,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             })?;
 
             let (arrow, body) = self.arrow_block()?;
+            self.token(&Token::Eol)?;
 
             cases.push(MatchCase {
                 pattern: pattern.boxed(),
@@ -1489,6 +1654,95 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         }
 
         Ok(expr)
+    }
+
+    fn matches_expr(
+        &mut self,
+        next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
+    ) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+        let mut expr = next_level(self)?;
+
+        let parsed = optional!(self, |ctx: &mut Self| {
+            let matches_kw = ctx.ident("matches")?;
+            let not_kw = optional!(ctx, |ctx: &mut Self| ctx.keyword("not"))?;
+            let pattern = ctx.as_pattern()?;
+            Ok((matches_kw, not_kw, pattern))
+        })?;
+
+        if let Some((matches_kw, not_kw, pattern)) = parsed {
+            expr = Expr::Matches {
+                lhs: expr.boxed(),
+                matches_kw,
+                not_kw,
+                pattern: pattern.boxed(),
+            }
+            .spanned(self.span_from(start));
+        }
+
+        Ok(expr)
+    }
+
+    fn function_expr(
+        &mut self,
+        next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
+    ) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
+        let parenthesized_fn = |ctx: &mut Self| {
+            let args = ctx.listing("(", ")", Token::Symbol(","), |ctx| {
+                first_of!(
+                    ctx,
+                    "argument definition",
+                    |ctx| {
+                        let stars = ctx.symbol("**")?;
+                        let name = ctx.any_ident()?;
+                        Ok(ArgDefItem::KwargSpread { stars, name })
+                    },
+                    |ctx| {
+                        let star = ctx.symbol("*")?;
+                        let name = ctx.any_ident()?;
+                        Ok(ArgDefItem::ArgSpread { star, name })
+                    },
+                    |ctx| {
+                        let pattern = ctx.atom_pattern()?;
+                        let default = optional!(ctx, |ctx: &mut Self| {
+                            let eq = ctx.symbol("=")?;
+                            let expr = ctx.expr()?;
+                            Ok((eq, expr.boxed()))
+                        })?;
+                        Ok(ArgDefItem::Arg {
+                            pattern: pattern.boxed(),
+                            default,
+                        })
+                    }
+                )
+            })?;
+            let arrow = ctx.symbol("=>")?;
+            let body = ctx.generic_block(false)?;
+
+            Ok(Expr::ParenthesizedFn {
+                args,
+                arrow,
+                body: body.boxed(),
+            }
+            .spanned(ctx.span_from(start)))
+        };
+
+        let unary_fn = |ctx: &mut Self| {
+            let pattern = ctx.atom_pattern()?;
+            let arrow = ctx.symbol("=>")?;
+            let body = ctx.generic_block(false)?;
+
+            Ok(Expr::Fn {
+                arg: pattern.boxed(),
+                arrow,
+                body: body.boxed(),
+            }
+            .spanned(ctx.span_from(start)))
+        };
+
+        first_of!(self, "function", parenthesized_fn, unary_fn, next_level)
     }
 
     fn open_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
@@ -1614,6 +1868,112 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
     // Statements
 
+    fn import_stmt(&mut self) -> ParseResult<SStmtInner<'src, 'tok>> {
+        let export = optional!(self, |ctx: &mut Self| ctx.keyword("export"))?;
+        let import = self.keyword("import")?;
+        let tree = self.import_tree()?;
+
+        Ok(Stmt::Import {
+            export,
+            import,
+            tree,
+        })
+    }
+
+    fn import_tree(&mut self) -> ParseResult<ImportTree<STree<'src, 'tok>>> {
+        // Parse dots (relative imports)
+        let mut dots = Vec::new();
+        loop {
+            if let Some(dot) = optional!(self, |ctx: &mut Self| ctx.symbol("."))? {
+                dots.push(dot);
+            } else if let Some(double_dot) = optional!(self, |ctx: &mut Self| ctx.symbol(".."))? {
+                dots.push(double_dot);
+            } else {
+                break;
+            }
+        }
+
+        // Parse trunk (module path)
+        let mut trunk = Vec::new();
+        while let Some(ident) = optional!(self, |ctx: &mut Self| ctx.any_ident())? {
+            let dot = optional!(self, |ctx: &mut Self| ctx.symbol("."))?;
+            if let Some(dot) = dot {
+                trunk.push((ident, dot));
+            } else {
+                // Last identifier without dot
+                trunk.push((ident, ident)); // Reuse ident as placeholder for missing dot
+                break;
+            }
+        }
+
+        // Parse leaf
+        let leaf_start = self.cursor;
+        let leaf = first_of!(
+            self,
+            "import leaf",
+            |ctx| {
+                let listing = ctx.listing("(", ")", Token::Symbol(","), |ctx| ctx.import_tree())?;
+                Ok(ImportLeaf::Multi(listing))
+            },
+            |ctx| {
+                let name = ctx.any_ident()?;
+                let alias = optional!(ctx, |ctx: &mut Self| {
+                    let as_kw = ctx.keyword("as")?;
+                    let alias_name = ctx.any_ident()?;
+                    Ok((as_kw, alias_name))
+                })?;
+                Ok(ImportLeaf::Single { name, alias })
+            },
+            |ctx| {
+                let star = ctx.symbol("*")?;
+                Ok(ImportLeaf::Star { star })
+            },
+            |ctx| {
+                let alias = optional!(ctx, |ctx: &mut Self| {
+                    let as_kw = ctx.keyword("as")?;
+                    let alias_name = ctx.any_ident()?;
+                    Ok((as_kw, alias_name))
+                })?;
+                Ok(ImportLeaf::This { alias })
+            }
+        )?;
+
+        Ok(ImportTree {
+            dots,
+            trunk,
+            leaf: leaf.spanned(self.span_from(leaf_start)),
+        })
+    }
+
+    fn decl_modifier(&mut self) -> ParseResult<&'tok SToken<'src>> {
+        first_of!(
+            self,
+            "declaration modifier",
+            |ctx| ctx.keyword("export"),
+            |ctx| ctx.keyword("global"),
+            |ctx| ctx.keyword("let"),
+            |ctx| ctx.keyword("const")
+        )
+    }
+
+    fn decl_stmt(&mut self) -> ParseResult<SStmtInner<'src, 'tok>> {
+        let modifier = self.decl_modifier()?;
+
+        let mut names = Vec::new();
+        let first_name = self.any_ident()?;
+        names.push((first_name, None));
+
+        while let Some(comma) = optional!(self, |ctx: &mut Self| ctx.symbol(","))? {
+            let name = self.any_ident()?;
+            if let Some(last) = names.last_mut() {
+                last.1 = Some(comma);
+            }
+            names.push((name, None));
+        }
+
+        Ok(Stmt::Decl { modifier, names })
+    }
+
     fn stmt(&mut self, inline: bool) -> ParseResult<SStmt<'src, 'tok>> {
         let start = self.cursor;
 
@@ -1640,12 +2000,13 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         };
 
         let pattern_assign = |ctx: &mut Self| {
+            let modifier = optional!(ctx, Self::decl_modifier)?;
             let pat = ctx.parse(&pattern)?;
             let eq = ctx.symbol("=")?;
             let expr = ctx.parse(&expr)?;
 
             Ok(Stmt::PatternAssign {
-                modifier: None,
+                modifier,
                 lhs: pat.boxed(),
                 eq,
                 rhs: expr.boxed(),
@@ -1802,6 +2163,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             "statement",
             pattern_debug,
             pattern_assign,
+            Self::import_stmt,
+            Self::decl_stmt,
             assign,
             expr_stmt,
             while_stmt,
@@ -1889,6 +2252,13 @@ pub fn parse_tokens<'src: 'tok, 'tok>(
     src: &'src str,
     tokens: &'tok TokenList<'src>,
 ) -> (Option<SExpr<'src, 'tok>>, Vec<TriviaRich<'tok, 'src>>) {
+    if tokens.0.is_empty() {
+        return (
+            None,
+            vec![TriviaRich::custom((0..0).into(), "No tokens to parse")],
+        );
+    }
+
     let mut ctx = ParseCtx {
         src,
         input: &tokens.0,
@@ -1897,7 +2267,7 @@ pub fn parse_tokens<'src: 'tok, 'tok>(
         cur_error: None,
     };
 
-    println!("{}", tokens);
+    println!("tokens: {}", tokens);
 
     let expr = match ctx.program() {
         Ok(expr) => {
