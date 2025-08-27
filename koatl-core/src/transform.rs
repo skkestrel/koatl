@@ -828,12 +828,9 @@ fn transform_match_expr<'src, 'ast>(
             ));
         }
 
-        let (pattern, default) = if let Some(pattern) = &case.pattern {
-            let info = ctx.pattern_info(pattern)?;
-            (pre.bind(pattern.transform(ctx, info)?), info.default)
-        } else {
-            ((PyPattern::As(None, None), *span).into(), true)
-        };
+        let info = ctx.pattern_info(&case.pattern)?;
+        let pattern = pre.bind(case.pattern.transform(ctx, info)?);
+        let default = info.default;
 
         if case.guard.is_none() {
             if default {

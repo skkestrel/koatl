@@ -4,38 +4,534 @@ use crate::ast;
 use crate::ast::{Indirect, IntoIndirect};
 use koatl_parser::cst::{Spannable, Spanned};
 use koatl_parser::lexer::SToken;
-use koatl_parser::{Token, cst};
+use koatl_parser::{Token, TokenList, cst};
 
 trait STokenExt<'src> {
-    fn lift(&self) -> Spanned<ast::Ident<'src>>;
+    fn lift_as_ident(&self) -> Spanned<ast::Ident<'src>>;
+    fn lift_as_literal(&self) -> Spanned<ast::Literal<'src>>;
+    fn lift_as_decl_modifier(&self) -> ast::DeclType;
 }
 
 impl<'src> STokenExt<'src> for SToken<'src> {
-    fn lift(&self) -> Spanned<ast::Ident<'src>> {
+    fn lift_as_ident(&self) -> Spanned<ast::Ident<'src>> {
         match &self.token {
-            Token::Ident(s) => return ast::Ident(Cow::Borrowed(s)).spanned(self.span),
-            _ => panic!(),
+            Token::Ident(s) => ast::Ident(Cow::Borrowed(s)).spanned(self.span),
+            _ => panic!("Expected identifier token, got {:?}", self.token),
         }
     }
-}
 
-trait SExprExt<'src> {
-    fn lift(&self) -> Indirect<ast::SExpr<'src>>;
-}
-
-impl<'src, 'tok> SExprExt<'src> for cst::SExpr<'src, 'tok> {
-    fn lift(&self) -> Indirect<ast::SExpr<'src>> {
-        match &self.value {
-            cst::Expr::Attribute { expr, attr, .. } => {
-                ast::Expr::Attribute(expr.lift(), attr.lift())
-            }
-            _ => panic!(),
+    fn lift_as_literal(&self) -> Spanned<ast::Literal<'src>> {
+        match &self.token {
+            Token::Num(n) => ast::Literal::Num(Cow::Borrowed(n)),
+            Token::Str(s) => ast::Literal::Str(s.clone().into()),
+            Token::Bool(b) => ast::Literal::Bool(*b),
+            Token::None => ast::Literal::None,
+            _ => panic!("Expected literal token, got {:?}", self.token),
         }
         .spanned(self.span)
-        .indirect()
+    }
+
+    fn lift_as_decl_modifier(&self) -> ast::DeclType {
+        match &self.token {
+            Token::Kw(k) => match k.as_ref() {
+                "let" => ast::DeclType::Let,
+                "const" => ast::DeclType::Const,
+                "global" => ast::DeclType::Global,
+                "export" => ast::DeclType::Export,
+                _ => panic!("Unknown declaration modifier: {}", k),
+            },
+            _ => panic!("Expected keyword token for declaration modifier"),
+        }
     }
 }
 
-pub fn lift_cst<'src, 'tok>(cst: &cst::SExpr<'src, 'tok>) -> Indirect<ast::SExpr<'src>> {
+trait Lift<T> {
+    fn lift(&self) -> T;
+}
+
+impl<'src, 'tok, T, U> Lift<Vec<U>> for cst::SListing<'src, 'tok, T>
+where
+    T: Lift<U>,
+{
+    fn lift(&self) -> Vec<U> {
+        match self {
+            cst::Listing::Block { items, .. }
+            | cst::Listing::Inline { items, .. }
+            | cst::Listing::Open { items } => items.iter().map(|item| item.item.lift()).collect(),
+        }
+    }
+}
+
+impl<'src, 'tok> Lift<ast::ListItem<ast::STree<'src>>> for cst::ListItem<cst::STree<'src, 'tok>> {
+    fn lift(&self) -> ast::ListItem<ast::STree<'src>> {
+        match self {
+            cst::ListItem::Item { expr } => ast::ListItem::Item(expr.lift()),
+            cst::ListItem::Spread { expr, .. } => ast::ListItem::Spread(expr.lift()),
+        }
+    }
+}
+
+impl<'src, 'tok> Lift<ast::CallItem<'src, ast::STree<'src>>>
+    for cst::CallItem<cst::STree<'src, 'tok>>
+{
+    fn lift(&self) -> ast::CallItem<'src, ast::STree<'src>> {
+        match self {
+            cst::CallItem::Arg { expr } => ast::CallItem::Arg(expr.lift()),
+            cst::CallItem::Kwarg { name, expr, .. } => {
+                ast::CallItem::Kwarg(name.lift_as_ident(), expr.lift())
+            }
+            cst::CallItem::ArgSpread { expr, .. } => ast::CallItem::ArgSpread(expr.lift()),
+            cst::CallItem::KwargSpread { expr, .. } => ast::CallItem::KwargSpread(expr.lift()),
+        }
+    }
+}
+
+impl<'src, 'tok> Lift<ast::MappingItem<ast::STree<'src>>>
+    for cst::MappingItem<cst::STree<'src, 'tok>>
+{
+    fn lift(&self) -> ast::MappingItem<ast::STree<'src>> {
+        match self {
+            cst::MappingItem::Ident { ident } => ast::MappingItem::Ident(
+                ast::Expr::Ident(ident.lift_as_ident())
+                    .spanned(ident.span)
+                    .indirect(),
+            ),
+            cst::MappingItem::Item { key, value, .. } => {
+                let key_expr = match key {
+                    cst::MappingKey::Ident { token } => ast::Expr::Ident(token.lift_as_ident())
+                        .spanned(token.span)
+                        .indirect(),
+                    cst::MappingKey::Literal { token } => {
+                        ast::Expr::Literal(token.lift_as_literal())
+                            .spanned(token.span)
+                            .indirect()
+                    }
+                    cst::MappingKey::Expr { key, .. } => key.lift(),
+                };
+                ast::MappingItem::Item(key_expr, value.lift())
+            }
+            cst::MappingItem::Spread { expr, .. } => ast::MappingItem::Spread(expr.lift()),
+        }
+    }
+}
+
+impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
+    fn lift(&self) -> Indirect<ast::SExpr<'src>> {
+        let expr = match &self.value {
+            cst::Expr::Literal { token } => ast::Expr::Literal(token.lift_as_literal()),
+            cst::Expr::Ident { token } => ast::Expr::Ident(token.lift_as_ident()),
+            cst::Expr::Placeholder { .. } => ast::Expr::Placeholder,
+            cst::Expr::Binary {
+                lhs, rhs, op_kind, ..
+            } => ast::Expr::Binary(*op_kind, lhs.lift(), rhs.lift()),
+            cst::Expr::Unary { op_kind, expr, .. } => ast::Expr::Unary(*op_kind, expr.lift()),
+            cst::Expr::Call { expr, args, .. } => ast::Expr::Call(expr.lift(), args.lift()),
+            cst::Expr::List { listing } => ast::Expr::List(listing.lift()),
+            cst::Expr::Tuple { kind } => {
+                let items = match kind {
+                    cst::TupleKind::Unit(..) => vec![],
+                    cst::TupleKind::Listing(items) => {
+                        items.iter().map(|item| item.item.lift()).collect()
+                    }
+                };
+                ast::Expr::Tuple(items)
+            }
+            cst::Expr::If {
+                cond,
+                then,
+                else_clause,
+                ..
+            } => {
+                let else_expr = else_clause.as_ref().map(|(_, expr)| expr.lift());
+                ast::Expr::If(cond.lift(), then.lift(), else_expr)
+            }
+            cst::Expr::Parenthesized { expr, .. } => return expr.lift(),
+            cst::Expr::Subscript { expr, indices, .. } => {
+                ast::Expr::Subscript(expr.lift(), indices.lift())
+            }
+            cst::Expr::Attribute { expr, attr, .. } => {
+                ast::Expr::Attribute(expr.lift(), attr.lift_as_ident())
+            }
+            cst::Expr::Slice {
+                start, stop, step, ..
+            } => ast::Expr::Slice(
+                start.as_ref().map(|e| e.lift()),
+                stop.as_ref().map(|e| e.lift()),
+                step.as_ref().map(|e| e.lift()),
+            ),
+            cst::Expr::Block { kind } => {
+                let stmts = match kind {
+                    cst::BlockKind::Regular { body, .. } => {
+                        body.iter().map(|stmt| stmt.lift().indirect()).collect()
+                    }
+                    cst::BlockKind::Inline { stmt, .. } => vec![stmt.lift().indirect()],
+                    cst::BlockKind::Bare { body, .. } => {
+                        body.iter().map(|stmt| stmt.lift().indirect()).collect()
+                    }
+                };
+                ast::Expr::Block(stmts)
+            }
+            cst::Expr::Mapping { listing } => ast::Expr::Mapping(listing.lift()),
+            cst::Expr::Await { expr, .. } => ast::Expr::Await(expr.lift()),
+            cst::Expr::Yield { expr, .. } => ast::Expr::Yield(expr.lift()),
+            cst::Expr::YieldFrom { expr, .. } => ast::Expr::YieldFrom(expr.lift()),
+            cst::Expr::Match {
+                scrutinee, cases, ..
+            } => {
+                let cases_list = cases.iter().map(|case| case.lift()).collect();
+                ast::Expr::Match(scrutinee.lift(), cases_list)
+            }
+            cst::Expr::Matches { lhs, pattern, .. } => {
+                ast::Expr::Matches(lhs.lift(), pattern.lift())
+            }
+            cst::Expr::Fn { arg, body, .. } => {
+                ast::Expr::Fn(vec![ast::ArgDefItem::Arg(arg.lift(), None)], body.lift())
+            }
+            cst::Expr::ParenthesizedFn { args, body, .. } => {
+                let args_list = match args {
+                    cst::Listing::Block { items, .. } | cst::Listing::Inline { items, .. } => {
+                        items.iter().map(|item| item.item.lift()).collect()
+                    }
+                    cst::Listing::Open { items } => {
+                        items.iter().map(|item| item.item.lift()).collect()
+                    }
+                };
+                ast::Expr::Fn(args_list, body.lift())
+            }
+            cst::Expr::Fstr { begin, parts } => {
+                let begin_str = match &begin.token {
+                    Token::FstrBegin(s) => s.clone(),
+                    _ => panic!("Expected FstrBegin token"),
+                };
+                let fmt_parts = parts
+                    .iter()
+                    .map(|(fmt_expr, cont)| {
+                        let cont_str = match &cont.token {
+                            Token::FstrContinue(s) => s.clone(),
+                            _ => panic!("Expected FstrContinue token"),
+                        };
+                        (
+                            ast::FmtExpr {
+                                expr: fmt_expr.expr.lift(),
+                                fmt: fmt_expr.fmt.as_ref().map(|(_, fmt)| fmt.lift()),
+                            },
+                            cont_str.spanned(cont.span),
+                        )
+                    })
+                    .collect();
+                ast::Expr::Fstr(begin_str.spanned(begin.span), fmt_parts)
+            }
+            cst::Expr::Decorated {
+                expr, decorator, ..
+            } => ast::Expr::Decorated(expr.lift(), decorator.lift()),
+            cst::Expr::Memo {
+                async_kw,
+                memo_kw: _,
+                colon: _,
+                expr,
+            } => ast::Expr::Memo(expr.lift(), async_kw.is_some()),
+            cst::Expr::Class {
+                class_kw: _,
+                args,
+                body,
+            } => {
+                let class_args = args.as_ref().map_or(vec![], |args| args.lift());
+                ast::Expr::Class(class_args, body.lift())
+            }
+            cst::Expr::With {
+                pattern,
+                value,
+                body,
+                ..
+            } => ast::Expr::With(pattern.lift(), value.lift(), body.lift()),
+            cst::Expr::MethodCall {
+                expr,
+                question,
+                dot: _,
+                method,
+                args,
+            } => {
+                if question.is_some() {
+                    ast::Expr::MappedCall(expr.lift(), args.lift())
+                } else {
+                    // For regular method calls, we need to convert to a Call with the method as an attribute
+                    let method_expr = ast::Expr::Attribute(expr.lift(), method.lift_as_ident())
+                        .spanned(method.span)
+                        .indirect();
+                    ast::Expr::Call(method_expr, args.lift())
+                }
+            }
+            cst::Expr::RawAttribute {
+                expr,
+                question,
+                double_colon: _,
+                attr,
+            } => {
+                if question.is_some() {
+                    ast::Expr::MappedRawAttribute(expr.lift(), attr.lift_as_ident())
+                } else {
+                    ast::Expr::RawAttribute(expr.lift(), attr.lift_as_ident())
+                }
+            }
+            cst::Expr::ScopedAttribute {
+                expr,
+                question,
+                dot: _,
+                lparen: _,
+                rhs,
+                rparen: _,
+            } => {
+                if question.is_some() {
+                    ast::Expr::MappedScopedAttribute(expr.lift(), rhs.lift())
+                } else {
+                    ast::Expr::ScopedAttribute(expr.lift(), rhs.lift())
+                }
+            }
+            cst::Expr::Checked {
+                try_kw: _,
+                expr,
+                except_kw: _,
+                pattern,
+            } => ast::Expr::Checked(expr.lift(), pattern.as_ref().map(|p| p.lift())),
+            cst::Expr::Error => panic!("Cannot lift error expression"),
+        };
+        expr.spanned(self.span).indirect()
+    }
+}
+
+impl<'src, 'tok> Lift<Indirect<ast::SPattern<'src>>> for cst::SPattern<'src, 'tok> {
+    fn lift(&self) -> Indirect<ast::SPattern<'src>> {
+        let pattern = match &self.value {
+            cst::Pattern::Capture { name } => ast::Pattern::Capture(Some(name.lift_as_ident())),
+            cst::Pattern::Value { expr, .. } => ast::Pattern::Value(expr.lift()),
+            cst::Pattern::As { pattern, name, .. } => {
+                ast::Pattern::As(pattern.lift(), name.lift_as_ident())
+            }
+            cst::Pattern::Or { head, rest } => {
+                let mut patterns = vec![head.lift()];
+                patterns.extend(rest.iter().map(|(_, pattern)| pattern.lift()));
+                ast::Pattern::Or(patterns)
+            }
+            cst::Pattern::Literal { token } => ast::Pattern::Literal(token.lift_as_literal()),
+            cst::Pattern::Sequence { listing } => {
+                let items = match listing {
+                    cst::Listing::Block { items, .. } | cst::Listing::Inline { items, .. } => {
+                        items.iter().map(|item| item.item.lift()).collect()
+                    }
+                    cst::Listing::Open { items } => {
+                        items.iter().map(|item| item.item.lift()).collect()
+                    }
+                };
+                ast::Pattern::Sequence(items)
+            }
+            cst::Pattern::TupleSequence { listing } => {
+                let items = match listing {
+                    cst::Listing::Block { items, .. } | cst::Listing::Inline { items, .. } => {
+                        items.iter().map(|item| item.item.lift()).collect()
+                    }
+                    cst::Listing::Open { items } => {
+                        items.iter().map(|item| item.item.lift()).collect()
+                    }
+                };
+                ast::Pattern::Sequence(items)
+            }
+            cst::Pattern::Mapping { listing } => {
+                let items = match listing {
+                    cst::Listing::Block { items, .. } | cst::Listing::Inline { items, .. } => {
+                        items.iter().map(|item| item.item.lift()).collect()
+                    }
+                    cst::Listing::Open { items } => {
+                        items.iter().map(|item| item.item.lift()).collect()
+                    }
+                };
+                ast::Pattern::Mapping(items)
+            }
+            cst::Pattern::Class { expr, items, .. } => {
+                let class_items = match items {
+                    cst::Listing::Block { items, .. } | cst::Listing::Inline { items, .. } => {
+                        items.iter().map(|item| item.item.lift()).collect()
+                    }
+                    cst::Listing::Open { items } => {
+                        items.iter().map(|item| item.item.lift()).collect()
+                    }
+                };
+                ast::Pattern::Class(expr.lift(), class_items)
+            }
+            cst::Pattern::Parenthesized { pattern, .. } => return pattern.lift(),
+        };
+        pattern.spanned(self.span).indirect()
+    }
+}
+
+impl<'src, 'tok> Lift<ast::SStmt<'src>> for cst::SStmt<'src, 'tok> {
+    fn lift(&self) -> ast::SStmt<'src> {
+        let stmt = match &self.value {
+            cst::Stmt::Expr { expr } => ast::Stmt::Expr(expr.lift()),
+            cst::Stmt::Assign { lhs, rhs, op, .. } => {
+                ast::Stmt::Assign(lhs.lift(), rhs.lift(), op.clone())
+            }
+            cst::Stmt::PatternAssign {
+                lhs, rhs, modifier, ..
+            } => {
+                let mod_kind = modifier.as_ref().map(|token| token.lift_as_decl_modifier());
+                ast::Stmt::PatternAssign(lhs.lift(), rhs.lift(), mod_kind)
+            }
+            cst::Stmt::Decl { modifier, names } => {
+                let name_list = names.iter().map(|(name, _)| name.lift_as_ident()).collect();
+                ast::Stmt::Decl(name_list, modifier.lift_as_decl_modifier())
+            }
+            cst::Stmt::While { cond, body, .. } => ast::Stmt::While(cond.lift(), body.lift()),
+            cst::Stmt::For {
+                pattern,
+                iter,
+                body,
+                ..
+            } => ast::Stmt::For(pattern.lift(), iter.lift(), body.lift()),
+            cst::Stmt::Break { .. } => ast::Stmt::Break,
+            cst::Stmt::Continue { .. } => ast::Stmt::Continue,
+            cst::Stmt::Return { expr, .. } => ast::Stmt::Return(expr.lift()),
+            cst::Stmt::Raise { expr, .. } => ast::Stmt::Raise(expr.as_ref().map(|e| e.lift())),
+            cst::Stmt::Import { tree, export, .. } => {
+                ast::Stmt::Import(tree.lift(), export.is_some())
+            }
+            cst::Stmt::Try {
+                try_kw: _,
+                expr,
+                cases,
+                finally,
+            } => {
+                let exception_cases: Vec<ast::MatchCase<ast::STree<'src>>> =
+                    cases.iter().map(|case| case.lift()).collect();
+                let finally_expr = finally.as_ref().map(|(_, expr)| expr.lift());
+                ast::Stmt::Try(expr.lift(), exception_cases, finally_expr)
+            }
+        };
+        stmt.spanned(self.span)
+    }
+}
+
+impl<'src, 'tok> Lift<ast::MatchCase<ast::STree<'src>>>
+    for cst::ExceptCase<cst::STree<'src, 'tok>>
+{
+    fn lift(&self) -> ast::MatchCase<ast::STree<'src>> {
+        ast::MatchCase {
+            pattern: self.pattern.lift(),
+            guard: self.guard.as_ref().map(|(_, expr)| expr.lift()),
+            body: self.body.lift(),
+        }
+    }
+}
+
+impl<'src, 'tok> Lift<ast::MatchCase<ast::STree<'src>>> for cst::MatchCase<cst::STree<'src, 'tok>> {
+    fn lift(&self) -> ast::MatchCase<ast::STree<'src>> {
+        ast::MatchCase {
+            pattern: self.pattern.lift(),
+            guard: self.guard.as_ref().map(|(_, expr)| expr.lift()),
+            body: self.body.lift(),
+        }
+    }
+}
+
+impl<'src, 'tok> Lift<ast::ArgDefItem<'src, ast::STree<'src>>>
+    for cst::ArgDefItem<cst::STree<'src, 'tok>>
+{
+    fn lift(&self) -> ast::ArgDefItem<'src, ast::STree<'src>> {
+        match self {
+            cst::ArgDefItem::Arg { pattern, default } => ast::ArgDefItem::Arg(
+                pattern.lift(),
+                default.as_ref().map(|(_, expr)| expr.lift()),
+            ),
+            cst::ArgDefItem::ArgSpread { name, .. } => {
+                ast::ArgDefItem::ArgSpread(name.lift_as_ident())
+            }
+            cst::ArgDefItem::KwargSpread { name, .. } => {
+                ast::ArgDefItem::KwargSpread(name.lift_as_ident())
+            }
+        }
+    }
+}
+
+// Helper functions for lifting complex structures
+
+impl<'src, 'tok> Lift<ast::PatternSequenceItem<'src, ast::STree<'src>>>
+    for cst::PatternSequenceItem<cst::STree<'src, 'tok>>
+{
+    fn lift(&self) -> ast::PatternSequenceItem<'src, ast::STree<'src>> {
+        match self {
+            cst::PatternSequenceItem::Item { pattern } => {
+                ast::PatternSequenceItem::Item(pattern.lift())
+            }
+            cst::PatternSequenceItem::Spread { name, .. } => {
+                ast::PatternSequenceItem::Spread(Some(name.lift_as_ident()))
+            }
+        }
+    }
+}
+
+impl<'src, 'tok> Lift<ast::PatternMappingItem<'src, ast::STree<'src>>>
+    for cst::PatternMappingItem<cst::STree<'src, 'tok>>
+{
+    fn lift(&self) -> ast::PatternMappingItem<'src, ast::STree<'src>> {
+        match self {
+            cst::PatternMappingItem::Ident { name } => {
+                ast::PatternMappingItem::Ident(name.lift_as_ident())
+            }
+            cst::PatternMappingItem::Item { key, pattern, .. } => {
+                ast::PatternMappingItem::Item(key.lift(), pattern.lift())
+            }
+            cst::PatternMappingItem::Spread { name, .. } => {
+                ast::PatternMappingItem::Spread(Some(name.lift_as_ident()))
+            }
+        }
+    }
+}
+
+impl<'src, 'tok> Lift<ast::PatternClassItem<'src, ast::STree<'src>>>
+    for cst::PatternClassItem<cst::STree<'src, 'tok>>
+{
+    fn lift(&self) -> ast::PatternClassItem<'src, ast::STree<'src>> {
+        match self {
+            cst::PatternClassItem::Item { pattern } => ast::PatternClassItem::Item(pattern.lift()),
+            cst::PatternClassItem::Kw { name, pattern, .. } => {
+                ast::PatternClassItem::Kw(name.lift_as_ident(), pattern.lift())
+            }
+        }
+    }
+}
+
+impl<'src, 'tok> Lift<ast::ImportTree<'src>> for cst::ImportTree<cst::STree<'src, 'tok>> {
+    fn lift(&self) -> ast::ImportTree<'src> {
+        ast::ImportTree {
+            level: self.dots.len(),
+            trunk: self
+                .trunk
+                .iter()
+                .map(|(ident, _)| ident.lift_as_ident())
+                .collect(),
+            leaf: self.leaf.value.lift().spanned(self.leaf.span),
+        }
+    }
+}
+
+impl<'src, 'tok> Lift<ast::ImportLeaf<'src>> for cst::ImportLeaf<cst::STree<'src, 'tok>> {
+    fn lift(&self) -> ast::ImportLeaf<'src> {
+        match self {
+            cst::ImportLeaf::Multi(listing) => ast::ImportLeaf::Multi(listing.lift()),
+            cst::ImportLeaf::Single { name, alias } => ast::ImportLeaf::Single(
+                name.lift_as_ident(),
+                alias.as_ref().map(|(_, name)| name.lift_as_ident()),
+            ),
+            cst::ImportLeaf::This { alias, .. } => {
+                ast::ImportLeaf::This(alias.as_ref().map(|(_, name)| name.lift_as_ident()))
+            }
+            cst::ImportLeaf::Star { .. } => ast::ImportLeaf::Star,
+        }
+    }
+}
+
+pub fn lift_cst<'src, 'tok>(
+    cst: &cst::SExpr<'src, 'tok>,
+    tokens: &'tok TokenList<'src>,
+) -> Indirect<ast::SExpr<'src>> {
     cst.lift()
 }

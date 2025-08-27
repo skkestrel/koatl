@@ -272,7 +272,7 @@ pub fn parse_tl<'src>(src: &'src str) -> (Option<SExpr<'src>>, TlErrs) {
     };
     // println!("tokens: {tokens}");
 
-    let (_tl_cst, parser_errs) = parse_tokens(&src, &tokens);
+    let (tl_cst, parser_errs) = parse_tokens(&src, &tokens);
     errs.extend(TlErrs(
         parser_errs
             .into_iter()
@@ -288,5 +288,12 @@ pub fn parse_tl<'src>(src: &'src str) -> (Option<SExpr<'src>>, TlErrs) {
             .collect(),
     ));
 
-    (None, errs)
+    if let Some(cst) = tl_cst {
+        // println!("{:#?}", cst);
+        let tl_ast = lift_cst::lift_cst(&cst, &tokens);
+        // println!("{:#?}", tl_ast);
+        (Some(*tl_ast), errs)
+    } else {
+        (None, errs)
+    }
 }

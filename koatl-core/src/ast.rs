@@ -138,7 +138,7 @@ pub enum ArgDefItem<'a, TTree: Tree> {
 
 #[derive(Debug, Clone)]
 pub struct MatchCase<TTree: Tree> {
-    pub pattern: Option<TTree::Pattern>,
+    pub pattern: TTree::Pattern,
     pub guard: Option<TTree::Expr>,
     pub body: TTree::Expr,
 }

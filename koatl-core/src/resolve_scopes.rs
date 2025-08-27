@@ -1158,13 +1158,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 let cases = cases
                     .into_iter()
                     .map(|case| {
-                        let (pattern, scope) = if let Some(pattern) = case.pattern {
-                            let (pattern, scope, _meta) = pattern_scoped(state, pattern);
-                            (Some(pattern), scope)
-                        } else {
-                            let parent = state.top_scope_key();
-                            (None, state.scopes.insert(Scope::new(Some(parent))))
-                        };
+                        let (pattern, scope, _meta) = pattern_scoped(state, case.pattern);
 
                         let (guard, body) = state
                             .scoped(scope, |state| {
@@ -1615,13 +1609,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                 let cases = cases
                     .into_iter()
                     .map(|case| {
-                        let (pattern, scope) = if let Some(pattern) = case.pattern {
-                            let (pattern, scope, _meta) = pattern_scoped(state, pattern);
-                            (Some(pattern), scope)
-                        } else {
-                            let parent = state.top_scope_key();
-                            (None, state.scopes.insert(Scope::new(Some(parent))))
-                        };
+                        let (pattern, scope, _meta) = pattern_scoped(state, case.pattern);
 
                         let body = state
                             .scoped(scope, |state| case.body.traverse_guarded(state))

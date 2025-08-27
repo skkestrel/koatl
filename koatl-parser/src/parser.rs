@@ -6,6 +6,7 @@ use std::ops::Range;
 use crate::cst::*;
 use crate::lexer::*;
 use crate::parser_error::TriviaRich;
+use crate::simple_fmt::SimpleFmt;
 
 const START_BLOCK: Token = Token::Symbol(":");
 
@@ -102,6 +103,22 @@ enum ExprPrec {
     Tryable,
 }
 
+pub fn true_span(start: usize, end: usize, input: &[SToken]) -> Span {
+    let start = if start < input.len() {
+        input[start].span.start
+    } else {
+        input.last().map_or(0, |t| t.span.end)
+    };
+
+    let end = if end <= input.len() {
+        input[end.saturating_sub(1)].span.end
+    } else {
+        input.last().map_or(0, |t| t.span.end)
+    };
+
+    Span::from(start..end)
+}
+
 impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     fn save(&self) -> usize {
         self.cursor
@@ -117,22 +134,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
     fn next(&mut self) {
         self.cursor += 1;
-    }
-
-    fn span(&self, start: usize, end: usize) -> Span {
-        let start = if start < self.input.len() {
-            self.input[start].span.start
-        } else {
-            self.src.len()
-        };
-
-        let end = if end <= self.input.len() {
-            self.input[end.saturating_sub(1)].span.end
-        } else {
-            self.src.len()
-        };
-
-        Span::from(start..end)
     }
 
     fn set_error(&mut self, cursor: usize, err: ParseErr<'src>) {
@@ -152,7 +153,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn span_from(&self, start: usize) -> Span {
-        self.span(start, self.cursor)
+        true_span(start, self.cursor, self.input)
     }
 
     fn next_token(&mut self) -> Option<&'tok SToken<'src>> {
@@ -1394,7 +1395,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             let pattern = ctx.open_pattern()?;
             let eq = ctx.symbol("=")?;
             let value = ctx.parse(next_level)?;
-            let colon = ctx.symbol(":")?;
             let body = ctx.colon_block()?;
 
             Ok(Expr::With {
@@ -1402,7 +1402,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 pattern: pattern.boxed(),
                 eq,
                 value: value.boxed(),
-                colon,
                 body: body.boxed(),
             }
             .spanned(ctx.span_from(start)))
@@ -1894,20 +1893,20 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        // Parse trunk (module path)
         let mut trunk = Vec::new();
-        while let Some(ident) = optional!(self, |ctx: &mut Self| ctx.any_ident())? {
-            let dot = optional!(self, |ctx: &mut Self| ctx.symbol("."))?;
-            if let Some(dot) = dot {
-                trunk.push((ident, dot));
-            } else {
-                // Last identifier without dot
-                trunk.push((ident, ident)); // Reuse ident as placeholder for missing dot
+        loop {
+            let Some((ident, dot)) = optional!(self, |ctx| {
+                let ident = ctx.any_ident()?;
+                let dot = ctx.symbol(".")?;
+                Ok((ident, dot))
+            })?
+            else {
                 break;
-            }
+            };
+
+            trunk.push((ident, dot));
         }
 
-        // Parse leaf
         let leaf_start = self.cursor;
         let leaf = first_of!(
             self,
@@ -1930,12 +1929,13 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 Ok(ImportLeaf::Star { star })
             },
             |ctx| {
+                let dot = ctx.symbol(".")?;
                 let alias = optional!(ctx, |ctx: &mut Self| {
                     let as_kw = ctx.keyword("as")?;
                     let alias_name = ctx.any_ident()?;
                     Ok((as_kw, alias_name))
                 })?;
-                Ok(ImportLeaf::This { alias })
+                Ok(ImportLeaf::This { dot, alias })
             }
         )?;
 
@@ -2276,13 +2276,8 @@ pub fn parse_tokens<'src: 'tok, 'tok>(
         cur_error: None,
     };
 
-    println!("tokens: {}", tokens);
-
     let expr = match ctx.program() {
-        Ok(expr) => {
-            println!("{}", expr.simple_fmt());
-            Some(expr)
-        }
+        Ok(expr) => Some(expr),
         Err(()) => {
             let err = ctx.take_error().1;
             ctx.errors.push(err);
@@ -2296,7 +2291,7 @@ pub fn parse_tokens<'src: 'tok, 'tok>(
             .iter()
             .map(|err| {
                 TriviaRich::custom(
-                    ctx.span(err.span.start, err.span.end),
+                    true_span(err.span.start, err.span.end, ctx.input),
                     format!("{:?}", err.message),
                 )
             })

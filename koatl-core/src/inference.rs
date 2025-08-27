@@ -171,17 +171,13 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
                         is_bottom = false;
                     }
 
-                    if let Some(pattern) = case.pattern.as_ref() {
-                        let meta = ctx
-                            .resolve_state
-                            .patterns
-                            .get(&pattern.as_ref().into())
-                            .unwrap();
+                    let meta = ctx
+                        .resolve_state
+                        .patterns
+                        .get(&case.pattern.as_ref().into())
+                        .unwrap();
 
-                        if meta.default {
-                            default_case = true;
-                        }
-                    } else {
+                    if meta.default {
                         default_case = true;
                     }
                 }
