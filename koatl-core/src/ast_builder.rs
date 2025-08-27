@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::{ast::*, cst::Spannable, lexer::Span};
+use crate::ast::*;
 
 pub struct AstBuilder {
     pub span: Span,

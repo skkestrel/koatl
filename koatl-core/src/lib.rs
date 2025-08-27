@@ -1,3 +1,5 @@
+pub mod ast;
+pub mod ast_builder;
 mod inference;
 pub mod py;
 mod resolve_scopes;
@@ -5,7 +7,7 @@ pub mod transform;
 mod types;
 pub mod util;
 
-use koatl_parser::ast::SExpr;
+use crate::ast::SExpr;
 pub use koatl_parser::lexer::Span;
 use koatl_parser::{TokenList, parse_tokens, tokenize};
 

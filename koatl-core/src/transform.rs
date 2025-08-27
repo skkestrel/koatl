@@ -3,6 +3,7 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
+use crate::ast::*;
 use crate::{
     inference::InferenceCtx,
     py::{ast::*, util::PyAstBuilder},
@@ -12,7 +13,6 @@ use crate::{
     types::Type,
     util::{LineColCache, RefHash, TlErrBuilder, TlErrs, TlResult},
 };
-use koatl_parser::{ast::*, lexer::Span};
 use once_cell::sync::Lazy;
 use slotmap::SlotMap;
 use std::hash::{Hash, Hasher};

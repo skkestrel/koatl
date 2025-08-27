@@ -5,7 +5,7 @@ use std::fmt::Display;
 use slotmap::SlotMap;
 use slotmap::new_key_type;
 
-use koatl_parser::ast::*;
+use crate::ast::*;
 use koatl_parser::cst::Spannable;
 use koatl_parser::lexer::Span;
 

@@ -1,7 +1,7 @@
 use std::{borrow::Cow, fmt::Display};
 
-pub use crate::cst::{BinaryOp, Spannable, Spanned, UnaryOp};
-pub use crate::lexer::Span;
+pub use koatl_parser::cst::{BinaryOp, Spannable, Spanned, UnaryOp};
+pub use koatl_parser::lexer::Span;
 
 pub type Indirect<T> = Box<T>;
 
