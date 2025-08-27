@@ -943,6 +943,7 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
             } => {
                 format!("{} & {}", expr.simple_fmt(), decorator.simple_fmt())
             }
+            Expr::Error => "<error>".to_string(),
         }
     }
 }

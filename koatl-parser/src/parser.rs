@@ -1635,6 +1635,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             let then = ctx.colon_block()?.boxed();
 
             let else_clause = optional!(ctx, |ctx: &mut Self| {
+                optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
                 let else_kw = ctx.keyword("else")?;
                 let else_body = ctx.colon_block()?;
                 Ok((else_kw, else_body.boxed()))
@@ -2205,20 +2206,28 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
                 // Recover
                 self.rewind(before);
+                let mut indent_level = 0;
                 loop {
                     match self.peek_token() {
                         Some(tok) if tok.token == Token::Eol => {
-                            self.next();
-                            break;
+                            if indent_level == 0 {
+                                self.next();
+                                break;
+                            }
                         }
                         Some(tok) if tok.token == Token::Dedent => {
-                            break 'outer;
+                            indent_level -= 1;
+                            if indent_level < 0 {
+                                break 'outer;
+                            }
+                        }
+                        Some(tok) if tok.token == Token::Indent => {
+                            indent_level += 1;
                         }
                         None => break 'outer,
-                        _ => {
-                            self.next();
-                        }
+                        _ => {}
                     }
+                    self.next();
                 }
             }
         }
