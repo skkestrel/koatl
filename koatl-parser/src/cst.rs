@@ -15,13 +15,25 @@ pub struct ListingItem<T, TTree: Tree> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Listing<T, TTree: Tree> {
-    pub begin: TTree::Token,
-    pub indent: Option<TTree::Token>,
-    pub items: Vec<ListingItem<T, TTree>>,
-    pub dedent: Option<TTree::Token>,
-    pub newline: Option<TTree::Token>,
-    pub end: TTree::Token,
+pub enum Listing<T, TTree: Tree> {
+    Block {
+        begin: TTree::Token,
+        indent: TTree::Token,
+        items: Vec<ListingItem<T, TTree>>,
+        dedent: TTree::Token,
+        newline: Option<TTree::Token>,
+        end: TTree::Token,
+    },
+
+    Inline {
+        begin: TTree::Token,
+        items: Vec<ListingItem<T, TTree>>,
+        end: TTree::Token,
+    },
+
+    Open {
+        items: Vec<ListingItem<T, TTree>>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -85,19 +97,17 @@ pub enum Stmt<TTree: Tree> {
         body: TTree::Expr,
     },
 
-    // export?, import, tree
     Import {
         export: Option<TTree::Token>,
         import: TTree::Token,
         tree: ImportTree<TTree>,
     },
 
-    // try, expr, colon, cases, (finally, colon, expr)?
     Try {
         try_kw: TTree::Token,
         expr: TTree::Expr,
-        cases: Vec<MatchCase<TTree>>,
-        finally_clause: Option<(TTree::Token, TTree::Expr)>,
+        cases: Vec<ExceptCase<TTree>>,
+        finally: Option<(TTree::Token, TTree::Expr)>,
     },
 
     Break {
@@ -191,7 +201,16 @@ pub enum ArgDefItem<TTree: Tree> {
 
 #[derive(Debug, Clone)]
 pub struct MatchCase<TTree: Tree> {
-    pub pattern: Option<TTree::Pattern>,
+    pub pattern: TTree::Pattern,
+    pub guard: Option<(TTree::Token, TTree::Expr)>,
+    pub arrow: TTree::Token,
+    pub body: TTree::Expr,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExceptCase<TTree: Tree> {
+    pub except: TTree::Token,
+    pub pattern: TTree::Pattern,
     pub guard: Option<(TTree::Token, TTree::Expr)>,
     pub arrow: TTree::Token,
     pub body: TTree::Expr,
@@ -244,27 +263,44 @@ pub enum TupleKind<TTree: Tree> {
 
 #[derive(Debug, Clone)]
 pub enum BlockKind<TTree: Tree> {
-    Fused {
-        starter: TTree::Token,
+    Regular {
+        colon: Option<TTree::Token>,
         indent: TTree::Token,
         body: Vec<TTree::Stmt>,
         dedent: TTree::Token,
     },
 
-    Program {
+    Bare {
         body: Vec<TTree::Stmt>,
+    },
+
+    Inline {
+        colon: Option<TTree::Token>,
+        stmt: TTree::Stmt,
     },
 }
 
 #[derive(Debug, Clone)]
 pub enum Expr<TTree: Tree> {
-    Block(BlockKind<TTree>),
+    Block {
+        kind: BlockKind<TTree>,
+    },
 
-    Literal(TTree::Token),
-    Ident(TTree::Token),
-    Tuple(TupleKind<TTree>),
-    List(Listing<ListItem<TTree>, TTree>),
-    Mapping(Listing<MappingItem<TTree>, TTree>),
+    Literal {
+        token: TTree::Token,
+    },
+    Ident {
+        token: TTree::Token,
+    },
+    Tuple {
+        kind: TupleKind<TTree>,
+    },
+    List {
+        listing: Listing<ListItem<TTree>, TTree>,
+    },
+    Mapping {
+        listing: Listing<MappingItem<TTree>, TTree>,
+    },
 
     Slice {
         start: Option<TTree::Expr>,
@@ -329,10 +365,7 @@ pub enum Expr<TTree: Tree> {
     },
     Class {
         class_kw: TTree::Token,
-        lparen: Option<TTree::Token>,
-        args: Vec<CallItem<TTree>>,
-        rparen: Option<TTree::Token>,
-        colon: TTree::Token,
+        args: Option<Listing<CallItem<TTree>, TTree>>,
         body: TTree::Expr,
     },
 
@@ -391,7 +424,7 @@ pub enum Expr<TTree: Tree> {
     },
 
     Fn {
-        args: Listing<ArgDefItem<TTree>, TTree>,
+        arg: TTree::Pattern,
         arrow: TTree::Token,
         body: TTree::Expr,
     },
@@ -413,7 +446,9 @@ pub enum Expr<TTree: Tree> {
         ampersand: TTree::Token,
         decorator: TTree::Expr,
     },
-    Placeholder(TTree::Token),
+    Placeholder {
+        token: TTree::Token,
+    },
 
     // Grouping expressions
     Parenthesized {
@@ -432,7 +467,7 @@ pub enum PatternSequenceItem<TTree: Tree> {
     },
     Spread {
         star: TTree::Token,
-        name: Option<TTree::Token>,
+        name: TTree::Token,
     },
 }
 
@@ -447,8 +482,8 @@ pub enum PatternMappingItem<TTree: Tree> {
         pattern: TTree::Pattern,
     },
     Spread {
-        stars: TTree::Token, // **
-        name: Option<TTree::Token>,
+        stars: TTree::Token,
+        name: TTree::Token,
     },
 }
 
@@ -601,18 +636,24 @@ pub type SCallItem<'src, 'tok> = CallItem<STree<'src, 'tok>>;
 pub type SArgDefItem<'src, 'tok> = ArgDefItem<STree<'src, 'tok>>;
 pub type SFmtExpr<'src, 'tok> = FmtExpr<STree<'src, 'tok>>;
 
-impl<'src, 'tok> SExpr<'src, 'tok> {
-    pub fn simple_fmt(&self) -> String {
+// Format
+
+pub trait SimpleFmt {
+    fn simple_fmt(&self) -> String;
+}
+
+impl<'src, 'tok> SimpleFmt for SExpr<'src, 'tok> {
+    fn simple_fmt(&self) -> String {
         self.value.simple_fmt()
     }
 }
 
-impl<'src, 'tok> SExprInner<'src, 'tok> {
-    pub fn simple_fmt(&self) -> String {
+impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
+    fn simple_fmt(&self) -> String {
         match self {
-            Expr::Literal(token) => token.simple_fmt(),
-            Expr::Ident(token) => token.simple_fmt(),
-            Expr::Placeholder(token) => token.simple_fmt(),
+            Expr::Literal { token } => token.simple_fmt(),
+            Expr::Ident { token } => token.simple_fmt(),
+            Expr::Placeholder { token } => token.simple_fmt(),
             Expr::Binary {
                 lhs,
                 not,
@@ -647,24 +688,15 @@ impl<'src, 'tok> SExprInner<'src, 'tok> {
                 args,
             } => {
                 let question_str = if question.is_some() { "?" } else { "" };
-                let args_str = args
-                    .items
-                    .iter()
-                    .map(|item| item.item.simple_fmt())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("{}{}({})", expr.simple_fmt(), question_str, args_str)
+                format!(
+                    "{}{}({})",
+                    expr.simple_fmt(),
+                    question_str,
+                    args.simple_fmt()
+                )
             }
-            Expr::List(listing) => {
-                let items_str = listing
-                    .items
-                    .iter()
-                    .map(|item| item.item.simple_fmt())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("[{}]", items_str)
-            }
-            Expr::Tuple(kind) => match kind {
+            Expr::List { listing } => listing.simple_fmt(),
+            Expr::Tuple { kind } => match kind {
                 TupleKind::Unit(..) => format!("()"),
                 TupleKind::Listing(items) => {
                     if items.len() == 1 {
@@ -704,13 +736,12 @@ impl<'src, 'tok> SExprInner<'src, 'tok> {
                 indices,
             } => {
                 let question_str = if question.is_some() { "?" } else { "" };
-                let indices_str = indices
-                    .items
-                    .iter()
-                    .map(|item| item.item.simple_fmt())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("{}{}[{}]", expr.simple_fmt(), question_str, indices_str)
+                format!(
+                    "{}{}[{}]",
+                    expr.simple_fmt(),
+                    question_str,
+                    indices.simple_fmt()
+                )
             }
             Expr::RawAttribute {
                 expr,
@@ -765,8 +796,8 @@ impl<'src, 'tok> SExprInner<'src, 'tok> {
                     format!("({}..{})", start_str, end_str)
                 }
             }
-            Expr::Block(block) => match block {
-                BlockKind::Fused { body, .. } => {
+            Expr::Block { kind } => match kind {
+                BlockKind::Regular { body, .. } => {
                     let stmts_str = body
                         .iter()
                         .map(|stmt| stmt.value.simple_fmt())
@@ -774,37 +805,272 @@ impl<'src, 'tok> SExprInner<'src, 'tok> {
                         .join("; ");
                     format!("Block({})", stmts_str)
                 }
-                BlockKind::Program { body, .. } => body
+                BlockKind::Inline { stmt, .. } => stmt.value.simple_fmt(),
+                BlockKind::Bare { body, .. } => body
                     .iter()
                     .map(|stmt| stmt.value.simple_fmt())
                     .collect::<Vec<_>>()
                     .join("\n"),
             },
-            _ => format!("{:?}", self).chars().take(50).collect::<String>() + "...",
+            Expr::Mapping { listing } => listing.simple_fmt(),
+            Expr::Await { expr, .. } => {
+                format!("(await {})", expr.simple_fmt())
+            }
+            Expr::Yield { expr, .. } => {
+                format!("(yield {})", expr.simple_fmt())
+            }
+            Expr::YieldFrom { expr, .. } => {
+                format!("(yield from {})", expr.simple_fmt())
+            }
+            Expr::Memo { async_kw, expr, .. } => {
+                let async_str = if async_kw.is_some() { "async " } else { "" };
+                format!("({}memo {})", async_str, expr.simple_fmt())
+            }
+            Expr::Match {
+                scrutinee, cases, ..
+            } => {
+                let cases_str = cases
+                    .iter()
+                    .map(|case| case.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                format!("({} match: {})", scrutinee.simple_fmt(), cases_str)
+            }
+            Expr::Matches {
+                lhs,
+                not_kw,
+                pattern,
+                ..
+            } => {
+                let not_str = if not_kw.is_some() { " not" } else { "" };
+                format!(
+                    "({}{} matches {})",
+                    lhs.simple_fmt(),
+                    not_str,
+                    pattern.simple_fmt()
+                )
+            }
+            Expr::Class { args, body, .. } => {
+                let args_str = args
+                    .iter()
+                    .map(|arg| arg.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("class{} {})", args_str, body.simple_fmt())
+            }
+            Expr::With {
+                pattern,
+                value,
+                body,
+                ..
+            } => {
+                format!(
+                    "with {} = {}: {}",
+                    pattern.simple_fmt(),
+                    value.simple_fmt(),
+                    body.simple_fmt()
+                )
+            }
+            Expr::MethodCall {
+                expr,
+                question,
+                method,
+                args,
+                ..
+            } => {
+                let question_str = if question.is_some() { "?" } else { "" };
+                format!(
+                    "{}{}.{}({})",
+                    expr.simple_fmt(),
+                    question_str,
+                    method.simple_fmt(),
+                    args.simple_fmt()
+                )
+            }
+            Expr::Checked {
+                expr,
+                except_kw,
+                pattern,
+                ..
+            } => {
+                let except_str = if let Some(pattern) = pattern {
+                    format!(" except {}", pattern.simple_fmt())
+                } else if except_kw.is_some() {
+                    " except".to_string()
+                } else {
+                    String::new()
+                };
+                format!("try {}{}", expr.simple_fmt(), except_str)
+            }
+            Expr::Fn { arg, body, .. } => {
+                format!("{} => {}", arg.simple_fmt(), body.simple_fmt())
+            }
+            Expr::ParenthesizedFn { args, body, .. } => {
+                format!("{} => {}", args.simple_fmt(), body.simple_fmt())
+            }
+            Expr::Fstr { parts, .. } => {
+                let parts_str = parts
+                    .iter()
+                    .map(|(fmt_expr, _)| fmt_expr.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join("");
+                format!("f\"{}\"", parts_str)
+            }
+            Expr::Decorated {
+                expr, decorator, ..
+            } => {
+                format!("{} & {}", expr.simple_fmt(), decorator.simple_fmt())
+            }
         }
     }
 }
 
-impl<'src, 'tok> SStmt<'src, 'tok> {
-    pub fn simple_fmt(&self) -> String {
+impl<'src, 'tok> SimpleFmt for SStmt<'src, 'tok> {
+    fn simple_fmt(&self) -> String {
         self.value.simple_fmt()
     }
 }
 
-impl<'src, 'tok> SStmtInner<'src, 'tok> {
-    pub fn simple_fmt(&self) -> String {
+impl<'src, 'tok> SimpleFmt for SStmtInner<'src, 'tok> {
+    fn simple_fmt(&self) -> String {
         match self {
             Stmt::Expr { expr } => expr.simple_fmt(),
-            Stmt::Assign { lhs, rhs, .. } => {
-                format!("{} = {}", lhs.simple_fmt(), rhs.simple_fmt())
+            Stmt::Assign { lhs, rhs, op, .. } => {
+                let op_str = if let Some(op) = op {
+                    format!(" {}= ", format!("{:?}", op).to_lowercase())
+                } else {
+                    " = ".to_string()
+                };
+                format!("{}{}{}", lhs.simple_fmt(), op_str, rhs.simple_fmt())
             }
-            _ => format!("{:?}", self).chars().take(30).collect::<String>() + "...",
+            Stmt::PatternAssign {
+                lhs, rhs, modifier, ..
+            } => {
+                let mod_str = if let Some(modifier) = modifier {
+                    format!("{} ", modifier.simple_fmt())
+                } else {
+                    String::new()
+                };
+                format!("{}{} = {}", mod_str, lhs.simple_fmt(), rhs.simple_fmt())
+            }
+            Stmt::Decl { modifier, names } => {
+                let names_str = names
+                    .iter()
+                    .map(|(name, _)| name.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{} {}", modifier.simple_fmt(), names_str)
+            }
+            Stmt::While { cond, body, .. } => {
+                format!("while {}: {}", cond.simple_fmt(), body.simple_fmt())
+            }
+            Stmt::For {
+                pattern,
+                iter,
+                body,
+                ..
+            } => {
+                format!(
+                    "for {} in {}: {}",
+                    pattern.simple_fmt(),
+                    iter.simple_fmt(),
+                    body.simple_fmt()
+                )
+            }
+            Stmt::Try {
+                expr,
+                cases,
+                finally: finally_clause,
+                ..
+            } => {
+                let cases_str = cases
+                    .iter()
+                    .map(|case| {
+                        format!(
+                            "except {} {} {}",
+                            case.pattern.simple_fmt(),
+                            case.guard
+                                .as_ref()
+                                .map(|x| " if ".to_string() + &x.1.simple_fmt())
+                                .unwrap_or_default(),
+                            case.body.simple_fmt()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+
+                let finally_str = if let Some((_, finally_expr)) = finally_clause {
+                    format!("; finally: {}", finally_expr.simple_fmt())
+                } else {
+                    String::new()
+                };
+
+                format!("try {}: {}{}", expr.simple_fmt(), cases_str, finally_str)
+            }
+            Stmt::Break { .. } => "break".to_string(),
+            Stmt::Continue { .. } => "continue".to_string(),
+            Stmt::Return { expr, .. } => {
+                format!("return {}", expr.simple_fmt())
+            }
+            Stmt::Raise { expr, .. } => {
+                if let Some(expr) = expr {
+                    format!("raise {}", expr.simple_fmt())
+                } else {
+                    "raise".to_string()
+                }
+            }
+            Stmt::Import { export, tree, .. } => {
+                let export_str = if export.is_some() { "export " } else { "" };
+                format!("{}import {}", export_str, tree.simple_fmt())
+            }
         }
     }
 }
 
-impl<'src, 'tok> ListItem<STree<'src, 'tok>> {
-    pub fn simple_fmt(&self) -> String {
+impl<'src, 'tok> SimpleFmt for ImportTree<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
+        let dots_str = self.dots.iter().map(|_| "..").collect::<Vec<_>>().join("");
+        let trunk_str = self
+            .trunk
+            .iter()
+            .map(|(ident, _)| ident.simple_fmt())
+            .collect::<Vec<_>>()
+            .join(".");
+        let leaf_str = self.leaf.value.simple_fmt();
+
+        if !trunk_str.is_empty() {
+            format!("{}{}.{}", dots_str, trunk_str, leaf_str)
+        } else {
+            format!("{}{}", dots_str, leaf_str)
+        }
+    }
+}
+
+impl<'src, 'tok> SimpleFmt for ImportLeaf<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
+        match self {
+            ImportLeaf::Multi(listing) => listing.simple_fmt(),
+            ImportLeaf::Single { name, alias } => {
+                if let Some((_, alias_name)) = alias {
+                    format!("{} as {}", name.simple_fmt(), alias_name.simple_fmt())
+                } else {
+                    name.simple_fmt()
+                }
+            }
+            ImportLeaf::This { alias } => {
+                if let Some((_, alias_name)) = alias {
+                    format!("this as {}", alias_name.simple_fmt())
+                } else {
+                    "this".to_string()
+                }
+            }
+            ImportLeaf::Star { .. } => "*".to_string(),
+        }
+    }
+}
+
+impl<'src, 'tok> SimpleFmt for ListItem<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
         match self {
             ListItem::Item { expr } => expr.simple_fmt(),
             ListItem::Spread { expr, .. } => format!("*{}", expr.simple_fmt()),
@@ -812,8 +1078,8 @@ impl<'src, 'tok> ListItem<STree<'src, 'tok>> {
     }
 }
 
-impl<'src, 'tok> CallItem<STree<'src, 'tok>> {
-    pub fn simple_fmt(&self) -> String {
+impl<'src, 'tok> SimpleFmt for CallItem<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
         match self {
             CallItem::Arg { expr } => expr.simple_fmt(),
             CallItem::Kwarg { name, expr, .. } => {
@@ -825,14 +1091,78 @@ impl<'src, 'tok> CallItem<STree<'src, 'tok>> {
     }
 }
 
-impl<'src, 'tok> SPattern<'src, 'tok> {
-    pub fn simple_fmt(&self) -> String {
+impl<'src, 'tok> SimpleFmt for MappingItem<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
+        match self {
+            MappingItem::Ident { ident } => ident.simple_fmt(),
+            MappingItem::Item { key, value, .. } => {
+                format!("{}: {}", key.simple_fmt(), value.simple_fmt())
+            }
+            MappingItem::Spread { expr, .. } => {
+                format!("**{}", expr.simple_fmt())
+            }
+        }
+    }
+}
+
+impl<'src, 'tok> SimpleFmt for MatchCase<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
+        let guard_str = if let Some((_, guard_expr)) = &self.guard {
+            format!(" if {}", guard_expr.simple_fmt())
+        } else {
+            String::new()
+        };
+
+        format!(
+            "{}{} => {}",
+            self.pattern.simple_fmt(),
+            guard_str,
+            self.body.simple_fmt()
+        )
+    }
+}
+
+impl<'src, 'tok> SimpleFmt for ArgDefItem<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
+        match self {
+            ArgDefItem::Arg { pattern, default } => {
+                if let Some((_, default_expr)) = default {
+                    format!("{}={}", pattern.simple_fmt(), default_expr.simple_fmt())
+                } else {
+                    pattern.simple_fmt()
+                }
+            }
+            ArgDefItem::ArgSpread { name, .. } => {
+                format!("*{}", name.simple_fmt())
+            }
+            ArgDefItem::KwargSpread { name, .. } => {
+                format!("**{}", name.simple_fmt())
+            }
+        }
+    }
+}
+
+impl<'src, 'tok> SimpleFmt for FmtExpr<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
+        let expr_str = self.expr.simple_fmt();
+        if let Some(fmt) = &self.fmt {
+            format!("{}:{}", expr_str, fmt.simple_fmt())
+        } else if self.excl.is_some() {
+            format!("{}!", expr_str)
+        } else {
+            expr_str
+        }
+    }
+}
+
+impl<'src, 'tok> SimpleFmt for SPattern<'src, 'tok> {
+    fn simple_fmt(&self) -> String {
         self.value.simple_fmt()
     }
 }
 
-impl<'src, 'tok> Pattern<STree<'src, 'tok>> {
-    pub fn simple_fmt(&self) -> String {
+impl<'src, 'tok> SimpleFmt for Pattern<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
         match self {
             Pattern::Capture { name } => name.simple_fmt(),
             Pattern::Value { expr, .. } => {
@@ -849,45 +1179,11 @@ impl<'src, 'tok> Pattern<STree<'src, 'tok>> {
                 parts.join(" | ")
             }
             Pattern::Literal { token } => token.simple_fmt(),
-            Pattern::Sequence { listing } => {
-                let items_str = listing
-                    .items
-                    .iter()
-                    .map(|item| item.item.simple_fmt())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("[{}]", items_str)
-            }
-            Pattern::TupleSequence { listing } => {
-                let items_str = listing
-                    .items
-                    .iter()
-                    .map(|item| item.item.simple_fmt())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                if listing.items.len() == 1 {
-                    format!("({},)", items_str)
-                } else {
-                    format!("({})", items_str)
-                }
-            }
-            Pattern::Mapping { listing } => {
-                let items_str = listing
-                    .items
-                    .iter()
-                    .map(|item| item.item.simple_fmt())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("{{{}}}", items_str)
-            }
+            Pattern::Sequence { listing } => listing.simple_fmt(),
+            Pattern::TupleSequence { listing } => listing.simple_fmt(),
+            Pattern::Mapping { listing } => listing.simple_fmt(),
             Pattern::Class { expr, items, .. } => {
-                let items_str = items
-                    .items
-                    .iter()
-                    .map(|item| item.item.simple_fmt())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("{}({})", expr.simple_fmt(), items_str)
+                format!("{}({})", expr.simple_fmt(), items.simple_fmt())
             }
             Pattern::Parenthesized { pattern, .. } => {
                 format!("({})", pattern.simple_fmt())
@@ -896,41 +1192,33 @@ impl<'src, 'tok> Pattern<STree<'src, 'tok>> {
     }
 }
 
-impl<'src, 'tok> PatternSequenceItem<STree<'src, 'tok>> {
-    pub fn simple_fmt(&self) -> String {
+impl<'src, 'tok> SimpleFmt for PatternSequenceItem<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
         match self {
             PatternSequenceItem::Item { pattern } => pattern.simple_fmt(),
             PatternSequenceItem::Spread { name, .. } => {
-                if let Some(name) = name {
-                    format!("*{}", name.simple_fmt())
-                } else {
-                    "*".to_string()
-                }
+                format!("*{}", name.simple_fmt())
             }
         }
     }
 }
 
-impl<'src, 'tok> PatternMappingItem<STree<'src, 'tok>> {
-    pub fn simple_fmt(&self) -> String {
+impl<'src, 'tok> SimpleFmt for PatternMappingItem<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
         match self {
             PatternMappingItem::Ident { name } => name.simple_fmt(),
             PatternMappingItem::Item { key, pattern, .. } => {
                 format!("{}: {}", key.simple_fmt(), pattern.simple_fmt())
             }
             PatternMappingItem::Spread { name, .. } => {
-                if let Some(name) = name {
-                    format!("**{}", name.simple_fmt())
-                } else {
-                    "**".to_string()
-                }
+                format!("**{}", name.simple_fmt())
             }
         }
     }
 }
 
-impl<'src, 'tok> PatternClassItem<STree<'src, 'tok>> {
-    pub fn simple_fmt(&self) -> String {
+impl<'src, 'tok> SimpleFmt for PatternClassItem<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
         match self {
             PatternClassItem::Item { pattern } => pattern.simple_fmt(),
             PatternClassItem::Kw { name, pattern, .. } => {
@@ -940,14 +1228,48 @@ impl<'src, 'tok> PatternClassItem<STree<'src, 'tok>> {
     }
 }
 
-impl<'src> SToken<'src> {
-    pub fn simple_fmt(&self) -> String {
+impl<'src, 'tok, T> SListing<'src, 'tok, T> {
+    pub fn simple_fmt(&self) -> String
+    where
+        T: SimpleFmt,
+    {
+        let (begin, items, end) = match self {
+            SListing::Block {
+                begin, items, end, ..
+            }
+            | SListing::Inline { begin, items, end } => {
+                (begin.simple_fmt(), items, end.simple_fmt())
+            }
+            SListing::Open { items } => ("(".to_string(), items, ")".to_string()),
+        };
+
+        format!(
+            "{}{}{}",
+            begin,
+            items
+                .iter()
+                .map(|item| format!(
+                    "{}{} ",
+                    item.item.simple_fmt(),
+                    item.separator
+                        .map(|x| x.simple_fmt())
+                        .unwrap_or("".to_string())
+                ))
+                .collect::<Vec<_>>()
+                .join(""),
+            end
+        )
+    }
+}
+
+impl<'src> SimpleFmt for SToken<'src> {
+    fn simple_fmt(&self) -> String {
         self.token.simple_fmt()
     }
 }
 
-impl<'src> Token<'src> {
-    pub fn simple_fmt(&self) -> String {
+impl<'src> SimpleFmt for Token<'src> {
+    fn simple_fmt(&self) -> String {
         match self {
             Token::Ident(s) => s.to_string(),
             Token::Num(s) => s.to_string(),
