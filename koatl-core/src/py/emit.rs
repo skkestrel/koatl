@@ -891,7 +891,7 @@ impl SPyStmt<'_> {
 mod tests {
     use koatl_parser::lexer::Span;
 
-    use crate::py::util::PyAstBuilder;
+    use crate::py::ast_builder::PyAstBuilder;
 
     use super::*;
 

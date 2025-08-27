@@ -6,7 +6,7 @@ use std::{
 use crate::ast::*;
 use crate::{
     inference::InferenceCtx,
-    py::{ast::*, util::PyAstBuilder},
+    py::{ast::*, ast_builder::PyAstBuilder},
     resolve_scopes::{
         Declaration, DeclarationKey, FnInfo, PatternInfo, ResolveState, Scope, ScopeKey,
     },

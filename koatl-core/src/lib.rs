@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod ast_builder;
 mod inference;
+pub mod lift_cst;
 pub mod py;
 mod resolve_scopes;
 pub mod transform;
@@ -12,7 +13,7 @@ pub use koatl_parser::lexer::Span;
 use koatl_parser::{TokenList, parse_tokens, tokenize};
 
 use crate::py::ast::{PyAccessCtx, PyImportAlias, PyListItem, PyLiteral};
-use crate::py::util::PyAstBuilder;
+use crate::py::ast_builder::PyAstBuilder;
 use crate::py::{ast::PyBlock, emit::EmitCtx};
 use crate::transform::transform_ast;
 use crate::util::{TlErr, TlErrKind, TlErrs, TlResult};
