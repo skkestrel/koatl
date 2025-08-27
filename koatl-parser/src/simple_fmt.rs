@@ -182,11 +182,12 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
             Expr::Await { expr, .. } => {
                 format!("(await {})", expr.simple_fmt())
             }
-            Expr::Yield { expr, .. } => {
-                format!("(yield {})", expr.simple_fmt())
-            }
-            Expr::YieldFrom { expr, .. } => {
-                format!("(yield from {})", expr.simple_fmt())
+            Expr::Yield { expr, from_kw, .. } => {
+                format!(
+                    "(yield {}{})",
+                    expr.simple_fmt(),
+                    from_kw.map(|_| " from").unwrap_or_default()
+                )
             }
             Expr::Memo { async_kw, expr, .. } => {
                 let async_str = if async_kw.is_some() { "async " } else { "" };

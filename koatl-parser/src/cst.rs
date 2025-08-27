@@ -343,11 +343,7 @@ pub enum Expr<TTree: Tree> {
     },
     Yield {
         yield_kw: TTree::Token,
-        expr: TTree::Expr,
-    },
-    YieldFrom {
-        yield_kw: TTree::Token,
-        from_kw: TTree::Token,
+        from_kw: Option<TTree::Token>,
         expr: TTree::Expr,
     },
     Memo {
@@ -375,8 +371,8 @@ pub enum Expr<TTree: Tree> {
 
     Matches {
         lhs: TTree::Expr,
-        matches_kw: TTree::Token,
         not_kw: Option<TTree::Token>,
+        matches_kw: TTree::Token,
         pattern: TTree::Pattern,
     },
     Class {

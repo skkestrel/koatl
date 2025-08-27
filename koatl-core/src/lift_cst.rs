@@ -4,7 +4,7 @@ use crate::ast;
 use crate::ast::{Indirect, IntoIndirect};
 use koatl_parser::cst::{Spannable, Spanned};
 use koatl_parser::lexer::SToken;
-use koatl_parser::{Token, TokenList, cst};
+use koatl_parser::{Token, cst};
 
 trait STokenExt<'src> {
     fn lift_as_ident(&self) -> Spanned<ast::Ident<'src>>;
@@ -98,9 +98,11 @@ impl<'src, 'tok> Lift<ast::MappingItem<ast::STree<'src>>>
             ),
             cst::MappingItem::Item { key, value, .. } => {
                 let key_expr = match key {
-                    cst::MappingKey::Ident { token } => ast::Expr::Ident(token.lift_as_ident())
-                        .spanned(token.span)
-                        .indirect(),
+                    cst::MappingKey::Ident { token } => ast::Expr::Literal(
+                        ast::Literal::Str(token.lift_as_ident().value.0).spanned(token.span),
+                    )
+                    .spanned(token.span)
+                    .indirect(),
                     cst::MappingKey::Literal { token } => {
                         ast::Expr::Literal(token.lift_as_literal())
                             .spanned(token.span)
@@ -173,8 +175,13 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
             }
             cst::Expr::Mapping { listing } => ast::Expr::Mapping(listing.lift()),
             cst::Expr::Await { expr, .. } => ast::Expr::Await(expr.lift()),
-            cst::Expr::Yield { expr, .. } => ast::Expr::Yield(expr.lift()),
-            cst::Expr::YieldFrom { expr, .. } => ast::Expr::YieldFrom(expr.lift()),
+            cst::Expr::Yield { expr, from_kw, .. } => {
+                if from_kw.is_none() {
+                    ast::Expr::Yield(expr.lift())
+                } else {
+                    ast::Expr::YieldFrom(expr.lift())
+                }
+            }
             cst::Expr::Match {
                 scrutinee, cases, ..
             } => {
@@ -529,9 +536,6 @@ impl<'src, 'tok> Lift<ast::ImportLeaf<'src>> for cst::ImportLeaf<cst::STree<'src
     }
 }
 
-pub fn lift_cst<'src, 'tok>(
-    cst: &cst::SExpr<'src, 'tok>,
-    tokens: &'tok TokenList<'src>,
-) -> Indirect<ast::SExpr<'src>> {
+pub fn lift_cst<'src, 'tok>(cst: &cst::SExpr<'src, 'tok>) -> Indirect<ast::SExpr<'src>> {
     cst.lift()
 }

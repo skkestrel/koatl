@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use std::borrow::Cow;
-use std::ops::Range;
 
 use crate::cst::*;
 use crate::lexer::*;
@@ -19,7 +18,7 @@ enum ErrMsg<'a> {
 
 #[derive(Debug, Clone)]
 struct ParseErr<'a> {
-    span: Range<usize>,
+    index: usize,
     message: ErrMsg<'a>,
 }
 
@@ -30,23 +29,23 @@ impl<'src, 'tok, O, F> Parser<'src, 'tok, O> for F where
 }
 
 impl<'a> ParseErr<'a> {
-    fn unexpected(span: Range<usize>) -> ParseErr<'a> {
+    fn unexpected(index: usize) -> ParseErr<'a> {
         ParseErr {
-            span,
+            index,
             message: ErrMsg::Unexpected,
         }
     }
 
-    fn expected(exp: impl Into<Cow<'a, str>>, span: Range<usize>) -> ParseErr<'a> {
+    fn expected(exp: impl Into<Cow<'a, str>>, index: usize) -> ParseErr<'a> {
         ParseErr {
-            span,
+            index,
             message: ErrMsg::Expected(exp.into()),
         }
     }
 
-    fn custom(msg: impl Into<Cow<'a, str>>, span: Range<usize>) -> ParseErr<'a> {
+    fn custom(msg: impl Into<Cow<'a, str>>, index: usize) -> ParseErr<'a> {
         ParseErr {
-            span,
+            index,
             message: ErrMsg::Custom(msg.into()),
         }
     }
@@ -68,7 +67,7 @@ macro_rules! first_of {
     ($ctx:expr, $name:literal, $($parser:expr),+) => {
         'first_of: {
             // Set a default error if none of the choices make progress
-            $ctx.set_error($ctx.cursor, ParseErr::expected($name, $ctx.cursor..$ctx.cursor+1));
+            $ctx.set_error($ctx.cursor, ParseErr::expected($name, $ctx.cursor));
 
             $(
                 let before = $ctx.save();
@@ -110,8 +109,8 @@ pub fn true_span(start: usize, end: usize, input: &[SToken]) -> Span {
         input.last().map_or(0, |t| t.span.end)
     };
 
-    let end = if end <= input.len() {
-        input[end.saturating_sub(1)].span.end
+    let end = if end < input.len() {
+        input[end].span.start
     } else {
         input.last().map_or(0, |t| t.span.end)
     };
@@ -149,11 +148,15 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     fn take_error(&mut self) -> (usize, ParseErr<'src>) {
         self.cur_error
             .take()
-            .unwrap_or((0, ParseErr::expected("unknown error", 0..0)))
+            .unwrap_or((0, ParseErr::expected("unknown error", 0)))
     }
 
     fn span_from(&self, start: usize) -> Span {
-        true_span(start, self.cursor, self.input)
+        let span = true_span(start, self.cursor, self.input);
+        if span.start > span.end {
+            panic!("Invalid span")
+        }
+        span
     }
 
     fn next_token(&mut self) -> Option<&'tok SToken<'src>> {
@@ -179,10 +182,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        Err(self.set_error(
-            start,
-            ParseErr::expected(format!("{}", token), start..self.cursor),
-        ))
+        Err(self.set_error(start, ParseErr::expected(format!("{}", token), start)))
     }
 
     fn symbol(&mut self, sym: &'static str) -> ParseResult<&'tok SToken<'src>> {
@@ -208,7 +208,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        Err(self.set_error(start, ParseErr::expected("identifier", start..self.cursor)))
+        Err(self.set_error(start, ParseErr::expected("identifier", start)))
     }
 
     fn literal(&mut self) -> ParseResult<&'tok SToken<'src>> {
@@ -222,7 +222,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        Err(self.set_error(start, ParseErr::expected("literal", start..self.cursor)))
+        Err(self.set_error(start, ParseErr::expected("literal", start)))
     }
 
     fn listing<O: std::fmt::Debug>(
@@ -385,19 +385,13 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn open_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
-        self.set_error(
-            self.cursor,
-            ParseErr::expected("open pattern", self.cursor..self.cursor + 1),
-        );
+        self.set_error(self.cursor, ParseErr::expected("open pattern", self.cursor));
 
         let before_star = self.cursor;
 
         let item = self.pattern_sequence_item()?;
 
-        self.set_error(
-            self.cursor,
-            ParseErr::unexpected(self.cursor..self.cursor + 1),
-        );
+        self.set_error(self.cursor, ParseErr::unexpected(self.cursor));
 
         let comma = optional!(self, |ctx: &mut Self| ctx.symbol(","))?;
 
@@ -407,10 +401,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 PatternSequenceItem::Spread { .. } => {
                     return Err(self.set_error(
                         before_star,
-                        ParseErr::custom(
-                            "Spread is not allowed outside of tuples",
-                            before_star..before_star + 1,
-                        ),
+                        ParseErr::custom("Spread is not allowed outside of tuples", before_star),
                     ));
                 }
             }
@@ -423,10 +414,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         }];
 
         loop {
-            self.set_error(
-                self.cursor,
-                ParseErr::expected("pattern", self.cursor..self.cursor + 1),
-            );
+            self.set_error(self.cursor, ParseErr::expected("pattern", self.cursor));
 
             let Some(item) = optional!(self, Self::pattern_sequence_item)? else {
                 break;
@@ -841,10 +829,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 }
             }
 
-            return Err(self.set_error(
-                start,
-                ParseErr::expected("f-string begin", start..self.cursor),
-            ));
+            return Err(self.set_error(start, ParseErr::expected("f-string begin", start)));
         };
 
         let mut parts = Vec::new();
@@ -874,10 +859,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     }
                 }
 
-                return Err(self.set_error(
-                    start,
-                    ParseErr::expected("f-string continue", start..self.cursor),
-                ));
+                return Err(self.set_error(start, ParseErr::expected("f-string continue", start)));
             };
 
             parts.push((fmt_expr, cont));
@@ -902,10 +884,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        Err(self.set_error(
-            start,
-            ParseErr::expected("specific symbol", start..self.cursor),
-        ))
+        Err(self.set_error(start, ParseErr::expected("specific symbol", start)))
     }
 
     fn binary_op(
@@ -997,7 +976,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
             self.set_error(
                 self.cursor,
-                ParseErr::expected("binary operation", self.cursor..self.cursor + 1),
+                ParseErr::expected("binary operation", self.cursor),
             );
 
             match self.binary_op(prec) {
@@ -1116,10 +1095,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         loop {
             let start = self.cursor;
 
-            self.set_error(
-                self.cursor,
-                ParseErr::unexpected(self.cursor..self.cursor + 1),
-            );
+            self.set_error(self.cursor, ParseErr::unexpected(self.cursor));
 
             let question = optional!(self, |ctx: &mut Self| ctx.symbol("?"))?;
 
@@ -1201,29 +1177,25 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         expr: expr.boxed(),
                         question,
                         args,
-                    }
-                    .spanned(self.span_from(start)),
+                    },
                     Postfix::MethodCall { dot, method, args } => Expr::MethodCall {
                         expr: expr.boxed(),
                         question,
                         dot,
                         method,
                         args,
-                    }
-                    .spanned(self.span_from(start)),
+                    },
                     Postfix::Subscript { indices } => Expr::Subscript {
                         expr: expr.boxed(),
                         question,
                         indices,
-                    }
-                    .spanned(self.span_from(start)),
+                    },
                     Postfix::RawAttribute { double_colon, attr } => Expr::RawAttribute {
                         expr: expr.boxed(),
                         question,
                         double_colon,
                         attr,
-                    }
-                    .spanned(self.span_from(start)),
+                    },
                     Postfix::ScopedAttribute {
                         dot,
                         lparen,
@@ -1236,15 +1208,13 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         lparen,
                         rhs: rhs.boxed(),
                         rparen,
-                    }
-                    .spanned(self.span_from(start)),
+                    },
                     Postfix::Attribute { dot, attr } => Expr::Attribute {
                         expr: expr.boxed(),
                         question,
                         dot,
                         attr,
-                    }
-                    .spanned(self.span_from(start)),
+                    },
                     Postfix::Decorator {
                         ampersand,
                         decorator,
@@ -1252,10 +1222,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         if question.is_some() {
                             return Err(self.set_error(
                                 start,
-                                ParseErr::custom(
-                                    "Decorator cannot be used with ? operator",
-                                    start..self.cursor,
-                                ),
+                                ParseErr::custom("Decorator cannot be used with ? operator", start),
                             ));
                         }
                         Expr::Decorated {
@@ -1263,9 +1230,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                             ampersand,
                             decorator: decorator.boxed(),
                         }
-                        .spanned(self.span_from(start))
                     }
-                },
+                }
+                .spanned(self.span_from(start)),
                 Err(_) => {
                     break;
                 }
@@ -1279,6 +1246,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         &mut self,
         next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
     ) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
         let has_start = |ctx: &mut Self| {
             let start_cursor = ctx.cursor;
 
@@ -1336,7 +1305,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     step_dots: Some(step_dots),
                     step: step.map(|x| x.boxed()),
                 }
-                .spanned(ctx.span_from(dots.span.start)))
+                .spanned(ctx.span_from(start)))
             } else {
                 Ok(Expr::Slice {
                     start: None,
@@ -1345,7 +1314,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     step_dots: None,
                     step: None,
                 }
-                .spanned(ctx.span_from(dots.span.start)))
+                .spanned(ctx.span_from(start)))
             }
         };
 
@@ -1437,23 +1406,15 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let yield_variant = optional!(self, |ctx: &mut Self| {
             let yield_kw = ctx.keyword("yield")?;
-            let from_kw = optional!(ctx, |ctx: &mut Self| ctx.keyword("from"))?;
+            let from_kw = optional!(ctx, |ctx: &mut Self| ctx.ident("from"))?;
             let expr = ctx.parse(next_level)?;
 
-            if let Some(from_kw) = from_kw {
-                Ok(Expr::YieldFrom {
-                    yield_kw,
-                    from_kw,
-                    expr: expr.boxed(),
-                }
-                .spanned(ctx.span_from(start)))
-            } else {
-                Ok(Expr::Yield {
-                    yield_kw,
-                    expr: expr.boxed(),
-                }
-                .spanned(ctx.span_from(start)))
+            Ok(Expr::Yield {
+                yield_kw,
+                from_kw,
+                expr: expr.boxed(),
             }
+            .spanned(ctx.span_from(start)))
         })?;
 
         if let Some(yield_expr) = yield_variant {
@@ -1492,10 +1453,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn expr_with_prec(&mut self, level: ExprPrec) -> ParseResult<SExpr<'src, 'tok>> {
-        self.set_error(
-            self.cursor,
-            ParseErr::expected("expression", self.cursor..self.cursor + 1),
-        );
+        self.set_error(self.cursor, ParseErr::expected("expression", self.cursor));
 
         let atom = |ctx: &mut Self| ctx.atom();
         let postfix = |ctx: &mut Self| ctx.postfix_expr(&atom);
@@ -1664,8 +1622,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let mut expr = next_level(self)?;
 
         let parsed = optional!(self, |ctx: &mut Self| {
-            let matches_kw = ctx.ident("matches")?;
             let not_kw = optional!(ctx, |ctx: &mut Self| ctx.keyword("not"))?;
+            let matches_kw = ctx.ident("matches")?;
             let pattern = ctx.as_pattern()?;
             Ok((matches_kw, not_kw, pattern))
         })?;
@@ -1748,7 +1706,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     fn open_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
         self.set_error(
             self.cursor,
-            ParseErr::expected("open expression", self.cursor..self.cursor + 1),
+            ParseErr::expected("open expression", self.cursor),
         );
 
         let before_star = self.cursor;
@@ -1761,10 +1719,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             if let Some(_) = star {
                 return Err(self.set_error(
                     before_star,
-                    ParseErr::custom(
-                        "Spread is not allowed outside of tuples",
-                        before_star..before_star + 1,
-                    ),
+                    ParseErr::custom("Spread is not allowed outside of tuples", before_star),
                 ));
             }
 
@@ -1786,7 +1741,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         loop {
             self.set_error(
                 self.cursor,
-                ParseErr::expected("expression or spread", self.cursor..self.cursor + 1),
+                ParseErr::expected("expression or spread", self.cursor),
             );
 
             let parsed = optional!(self, |ctx: &mut Self| {
@@ -2241,13 +2196,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let body = self.stmts()?;
 
         if self.cursor != self.input.len() {
-            return Err(self.set_error(
-                self.cursor,
-                ParseErr::custom(
-                    "Unexpected tokens after program end",
-                    self.cursor..self.input.len(),
-                ),
-            ));
+            return Err(self.set_error(self.cursor, ParseErr::unexpected(self.cursor)));
         }
 
         Ok(Expr::Block {
@@ -2285,13 +2234,15 @@ pub fn parse_tokens<'src: 'tok, 'tok>(
         }
     };
 
+    // println!("{:#?}", expr);
+
     (
         expr,
         ctx.errors
             .iter()
             .map(|err| {
                 TriviaRich::custom(
-                    true_span(err.span.start, err.span.end, ctx.input),
+                    true_span(err.index, err.index + 1, ctx.input),
                     format!("{:?}", err.message),
                 )
             })

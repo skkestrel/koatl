@@ -290,7 +290,7 @@ pub fn parse_tl<'src>(src: &'src str) -> (Option<SExpr<'src>>, TlErrs) {
 
     if let Some(cst) = tl_cst {
         // println!("{:#?}", cst);
-        let tl_ast = lift_cst::lift_cst(&cst, &tokens);
+        let tl_ast = lift_cst::lift_cst(&cst);
         // println!("{:#?}", tl_ast);
         (Some(*tl_ast), errs)
     } else {
