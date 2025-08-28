@@ -152,7 +152,7 @@ export Iterable = class(Traversable, Trait):
         return Err()
 
     first = self =>
-        (try next(self.iter)).map_err(_ => None)
+        (check next(self.iter)).map_err(_ => None)
 
     last = (self, f) =>
         let result = Err()

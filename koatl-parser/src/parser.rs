@@ -5,12 +5,14 @@ use std::borrow::Cow;
 use crate::cst::*;
 use crate::lexer::*;
 use crate::parser_error::TriviaRich;
+use crate::simple_fmt::SimpleFmt;
 
 const START_BLOCK: Token = Token::Symbol(":");
 
 #[derive(Debug, Clone)]
 enum ErrMsg<'a> {
     Unexpected,
+    Trailing,
     Expected(Cow<'a, str>),
     Custom(Cow<'a, str>),
 }
@@ -25,29 +27,6 @@ trait Parser<'src, 'tok, O>: Fn(&mut ParseCtx<'src, 'tok>) -> ParseResult<O> {}
 impl<'src, 'tok, O, F> Parser<'src, 'tok, O> for F where
     F: Clone + Fn(&mut ParseCtx<'src, 'tok>) -> ParseResult<O>
 {
-}
-
-impl<'a> ParseErr<'a> {
-    fn unexpected(index: usize) -> ParseErr<'a> {
-        ParseErr {
-            index,
-            message: ErrMsg::Unexpected,
-        }
-    }
-
-    fn expected(exp: impl Into<Cow<'a, str>>, index: usize) -> ParseErr<'a> {
-        ParseErr {
-            index,
-            message: ErrMsg::Expected(exp.into()),
-        }
-    }
-
-    fn custom(msg: impl Into<Cow<'a, str>>, index: usize) -> ParseErr<'a> {
-        ParseErr {
-            index,
-            message: ErrMsg::Custom(msg.into()),
-        }
-    }
 }
 
 type ParseResult<T> = Result<T, ()>;
@@ -66,7 +45,7 @@ macro_rules! first_of {
     ($ctx:expr, $name:literal, $($parser:expr),+) => {
         'first_of: {
             // Set a default error if none of the choices make progress
-            $ctx.set_error($ctx.cursor, ParseErr::expected($name, $ctx.cursor));
+            $ctx.set_error($ctx.cursor, ErrMsg::Expected($name.into()));
 
             $(
                 let before = $ctx.save();
@@ -98,7 +77,7 @@ macro_rules! optional {
 enum ExprPrec {
     CaseGuard,
     All,
-    Tryable,
+    Checkable,
     Inline,
 }
 
@@ -135,22 +114,38 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         self.cursor += 1;
     }
 
-    fn set_error(&mut self, cursor: usize, err: ParseErr<'src>) {
+    fn set_error(&mut self, cursor: usize, err: ErrMsg<'src>) {
         // println!("set_error {} {:?}", cursor, err);
 
         if let Some((furthest_cursor, _)) = &self.cur_error {
             if cursor > *furthest_cursor {
-                self.cur_error = Some((cursor, err));
+                self.cur_error = Some((
+                    cursor,
+                    ParseErr {
+                        message: err,
+                        index: cursor,
+                    },
+                ));
             }
         } else {
-            self.cur_error = Some((cursor, err));
+            self.cur_error = Some((
+                cursor,
+                ParseErr {
+                    message: err,
+                    index: cursor,
+                },
+            ));
         }
     }
 
     fn take_error(&mut self) -> (usize, ParseErr<'src>) {
-        self.cur_error
-            .take()
-            .unwrap_or((0, ParseErr::expected("unknown error", 0)))
+        self.cur_error.take().unwrap_or((
+            0,
+            ParseErr {
+                message: ErrMsg::Custom("unknown error".into()),
+                index: 0,
+            },
+        ))
     }
 
     fn span_from(&self, start: usize) -> Span {
@@ -184,7 +179,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        Err(self.set_error(start, ParseErr::expected(format!("{}", token), start)))
+        Err(self.set_error(start, ErrMsg::Expected(format!("{}", token).into())))
     }
 
     fn symbol(&mut self, sym: &'static str) -> ParseResult<&'tok SToken<'src>> {
@@ -210,7 +205,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        Err(self.set_error(start, ParseErr::expected("identifier", start)))
+        Err(self.set_error(start, ErrMsg::Expected("identifier".into())))
     }
 
     fn literal(&mut self) -> ParseResult<&'tok SToken<'src>> {
@@ -224,7 +219,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        Err(self.set_error(start, ParseErr::expected("literal", start)))
+        Err(self.set_error(start, ErrMsg::Expected("literal".into())))
     }
 
     fn listing<O: std::fmt::Debug>(
@@ -309,11 +304,13 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 }
             }
 
+            let newline = optional!(ctx, |ctx: &mut Self| ctx.token(&Token::Eol))?;
             let end = ctx.symbol(end)?;
 
             Ok(Listing::Inline {
                 begin,
                 items: acc,
+                newline,
                 end,
             })
         };
@@ -332,23 +329,24 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         }
         .spanned(self.span_from(start));
 
-        self.set_error(self.cursor, ParseErr::unexpected(self.cursor));
+        self.set_error(self.cursor, ErrMsg::Unexpected);
 
         loop {
             let parsed = optional!(self, |ctx| {
-                let dot = ctx.symbol(".")?;
+                let colon_or_dot = first_of!(ctx, ":: or .", |ctx| ctx.symbol("."), |ctx| ctx
+                    .symbol("::"))?;
                 let attr = ctx.any_ident()?;
-                Ok((dot, attr))
+                Ok((colon_or_dot, attr))
             })?;
 
-            let Some((dot, attr)) = parsed else {
+            let Some((double_colon, attr)) = parsed else {
                 break;
             };
 
-            expr = Expr::Attribute {
+            expr = Expr::RawAttribute {
                 expr: expr.boxed(),
                 question: None,
-                dot,
+                double_colon,
                 attr,
             }
             .spanned(self.span_from(start));
@@ -364,7 +362,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let mut alts = vec![];
 
         loop {
-            self.set_error(self.cursor, ParseErr::unexpected(self.cursor));
+            self.set_error(self.cursor, ErrMsg::Unexpected);
 
             let parsed = optional!(self, |ctx| {
                 let pipe = ctx.symbol("|")?;
@@ -391,13 +389,13 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn open_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
-        self.set_error(self.cursor, ParseErr::expected("open pattern", self.cursor));
+        self.set_error(self.cursor, ErrMsg::Expected("open pattern".into()));
 
         let before_star = self.cursor;
 
         let item = self.pattern_sequence_item()?;
 
-        self.set_error(self.cursor, ParseErr::unexpected(self.cursor));
+        self.set_error(self.cursor, ErrMsg::Unexpected);
 
         let comma = optional!(self, |ctx: &mut Self| ctx.symbol(","))?;
 
@@ -407,7 +405,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 PatternSequenceItem::Spread { .. } => {
                     return Err(self.set_error(
                         before_star,
-                        ParseErr::custom("Spread is not allowed outside of tuples", before_star),
+                        ErrMsg::Custom("Spread is not allowed outside of tuples".into()),
                     ));
                 }
             }
@@ -420,7 +418,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         }];
 
         loop {
-            self.set_error(self.cursor, ParseErr::expected("pattern", self.cursor));
+            self.set_error(self.cursor, ErrMsg::Expected("pattern".into()));
 
             let Some(item) = optional!(self, Self::pattern_sequence_item)? else {
                 break;
@@ -594,7 +592,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         let _lparen = ctx.symbol("(")?;
                         let expr = ctx.expr()?;
                         let _rparen = ctx.symbol(")")?;
-                        Ok(expr) // Return the parenthesized expression
+                        Ok(expr)
                     }
                 )?;
                 let colon = ctx.symbol(":")?;
@@ -748,8 +746,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     fn checked_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
         let start = self.cursor;
 
-        let try_kw = self.ident("check")?;
-        let expr = self.expr_with_prec(ExprPrec::Tryable)?;
+        let check_kw = self.ident("check")?;
+        let expr = self.expr_with_prec(ExprPrec::Checkable)?;
         let except_clause = optional!(self, |ctx: &mut Self| {
             let except_kw = ctx.keyword("except")?;
             let pattern = optional!(ctx, |ctx: &mut Self| ctx.atom_pattern())?;
@@ -763,7 +761,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         };
 
         Ok(Expr::Checked {
-            try_kw,
+            check_kw,
             expr: expr.boxed(),
             except_kw,
             pattern,
@@ -902,7 +900,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 }
             }
 
-            return Err(self.set_error(start, ParseErr::expected("f-string begin", start)));
+            return Err(self.set_error(start, ErrMsg::Expected("f-string begin".into())));
         };
 
         let mut parts = Vec::new();
@@ -940,7 +938,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     }
                 }
 
-                return Err(self.set_error(start, ParseErr::expected("f-string continue", start)));
+                return Err(self.set_error(start, ErrMsg::Expected("f-string continue".into())));
             };
 
             parts.push((fmt_expr, cont));
@@ -965,7 +963,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        Err(self.set_error(start, ParseErr::expected("specific symbol", start)))
+        Err(self.set_error(start, ErrMsg::Expected("specific symbol".into())))
     }
 
     fn binary_op(
@@ -978,16 +976,16 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 Ok((None, op, BinaryOp::Pipe))
             }
             10 => {
+                let op = self.symbol("??")?;
+                Ok((None, op, BinaryOp::Coalesce))
+            }
+            9 => {
                 let op = self.keyword("or")?;
                 Ok((None, op, BinaryOp::Or))
             }
-            9 => {
+            8 => {
                 let op = self.keyword("and")?;
                 Ok((None, op, BinaryOp::And))
-            }
-            8 => {
-                let op = self.symbol("??")?;
-                Ok((None, op, BinaryOp::Coalesce))
             }
             7 => {
                 let res = first_of!(
@@ -1055,10 +1053,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         loop {
             let before_op = self.save();
 
-            self.set_error(
-                self.cursor,
-                ParseErr::expected("binary operation", self.cursor),
-            );
+            self.set_error(self.cursor, ErrMsg::Expected("binary operation".into()));
 
             match self.binary_op(prec) {
                 Ok((not_token, op, op_kind)) => {
@@ -1171,11 +1166,14 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         loop {
             let start = self.cursor;
 
-            self.set_error(self.cursor, ParseErr::unexpected(self.cursor));
+            self.set_error(self.cursor, ErrMsg::Unexpected);
 
             let question = optional!(self, |ctx: &mut Self| ctx.symbol("?"))?;
 
-            self.set_error(self.cursor, ParseErr::unexpected(self.cursor));
+            self.set_error(
+                self.cursor,
+                ErrMsg::Expected("attribute, call, or index".into()),
+            );
 
             let call = |ctx: &mut Self| {
                 let args = ctx.listing("(", ")", Token::Symbol(","), |ctx| ctx.call_item())?;
@@ -1300,7 +1298,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         if question.is_some() {
                             return Err(self.set_error(
                                 start,
-                                ParseErr::custom("Decorator cannot be used with ? operator", start),
+                                ErrMsg::Custom("Decorator cannot be used with ? operator".into()),
                             ));
                         }
                         Expr::Decorated {
@@ -1554,7 +1552,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn expr_with_prec(&mut self, level: ExprPrec) -> ParseResult<SExpr<'src, 'tok>> {
-        self.set_error(self.cursor, ParseErr::expected("expression", self.cursor));
+        self.set_error(self.cursor, ErrMsg::Expected("expression".into()));
 
         let atom = |ctx: &mut Self| ctx.atom();
         let postfix = |ctx: &mut Self| ctx.postfix_expr(&atom);
@@ -1577,16 +1575,18 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let memo = |ctx: &mut Self| ctx.memo_expr(&binary10);
         let with_ = |ctx: &mut Self| ctx.with_expr(&memo);
         let if_ = |ctx: &mut Self| ctx.if_expr(&with_);
+
         let match_ = |ctx: &mut Self| ctx.match_expr(&if_);
         let function = |ctx: &mut Self| ctx.function_expr();
         let function_or_match =
             |ctx: &mut Self| first_of!(ctx, "function or match", &function, &match_);
+
         let binary11 = |ctx: &mut Self| ctx.binary_expr(11, &function_or_match);
 
         match level {
             ExprPrec::All => binary11(self),
             ExprPrec::CaseGuard => binary10(self),
-            ExprPrec::Tryable => not_expr(self),
+            ExprPrec::Checkable => binary9(self),
             ExprPrec::Inline => function_or_match(self),
         }
     }
@@ -1801,10 +1801,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn open_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
-        self.set_error(
-            self.cursor,
-            ParseErr::expected("open expression", self.cursor),
-        );
+        self.set_error(self.cursor, ErrMsg::Expected("open expression".into()));
 
         let before_star = self.cursor;
 
@@ -1816,7 +1813,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             if let Some(_) = star {
                 return Err(self.set_error(
                     before_star,
-                    ParseErr::custom("Spread is not allowed outside of tuples", before_star),
+                    ErrMsg::Custom("Spread is not allowed outside of tuples".into()),
                 ));
             }
 
@@ -1836,10 +1833,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         }];
 
         loop {
-            self.set_error(
-                self.cursor,
-                ParseErr::expected("expression or spread", self.cursor),
-            );
+            self.set_error(self.cursor, ErrMsg::Expected("expression or spread".into()));
 
             let parsed = optional!(self, |ctx: &mut Self| {
                 let star = optional!(ctx, |ctx: &mut Self| ctx.symbol("*"))?;
@@ -1936,7 +1930,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let start = self.cursor;
         let mut dots = Vec::new();
 
-        self.set_error(self.cursor, ParseErr::expected("import path", self.cursor));
+        self.set_error(self.cursor, ErrMsg::Expected("import path".into()));
 
         loop {
             let Some(tok) = self.peek_token() else {
@@ -2148,7 +2142,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 let mut acc = vec![];
                 loop {
                     let Some(except) = optional!(ctx, |ctx| {
-                        optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
+                        ctx.token(&Token::Eol)?;
                         ctx.keyword("except")
                     })?
                     else {
@@ -2156,6 +2150,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     };
 
                     let pattern = ctx.open_pattern()?;
+
+                    ctx.set_error(ctx.cursor, ErrMsg::Expected("guard or =>".into()));
 
                     let guard = optional!(ctx, |ctx: &mut Self| {
                         let if_kw = ctx.keyword("if")?;
@@ -2299,7 +2295,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let body = self.stmts()?;
 
         if self.cursor != self.input.len() {
-            return Err(self.set_error(self.cursor, ParseErr::unexpected(self.cursor)));
+            return Err(self.set_error(self.cursor, ErrMsg::Trailing));
         }
 
         Ok(body)

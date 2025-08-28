@@ -112,6 +112,9 @@ impl<'src, 'tok> Lift<ast::MappingItem<ast::STree<'src>>>
             ),
             cst::MappingItem::Item { key, value, .. } => {
                 let key_expr = match key {
+                    cst::MappingKey::Unit { .. } => {
+                        ast::Expr::Tuple(vec![]).spanned(key.span).indirect()
+                    }
                     cst::MappingKey::Ident { token } => ast::Expr::Literal(
                         ast::Literal::Str(token.lift_as_ident().value.0).spanned(token.span),
                     )
@@ -168,12 +171,6 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                 ast::Expr::If(cond.lift(), body.lift(), else_expr)
             }
             cst::Expr::Parenthesized { expr, .. } => return expr.lift(),
-            cst::Expr::Subscript { expr, indices, .. } => {
-                ast::Expr::Subscript(expr.lift(), indices.lift())
-            }
-            cst::Expr::Attribute { expr, attr, .. } => {
-                ast::Expr::Attribute(expr.lift(), attr.lift_as_ident())
-            }
             cst::Expr::Slice {
                 start, stop, step, ..
             } => ast::Expr::Slice(
@@ -274,28 +271,57 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                 body,
                 ..
             } => ast::Expr::With(pattern.lift(), value.lift(), body.lift()),
+            cst::Expr::Subscript {
+                expr,
+                indices,
+                question,
+            } => {
+                if question.is_some() {
+                    ast::Expr::MappedSubscript(expr.lift(), indices.lift())
+                } else {
+                    ast::Expr::Subscript(expr.lift(), indices.lift())
+                }
+            }
+            cst::Expr::Attribute {
+                expr,
+                attr,
+                question,
+                ..
+            } => {
+                if question.is_some() {
+                    ast::Expr::MappedAttribute(expr.lift(), attr.lift_as_ident())
+                } else {
+                    ast::Expr::Attribute(expr.lift(), attr.lift_as_ident())
+                }
+            }
             cst::Expr::MethodCall {
                 expr,
                 question,
-                dot: _,
                 method,
                 args,
+                ..
             } => {
                 if question.is_some() {
-                    ast::Expr::MappedCall(expr.lift(), args.lift())
+                    ast::Expr::MappedCall(
+                        ast::Expr::MappedAttribute(expr.lift(), method.lift_as_ident())
+                            .spanned(method.span)
+                            .indirect(),
+                        args.lift(),
+                    )
                 } else {
-                    // For regular method calls, we need to convert to a Call with the method as an attribute
-                    let method_expr = ast::Expr::Attribute(expr.lift(), method.lift_as_ident())
-                        .spanned(method.span)
-                        .indirect();
-                    ast::Expr::Call(method_expr, args.lift())
+                    ast::Expr::Call(
+                        ast::Expr::Attribute(expr.lift(), method.lift_as_ident())
+                            .spanned(method.span)
+                            .indirect(),
+                        args.lift(),
+                    )
                 }
             }
             cst::Expr::RawAttribute {
                 expr,
                 question,
-                double_colon: _,
                 attr,
+                ..
             } => {
                 if question.is_some() {
                     ast::Expr::MappedRawAttribute(expr.lift(), attr.lift_as_ident())
@@ -306,10 +332,8 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
             cst::Expr::ScopedAttribute {
                 expr,
                 question,
-                dot: _,
-                lparen: _,
                 rhs,
-                rparen: _,
+                ..
             } => {
                 if question.is_some() {
                     ast::Expr::MappedScopedAttribute(expr.lift(), rhs.lift())
@@ -317,12 +341,9 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                     ast::Expr::ScopedAttribute(expr.lift(), rhs.lift())
                 }
             }
-            cst::Expr::Checked {
-                try_kw: _,
-                expr,
-                except_kw: _,
-                pattern,
-            } => ast::Expr::Try(expr.lift(), pattern.as_ref().map(|p| p.lift())),
+            cst::Expr::Checked { expr, pattern, .. } => {
+                ast::Expr::Try(expr.lift(), pattern.as_ref().map(|p| p.lift()))
+            }
             cst::Expr::Error => panic!("Cannot lift error expression"),
         };
         expr.spanned(self.span).indirect()

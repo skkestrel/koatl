@@ -671,9 +671,9 @@ impl<'src, 'tok, T> SListing<'src, 'tok, T> {
             SListing::Block {
                 begin, items, end, ..
             }
-            | SListing::Inline { begin, items, end } => {
-                (begin.simple_fmt(), items, end.simple_fmt())
-            }
+            | SListing::Inline {
+                begin, items, end, ..
+            } => (begin.simple_fmt(), items, end.simple_fmt()),
             SListing::Open { items } => ("(".to_string(), items, ")".to_string()),
         };
 

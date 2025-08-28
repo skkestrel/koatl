@@ -28,6 +28,7 @@ pub enum Listing<T, TTree: Tree> {
     Inline {
         begin: TTree::Token,
         items: Vec<ListingItem<T, TTree>>,
+        newline: Option<TTree::Token>,
         end: TTree::Token,
     },
 
@@ -152,6 +153,10 @@ pub enum ListItem<TTree: Tree> {
 pub enum MappingKey<TTree: Tree> {
     Ident {
         token: TTree::Token,
+    },
+    Unit {
+        lparen: TTree::Token,
+        rparen: TTree::Token,
     },
     Literal {
         token: TTree::Token,
@@ -458,7 +463,7 @@ pub enum Expr<TTree: Tree> {
     },
 
     Checked {
-        try_kw: TTree::Token,
+        check_kw: TTree::Token,
         expr: TTree::Expr,
         except_kw: Option<TTree::Token>,
         pattern: Option<TTree::Pattern>,
@@ -512,12 +517,31 @@ pub enum PatternSequenceItem<TTree: Tree> {
 }
 
 #[derive(Debug, Clone)]
+pub enum PatternMappingKey<TTree: Tree> {
+    Ident {
+        token: TTree::Token,
+    },
+    Unit {
+        lparen: TTree::Token,
+        rparen: TTree::Token,
+    },
+    Literal {
+        token: TTree::Token,
+    },
+    Expr {
+        lparen: TTree::Token,
+        key: TTree::Expr,
+        rparen: TTree::Token,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub enum PatternMappingItem<TTree: Tree> {
     Ident {
         name: TTree::Token,
     },
     Item {
-        key: TTree::Expr,
+        key: PatternMappingKey<TTree>,
         colon: TTree::Token,
         pattern: TTree::Pattern,
     },

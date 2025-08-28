@@ -3,7 +3,7 @@ import util.assert_eq
 # precedence
 assert_eq(check 1 ?? 2, 1)
 assert_eq(check z ?? 2, 2)
-assert_eq(check z matches Err(), True)
+assert_eq((check z) matches Err(), True)
 assert_eq((check z).value matches NameError(), True)
 assert_eq(check z ?? check 1 ?? 2, 1)
 assert_eq(check z ?? check None ?? 2, None)
@@ -23,7 +23,7 @@ try:
 except _ =>
     None
 
-assert_eq(check 1 matches Ok(1), True)
+assert_eq((check 1) matches Ok(1), True)
 
 assert_eq((check 5)?.($+1), Ok(6))
 assert_eq((check x)?.($+1) matches Err(), True)

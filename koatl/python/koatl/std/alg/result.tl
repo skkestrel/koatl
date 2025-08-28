@@ -5,7 +5,7 @@ infer_ok = x =>
     x match:
         None => False
         BaseException() => False
-        default True
+        _ => True
 
 op_coal = (x, f) =>
     if x matches Result():

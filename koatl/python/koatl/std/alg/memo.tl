@@ -24,7 +24,7 @@ export Memo = class(MonadOnce):
 
         __repr__ = self => f"Memo.Cache({self.cache})"
 
-        try_get = (self, name, deps) => try self.cache[name][deps] except KeyError()
+        try_get = (self, name, deps) => check self.cache[name][deps] except KeyError()
 
         update = (self, name, deps, value) =>
             self.cache[name][deps] = value

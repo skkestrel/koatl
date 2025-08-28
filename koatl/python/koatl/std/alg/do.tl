@@ -10,7 +10,7 @@ export do = f => wraps(f)& (*args, **kwargs) =>
     except StopIteration() as e =>
         raise ValueError(
             "Returning before `@` is not allowed. "
-                "Use `return @MonadType.pure(value)` instead."
+                + "Use `return @MonadType.pure(value)` instead."
         )
 
     try:
