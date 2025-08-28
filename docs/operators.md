@@ -42,14 +42,14 @@ data
 
 `x.(f)` means the same thing, but with higher precedence.
 
-## Try-expressions
+## Check-expressions
 
-Try-expressions elegantly interface with the outside world without breaking the flow of a program with a try-catch block, instead returning exceptions as a regular value wrapped in Result:
+Check-expressions elegantly interface with the outside world without breaking the flow of a program with a try-catch block, instead returning exceptions as a regular value wrapped in Result:
 
 ```koatl
->>> try a
+>>> check a
 Err(NameError(...))
->>> try 1
+>>> check 1
 Ok(1)
 ```
 
@@ -103,7 +103,7 @@ This makes regex matching especially convenient:
 If-matches-not expressions can also be used to conditionally destructure values:
 
 ```koatl
-if 123 matches not str(x):
+if 123 not matches str(x):
     # this block must be of bottom type, i.e., return, break, continue, or throw
     return None
 

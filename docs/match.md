@@ -74,27 +74,27 @@ result = x match:
 result = x match [_] => True default False
 ```
 
-## Try-catch and try-expressions with pattern matching exceptions
+## Try-catch and check-expressions with pattern matching exceptions
 
 Koatl unifies exception blocks with the same syntax as pattern matching:
 
 ```koatl
 try:
     x
-except NameError() as x:
+except NameError() as x =>
     ()
 
 try:
     do_something()
-except CustomException(msg=msg) | OtherException(msg=msg):
+except CustomException(msg=msg) | OtherException(msg=msg) =>
     print(msg)
 ```
 
-Try-expressions (see [Operators](operators)) also have an optional match-filter to limit the types of exceptions caught:
+Check-expressions (see [Operators](operators)) also have an optional match-filter to limit the types of exceptions caught:
 
 ```koatl
-x = try a except NameError() # caught
-y = try a except ValueError() # exception will be raised!
+x = check a except NameError() # caught
+y = check a except ValueError() # exception will be raised!
 ```
 
 ## Matches-expressions and guards
@@ -109,10 +109,10 @@ and the bound names are available in the following block:
 1 [2, 3]
 ```
 
-`matches not` is the inverse; and bound names are available afterwards, but only if the type of the next block is Never (i.e., it raises, returns, breaks, or continues at the end)
+`not matches` is the inverse; and bound names are available afterwards, but only if the type of the next block is Never (i.e., it raises, returns, breaks, or continues at the end)
 
 ```koatl
->>> if [1, 2] matches not [x, y]:
+>>> if [1, 2] not matches [x, y]:
 >>>     raise
 >>> print(x, y)
 1 2
@@ -121,5 +121,5 @@ and the bound names are available in the following block:
 These restrictions can be avoided by making sure to not bind any names in the pattern:
 
 ```koatl
->>> x = [1, 2] matches not [_, _]
+>>> x = [1, 2] not matches [_, _]
 ```

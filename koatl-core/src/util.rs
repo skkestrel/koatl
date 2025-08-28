@@ -1,6 +1,6 @@
 use std::hash::Hash;
 
-use parser::ast::Span;
+use koatl_parser::lexer::Span;
 
 pub struct LineColCache {
     line_starts: Vec<usize>,

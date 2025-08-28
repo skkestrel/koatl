@@ -21,7 +21,7 @@ export Iterable = class(Traversable, Trait):
                 let value = next(it)
                 if not f(value):
                     return Iterable.chain([value], it)
-            except StopIteration():
+            except StopIteration() =>
                 return it
 
     take = (self, n) =>
@@ -30,7 +30,7 @@ export Iterable = class(Traversable, Trait):
             for _ in ..n:
                 try:
                     yield next(it)
-                except StopIteration(value=value):
+                except StopIteration(value=value) =>
                     return value
 
         impl.__name__ = f"take"
@@ -152,7 +152,7 @@ export Iterable = class(Traversable, Trait):
         return Err()
 
     first = self =>
-        (try next(self.iter)).map_err(_ => None)
+        (check next(self.iter)).map_err(_ => None)
 
     last = (self, f) =>
         let result = Err()
@@ -212,7 +212,7 @@ export Iterable = class(Traversable, Trait):
                 m = v
             else:
                 m = key(v)
-        except StopIteration(value=value):
+        except StopIteration(value=value) =>
             raise ValueError("max of empty iterable")
 
 
@@ -239,7 +239,7 @@ export Iterable = class(Traversable, Trait):
                 m = v
             else:
                 m = key(v)
-        except StopIteration(value=value):
+        except StopIteration(value=value) =>
             raise ValueError("min of empty iterable")
 
         if key === None:
@@ -272,7 +272,7 @@ export Iterable = class(Traversable, Trait):
         let v
         try:
             v = next(it)
-        except StopIteration():
+        except StopIteration() =>
             return []
 
         let m = f(v)

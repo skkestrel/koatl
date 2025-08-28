@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use parser::ast::*;
+use crate::ast::*;
 
 use crate::{
     resolve_scopes::ResolveState,
@@ -39,16 +39,6 @@ impl<'src, 'ast> SStmtExt<'src, 'ast> for Indirect<SStmt<'src>> {
             Stmt::For(_pattern, iter, body) => {
                 iter.traverse(ctx);
                 body.traverse(ctx);
-                Type::NoReturn
-            }
-            Stmt::Try(body, cases, finally) => {
-                body.traverse(ctx);
-                for case in cases {
-                    case.body.traverse(ctx);
-                }
-                if let Some(finally) = finally {
-                    finally.traverse(ctx);
-                }
                 Type::NoReturn
             }
             Stmt::Raise(..) | Stmt::Return(..) | Stmt::Break | Stmt::Continue => Type::Bottom,
@@ -159,6 +149,16 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
                 expr.traverse(ctx);
                 Type::Any
             }
+            Expr::Try(body, cases, finally) => {
+                body.traverse(ctx);
+                for case in cases {
+                    case.body.traverse(ctx);
+                }
+                if let Some(finally) = finally {
+                    finally.traverse(ctx);
+                }
+                Type::Any
+            }
             Expr::Match(subject, cases) => {
                 subject.traverse(ctx);
 
@@ -171,17 +171,13 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
                         is_bottom = false;
                     }
 
-                    if let Some(pattern) = case.pattern.as_ref() {
-                        let meta = ctx
-                            .resolve_state
-                            .patterns
-                            .get(&pattern.as_ref().into())
-                            .unwrap();
+                    let meta = ctx
+                        .resolve_state
+                        .patterns
+                        .get(&case.pattern.as_ref().into())
+                        .unwrap();
 
-                        if meta.default {
-                            default_case = true;
-                        }
-                    } else {
+                    if meta.default {
                         default_case = true;
                     }
                 }

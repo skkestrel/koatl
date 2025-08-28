@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use parser::{
-    ast::Span,
+use koatl_parser::{
+    lexer::Span,
     lexer::{py_escape_fstr, py_escape_str},
 };
 
@@ -255,6 +255,8 @@ impl SPyPattern<'_> {
 impl PyBinaryOp {
     pub fn precedence(&self) -> f32 {
         match self {
+            PyBinaryOp::Or => -0.2,
+            PyBinaryOp::And => -0.1,
             PyBinaryOp::Eq
             | PyBinaryOp::Neq
             | PyBinaryOp::Lt
@@ -265,8 +267,10 @@ impl PyBinaryOp {
             | PyBinaryOp::Nis
             | PyBinaryOp::In
             | PyBinaryOp::Nin => 0.0,
-            PyBinaryOp::Or => 0.1,
-            PyBinaryOp::And => 0.2,
+            PyBinaryOp::BitOr => 0.5,
+            PyBinaryOp::BitXor => 0.6,
+            PyBinaryOp::BitAnd => 0.7,
+            PyBinaryOp::LShift | PyBinaryOp::RShift => 0.9,
             PyBinaryOp::Add | PyBinaryOp::Sub => 1.0,
             PyBinaryOp::Mult
             | PyBinaryOp::Div
@@ -299,6 +303,11 @@ impl PyBinaryOp {
             PyBinaryOp::Nin => "not in",
             PyBinaryOp::And => "and",
             PyBinaryOp::Or => "or",
+            PyBinaryOp::BitAnd => "&",
+            PyBinaryOp::BitXor => "^",
+            PyBinaryOp::BitOr => "|",
+            PyBinaryOp::LShift => "<<",
+            PyBinaryOp::RShift => ">>",
         });
     }
 }
@@ -889,9 +898,9 @@ impl SPyStmt<'_> {
 
 #[cfg(test)]
 mod tests {
-    use parser::ast::Span;
+    use koatl_parser::lexer::Span;
 
-    use crate::py::util::PyAstBuilder;
+    use crate::py::ast_builder::PyAstBuilder;
 
     use super::*;
 

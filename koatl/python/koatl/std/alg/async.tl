@@ -31,7 +31,7 @@ export Async = class(MonadOnce):
                 self = gen.send(yield from self.__await__())
                 if not hasattr(self, "__await__"):
                     raise ValueError(f"Expected the binder to return an Awaitable, but got {type(self).__name__}")
-        except StopIteration(value=value):
+        except StopIteration(value=value) =>
             return value
 
     pure = staticmethod& x => Async.from_generator_fn& () =>

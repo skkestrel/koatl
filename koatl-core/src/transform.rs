@@ -3,9 +3,10 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
+use crate::ast::*;
 use crate::{
     inference::InferenceCtx,
-    py::{ast::*, util::PyAstBuilder},
+    py::{ast::*, ast_builder::PyAstBuilder},
     resolve_scopes::{
         Declaration, DeclarationKey, FnInfo, PatternInfo, ResolveState, Scope, ScopeKey,
     },
@@ -13,7 +14,6 @@ use crate::{
     util::{LineColCache, RefHash, TlErrBuilder, TlErrs, TlResult},
 };
 use once_cell::sync::Lazy;
-use parser::ast::*;
 use slotmap::SlotMap;
 use std::hash::{Hash, Hasher};
 
@@ -414,7 +414,7 @@ fn transform_if_matches_not_never_expr<'src, 'ast>(
 
     if *typ != Type::Bottom {
         return Err(simple_err(
-            "then block of 'if ... matches not ...' with named captures must have type Never (raise, return, continue, break)",
+            "then block of 'if ... not matches ...' with named captures must have type Never (raise, return, continue, break)",
             span,
         ));
     }
@@ -551,10 +551,13 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
         }
 
         let transformed = match pattern {
-            Pattern::As(pattern, ident) => PyPattern::As(
-                Some(Box::new(pre.bind(pattern.transform(ctx, info)?))),
-                capture_slot(ctx, ident, info)?,
-            ),
+            Pattern::As(pattern, ident) => match ident {
+                Some(ident) => PyPattern::As(
+                    Some(Box::new(pre.bind(pattern.transform(ctx, info)?))),
+                    capture_slot(ctx, ident, info)?,
+                ),
+                None => pre.bind(pattern.transform(ctx, info)?).value,
+            },
             Pattern::Literal(literal) => match literal.value {
                 Literal::Num(..) | Literal::Str(..) => {
                     PyPattern::Value((PyExpr::Literal(literal.value.transform(ctx)?), span).into())
@@ -828,12 +831,9 @@ fn transform_match_expr<'src, 'ast>(
             ));
         }
 
-        let (pattern, default) = if let Some(pattern) = &case.pattern {
-            let info = ctx.pattern_info(pattern)?;
-            (pre.bind(pattern.transform(ctx, info)?), info.default)
-        } else {
-            ((PyPattern::As(None, None), *span).into(), true)
-        };
+        let info = ctx.pattern_info(&case.pattern)?;
+        let pattern = pre.bind(case.pattern.transform(ctx, info)?);
+        let default = info.default;
 
         if case.guard.is_none() {
             if default {
@@ -1413,6 +1413,7 @@ fn matching_except_handler<'src, 'ast>(
     ctx: &mut TlCtx<'src, 'ast>,
     var_name: PyIdent<'src>,
     handlers: &'ast [SMatchCase<'src>],
+    assign_match_value_to: Option<PyIdent<'src>>,
     span: &Span,
 ) -> TlResult<PyExceptHandler<'src>> {
     let a = PyAstBuilder::new(*span);
@@ -1442,6 +1443,9 @@ fn matching_except_handler<'src, 'ast>(
     }
 
     block.extend(match_stmt.pre);
+    if let Some(var_name) = assign_match_value_to {
+        block.push(a.assign(a.ident(var_name, PyAccessCtx::Store), match_stmt.value));
+    }
 
     Ok(PyExceptHandler {
         typ: None,
@@ -1634,21 +1638,6 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                     pre.push(a.while_(a.bool(true), new_body_block));
                 }
-            }
-            Stmt::Try(body, excepts, finally) => {
-                let body_block = body.transform(ctx)?.drop_expr(ctx);
-
-                let finally_block = if let Some(finally) = finally {
-                    Some(finally.transform(ctx)?.drop_expr(ctx))
-                } else {
-                    None
-                };
-
-                let var_name = ctx.create_aux_var("e", span.start);
-
-                let excepts = matching_except_handler(ctx, var_name.into(), excepts, &span)?;
-
-                pre.push(a.try_(body_block, vec![excepts], finally_block));
             }
             Stmt::Break => pre.push(a.break_()),
             Stmt::Continue => pre.push(a.continue_()),
@@ -1924,7 +1913,34 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                     body_block,
                 ));
 
-                a.load_ident(temp_var.clone())
+                a.load_ident(temp_var)
+            }
+            Expr::Try(body, excepts, finally) => {
+                let temp_var = ctx.create_aux_var("try", span.start);
+
+                let t_body = body.transform(ctx)?;
+                let mut py_body = t_body.pre;
+                py_body.push(a.assign(a.ident(temp_var.clone(), PyAccessCtx::Store), t_body.value));
+
+                let finally_block = if let Some(finally) = finally {
+                    Some(finally.transform(ctx)?.drop_expr(ctx))
+                } else {
+                    None
+                };
+
+                let var_name = ctx.create_aux_var("e", span.start);
+
+                let excepts = matching_except_handler(
+                    ctx,
+                    var_name.into(),
+                    excepts,
+                    Some(temp_var.clone()),
+                    &span,
+                )?;
+
+                pre.push(a.try_(py_body, vec![excepts], finally_block));
+
+                a.load_ident(temp_var)
             }
             Expr::If(cond, then_block, else_block) => pre.bind(transform_if_expr(
                 ctx,
@@ -2291,6 +2307,12 @@ fn map_py_binary_op(op: BinaryOp, span: Span) -> TlResult<PyBinaryOp> {
         BinaryOp::Nis => PyBinaryOp::Nis,
         BinaryOp::In => PyBinaryOp::In,
         BinaryOp::Nin => PyBinaryOp::Nin,
+
+        BinaryOp::BitAnd => PyBinaryOp::BitAnd,
+        BinaryOp::BitOr => PyBinaryOp::BitOr,
+        BinaryOp::BitXor => PyBinaryOp::BitXor,
+        BinaryOp::LShift => PyBinaryOp::LShift,
+        BinaryOp::RShift => PyBinaryOp::RShift,
 
         _ => return Err(simple_err("Internal error: Unsupported binary op", span)),
     })

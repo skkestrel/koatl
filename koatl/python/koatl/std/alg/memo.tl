@@ -24,7 +24,7 @@ export Memo = class(MonadOnce):
 
         __repr__ = self => f"Memo.Cache({self.cache})"
 
-        try_get = (self, name, deps) => try self.cache[name][deps] except KeyError()
+        try_get = (self, name, deps) => check self.cache[name][deps] except KeyError()
 
         update = (self, name, deps, value) =>
             self.cache[name][deps] = value
@@ -88,7 +88,7 @@ export Memo = class(MonadOnce):
     bind_once = (self, f) => Memo(ctx =>
         let value = f(self.f(ctx))
 
-        if value matches not Memo():
+        if value not matches Memo():
             raise ValueError(f"Expected the binder to return a Memo, but got {type(value)}")
 
         return value.f(ctx)
@@ -100,10 +100,9 @@ export Memo = class(MonadOnce):
                 let inner = self.f(ctx)
                 self = gen.send(inner)
 
-                if self matches not Memo():
+                if self not matches Memo():
                     raise ValueError(f"Expected the binder to return a Memo, but got {type(value)}")
-
-        except StopIteration(value=value):
+        except StopIteration(value=value) =>
             return value
     )
 
@@ -164,7 +163,7 @@ export AsyncMemo = class(MonadOnce):
     bind_once = (self, f) => AsyncMemo(ctx =>
         let value = f(@self.f(ctx))
 
-        if value matches not AsyncMemo():
+        if value not matches AsyncMemo():
             raise ValueError(f"Expected the binder to return a Memo, but got {type(value)}")
 
         return value.f(ctx)
@@ -176,9 +175,9 @@ export AsyncMemo = class(MonadOnce):
                 let inner = @self.f(ctx)
                 self = gen.send(inner)
 
-                if self matches not AsyncMemo():
+                if self not matches AsyncMemo():
                     raise ValueError(f"Expected the binder to return a Memo, but got {type(value)}")
 
-        except StopIteration(value=value):
+        except StopIteration(value=value) =>
             return value
     )

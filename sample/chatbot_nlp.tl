@@ -195,9 +195,9 @@ run_chat_session = () =>
                     let response = manager.route_message(message)
                     print(f"🤖: {response}\n")
                     chat_loop()
-                except KeyboardInterrupt():
+                except KeyboardInterrupt() =>
                     print("\n🤖: Chat interrupted. Goodbye! 👋")
-                except Exception(e):
+                except Exception(e) =>
                     print(f"🤖: Sorry, I encountered an error: {e}")
                     chat_loop()
 

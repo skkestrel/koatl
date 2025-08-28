@@ -5,7 +5,7 @@ infer_ok = x =>
     x match:
         None => False
         BaseException() => False
-        default True
+        _ => True
 
 op_coal = (x, f) =>
     if x matches Result():
@@ -42,7 +42,7 @@ export Result = class(MonadOnce):
         """
         try:
             return Ok(f())
-        except BaseException() as e:
+        except BaseException() as e =>
             return Err(e)
 
     bind_once = (self, f) =>
@@ -50,7 +50,7 @@ export Result = class(MonadOnce):
             return self
 
         let value = f(self.value)
-        if value matches not Result():
+        if value not matches Result():
             raise ValueError(f"Expected the binder to return a Result, but got {type(value)}")
         value
 
@@ -61,9 +61,9 @@ export Result = class(MonadOnce):
                     return self
 
                 self = gen.send(self.value)
-                if self matches not Result():
+                if self not matches Result():
                     raise ValueError(f"Expected the binder to return a Result, but got {type(self)}")
-        except StopIteration(value=value):
+        except StopIteration(value=value) =>
             return Result(value)
 
     pure = staticmethod& x => Ok(x)

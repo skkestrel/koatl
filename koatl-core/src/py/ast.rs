@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use parser::ast::Span;
+use koatl_parser::lexer::Span;
 
 pub type PyIdent<'a> = Cow<'a, str>;
 
@@ -163,6 +163,12 @@ pub enum PyBinaryOp {
     Nis,
     In,
     Nin,
+
+    BitAnd,
+    BitOr,
+    BitXor,
+    LShift,
+    RShift,
 }
 
 #[derive(Debug, Clone)]

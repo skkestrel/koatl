@@ -30,7 +30,7 @@
 		inside: { punctuation: /\./ },
 	},
 	keyword:
-		/\b(?:_(?=\s*:)|memo|let|const|export|matches|default|then|and|as|assert|break|case|class|continue|else|except|exec|finally|for|from|global|if|import|in|is|match|not|or|pass|print|raise|return|try|while|with|yield)\b/,
+		/\b(?:_(?=\s*:)|check|memo|let|const|export|matches|default|then|and|as|assert|break|case|class|continue|else|except|exec|finally|for|from|global|if|import|in|is|match|not|or|pass|print|raise|return|try|while|with|yield)\b/,
 	builtin:
 		/\b(?:__import__|Async|Env|Memo|Ok|Err|Result|Record|abs|callable|classmethod|complex|dict|eval|float|format|frozenset|getattr|globals|hasattr|hash|help|hex|int|iter|len|list|locals|long|max|min|next|object|property|repr|round|set|setattr|staticmethod|str|super|tuple|type)\b/,
 	boolean: /\b(?:False|None|True)\b/,

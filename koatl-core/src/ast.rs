@@ -1,6 +1,7 @@
 use std::{borrow::Cow, fmt::Display};
 
-use chumsky::span::SimpleSpan;
+pub use koatl_parser::cst::{BinaryOp, Spannable, Spanned, UnaryOp};
+pub use koatl_parser::lexer::Span;
 
 pub type Indirect<T> = Box<T>;
 
@@ -28,45 +29,6 @@ impl<T> IntoIndirect<T> for T {
     fn indirect(self) -> Indirect<T> {
         Box::new(self)
     }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum BinaryOp {
-    Add,
-    Sub,
-    Mul,
-    MatMul,
-    Div,
-    Exp,
-
-    FloorDiv,
-    Mod,
-
-    In,
-    Nin,
-    Lt,
-    Leq,
-    Gt,
-    Geq,
-    Eq,
-    Neq,
-    Is,
-    Nis,
-
-    And,
-    Or,
-
-    Coalesce,
-    Pipe,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum UnaryOp {
-    Inv,
-    Pos,
-    Neg,
-    Not,
-    Bind,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -133,7 +95,6 @@ pub enum Stmt<'a, TTree: Tree> {
     While(TTree::Expr, TTree::Expr),
     For(TTree::Pattern, TTree::Expr, TTree::Expr),
     Import(ImportTree<'a>, bool),
-    Try(TTree::Expr, Vec<MatchCase<TTree>>, Option<TTree::Expr>),
     Raise(Option<TTree::Expr>),
 
     Break,
@@ -176,7 +137,7 @@ pub enum ArgDefItem<'a, TTree: Tree> {
 
 #[derive(Debug, Clone)]
 pub struct MatchCase<TTree: Tree> {
-    pub pattern: Option<TTree::Pattern>,
+    pub pattern: TTree::Pattern,
     pub guard: Option<TTree::Expr>,
     pub body: TTree::Expr,
 }
@@ -227,6 +188,7 @@ pub enum Expr<'a, TTree: Tree> {
     MappedScopedAttribute(TTree::Expr, TTree::Expr),
     MappedAttribute(TTree::Expr, SIdent<'a>),
 
+    Try(TTree::Expr, Vec<MatchCase<TTree>>, Option<TTree::Expr>),
     Checked(TTree::Expr, Option<TTree::Pattern>),
 
     Block(Vec<TTree::Stmt>),
@@ -264,7 +226,7 @@ pub enum PatternClassItem<'a, TTree: Tree> {
 pub enum Pattern<'a, TTree: Tree> {
     Capture(Option<SIdent<'a>>),
     Value(TTree::Expr),
-    As(TTree::Pattern, SIdent<'a>),
+    As(TTree::Pattern, Option<SIdent<'a>>),
     Or(Vec<TTree::Pattern>),
     Literal(SLiteral<'a>),
     Sequence(Vec<PatternSequenceItem<'a, TTree>>),
@@ -283,24 +245,6 @@ impl<'src> Tree for STree<'src> {
     type Expr = Indirect<SExpr<'src>>;
     type Pattern = Indirect<SPattern<'src>>;
     type Stmt = Indirect<SStmt<'src>>;
-}
-
-pub type Span = SimpleSpan<usize, ()>;
-
-#[derive(Debug, Clone)]
-pub struct Spanned<T> {
-    pub span: Span,
-    pub value: T,
-}
-
-pub trait Spannable<T> {
-    fn spanned(self, span: Span) -> Spanned<T>;
-}
-
-impl<T> Spannable<T> for T {
-    fn spanned(self, span: Span) -> Spanned<T> {
-        Spanned { span, value: self }
-    }
 }
 
 pub type SPatternInner<'a> = Pattern<'a, STree<'a>>;

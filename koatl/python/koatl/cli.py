@@ -9,9 +9,23 @@ def transpile_from_source(source, mode="script", script_path="<string>"):
 
 def run_from_source(source, mode="script", script_path="<string>"):
     from koatl import transpile
+    import ast
 
     transpiled_code = transpile(source, mode=mode, filename=str(script_path))
-    code_obj = compile(transpiled_code, script_path, "exec")
+
+    try:
+        code_obj = compile(transpiled_code, script_path, "exec")
+    except Exception as e:
+
+        class Visitor(ast.NodeVisitor):
+            def generic_visit(self, node):
+                if hasattr(node, "lineno"):
+                    if node.lineno > node.end_lineno:
+                        print(f"Error: {node.lineno} > {node.end_lineno} for {node}")
+                super().generic_visit(node)
+
+        Visitor().visit(transpiled_code)
+        raise
 
     script_globals = {"__name__": "__main__"}
 

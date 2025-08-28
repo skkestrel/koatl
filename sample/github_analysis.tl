@@ -36,7 +36,7 @@ fetch_repos = query =>
         print(f"🔍 Searching for: {query}")
         let url = f"https://api.github.com/search/repositories?q={query}&sort=stars&per_page=30"
 
-        try requests.get(url).json()
+        check requests.get(url).json()
     )
 
 classify_language = lang =>

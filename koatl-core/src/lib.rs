@@ -1,17 +1,19 @@
+pub mod ast;
+pub mod ast_builder;
 mod inference;
-pub mod parser;
+pub mod lift_cst;
 pub mod py;
 mod resolve_scopes;
 pub mod transform;
 mod types;
 pub mod util;
 
-use ::parser::ast::SExpr;
-use parser::ast::Span;
-use parser::{TokenList, parse_tokens, tokenize};
+use crate::ast::SExpr;
+pub use koatl_parser::lexer::Span;
+use koatl_parser::{TokenList, parse_tokens, tokenize};
 
 use crate::py::ast::{PyAccessCtx, PyImportAlias, PyListItem, PyLiteral};
-use crate::py::util::PyAstBuilder;
+use crate::py::ast_builder::PyAstBuilder;
 use crate::py::{ast::PyBlock, emit::EmitCtx};
 use crate::transform::transform_ast;
 use crate::util::{TlErr, TlErrKind, TlErrs, TlResult};
@@ -67,9 +69,13 @@ pub fn transpile_to_py_ast<'src>(
     filename: &'src str,
     options: TranspileOptions,
 ) -> TlResult<PyBlock<'src>> {
-    let tl_ast = parse_tl(src)?;
+    let (tl_ast, tl_errs) = parse_tl(src);
 
-    let mut errs = TlErrs::new();
+    let Some(tl_ast) = tl_ast else {
+        return Err(tl_errs);
+    };
+
+    let mut errs = tl_errs;
 
     let (resolve_state, errors, tl_ast) =
         resolve_scopes::resolve_names(src, tl_ast, options.allow_await);
@@ -241,10 +247,10 @@ pub fn format_errs(errs: &TlErrs, filename: &str, src: &str) -> Vec<u8> {
     writer
 }
 
-pub fn parse_tl<'src>(src: &'src str) -> TlResult<SExpr<'src>> {
+pub fn parse_tl<'src>(src: &'src str) -> (Option<SExpr<'src>>, TlErrs) {
     let mut errs = TlErrs::new();
 
-    let (tokens, token_errs) = tokenize(&src);
+    let (tokens, token_errs) = tokenize(&src, true);
     errs.extend(TlErrs(
         token_errs
             .into_iter()
@@ -262,11 +268,11 @@ pub fn parse_tl<'src>(src: &'src str) -> TlResult<SExpr<'src>> {
 
     let tokens: TokenList<'src> = match tokens {
         Some(tokens) => tokens,
-        None => return Err(errs),
+        None => return (None, errs),
     };
     // println!("tokens: {tokens}");
 
-    let (tl_ast, parser_errs) = parse_tokens(&src, &tokens);
+    let (tl_cst, parser_errs) = parse_tokens(&src, &tokens);
     errs.extend(TlErrs(
         parser_errs
             .into_iter()
@@ -282,8 +288,12 @@ pub fn parse_tl<'src>(src: &'src str) -> TlResult<SExpr<'src>> {
             .collect(),
     ));
 
-    let tl_ast = tl_ast.ok_or_else(|| errs)?;
-    // println!("AST: {ast:?}");
-
-    Ok(tl_ast)
+    if let Some(cst) = tl_cst {
+        // println!("{:#?}", cst);
+        let tl_ast = lift_cst::lift_cst(&cst);
+        // println!("{:#?}", tl_ast);
+        (Some(*tl_ast), errs)
+    } else {
+        (None, errs)
+    }
 }

@@ -26,7 +26,7 @@ export Env = class(MonadOnce):
 
     bind_once = (self, f) => Env& ctx =>
         let v = f(self.f(ctx))
-        if v matches not Env():
+        if v not matches Env():
             raise ValueError(f"Expected the binder to return an Env, but got {type(v)}")
 
         v.f(ctx)
@@ -35,9 +35,9 @@ export Env = class(MonadOnce):
         try:
             while True:
                 self = gen.send(self.f(ctx))
-                if self matches not Env():
+                if self not matches Env():
                     raise ValueError(f"Expected the binder to return an Env, but got {type(self)}")
-        except StopIteration(value=value):
+        except StopIteration(value=value) =>
             return value
 
     NoKey = object()

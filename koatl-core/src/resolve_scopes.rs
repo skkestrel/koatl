@@ -5,9 +5,12 @@ use std::fmt::Display;
 use slotmap::SlotMap;
 use slotmap::new_key_type;
 
+use crate::ast::*;
+use koatl_parser::cst::Spannable;
+use koatl_parser::lexer::Span;
+
 use crate::types::Type;
 use crate::util::{RefHash, TlErrBuilder, TlErrs, TlResult};
-use parser::ast::*;
 
 new_key_type! { pub struct ScopeKey;}
 new_key_type! { pub struct DeclarationKey;}
@@ -716,7 +719,9 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
             Pattern::As(pattern, name) => {
                 let (pattern, meta) = pattern.traverse(state, allow_uppercase_capture);
                 captures.extend(meta.captures);
-                captures.push(name.value.clone());
+                if let Some(n) = &name {
+                    captures.push(n.value.clone());
+                }
                 default |= meta.default;
                 Pattern::As(pattern, name)
             }
@@ -989,6 +994,28 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 return expr;
             }
+            Expr::Try(body, cases, finally) => {
+                let body = body.traverse_guarded(state);
+                let cases = cases
+                    .into_iter()
+                    .map(|case| {
+                        let (pattern, scope, _meta) = pattern_scoped(state, case.pattern);
+
+                        let body = state
+                            .scoped(scope, |state| case.body.traverse_guarded(state))
+                            .value;
+
+                        MatchCase {
+                            pattern,
+                            guard: case.guard.map(|x| x.traverse_guarded(state)),
+                            body,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let finally = finally.map(|x| x.traverse_guarded(state));
+
+                Expr::Try(body, cases, finally)
+            }
             Expr::Checked(expr, pattern) => {
                 let pattern = if let Some(pattern) = pattern {
                     let (pattern, meta) = pattern.traverse(state, false);
@@ -996,7 +1023,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     if !meta.captures.is_empty() {
                         state.errors.extend(
                             simple_err(
-                                "Non-'_' captures in a 'matches' are only allowed in 'if ... matches ...', or 'if ... matches not ...' constructions",
+                                "Non-'_' captures in a 'matches' are only allowed in 'if ... matches ...', or 'if ... not matches ...' constructions",
                                 pattern.span,
                             )
                         );
@@ -1155,13 +1182,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 let cases = cases
                     .into_iter()
                     .map(|case| {
-                        let (pattern, scope) = if let Some(pattern) = case.pattern {
-                            let (pattern, scope, _meta) = pattern_scoped(state, pattern);
-                            (Some(pattern), scope)
-                        } else {
-                            let parent = state.top_scope_key();
-                            (None, state.scopes.insert(Scope::new(Some(parent))))
-                        };
+                        let (pattern, scope, _meta) = pattern_scoped(state, case.pattern);
 
                         let (guard, body) = state
                             .scoped(scope, |state| {
@@ -1606,34 +1627,6 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                     .value;
 
                 Stmt::For(pattern, iter.traverse_guarded(state), body)
-            }
-            Stmt::Try(body, cases, finally) => {
-                let body = body.traverse_guarded(state);
-                let cases = cases
-                    .into_iter()
-                    .map(|case| {
-                        let (pattern, scope) = if let Some(pattern) = case.pattern {
-                            let (pattern, scope, _meta) = pattern_scoped(state, pattern);
-                            (Some(pattern), scope)
-                        } else {
-                            let parent = state.top_scope_key();
-                            (None, state.scopes.insert(Scope::new(Some(parent))))
-                        };
-
-                        let body = state
-                            .scoped(scope, |state| case.body.traverse_guarded(state))
-                            .value;
-
-                        MatchCase {
-                            pattern,
-                            guard: case.guard.map(|x| x.traverse_guarded(state)),
-                            body,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                let finally = finally.map(|x| x.traverse_guarded(state));
-
-                Stmt::Try(body, cases, finally)
             }
             Stmt::Raise(expr) => Stmt::Raise(expr.map(|x| x.traverse_guarded(state))),
             Stmt::Import(tree, reexport) => {
