@@ -2308,6 +2308,12 @@ fn map_py_binary_op(op: BinaryOp, span: Span) -> TlResult<PyBinaryOp> {
         BinaryOp::In => PyBinaryOp::In,
         BinaryOp::Nin => PyBinaryOp::Nin,
 
+        BinaryOp::BitAnd => PyBinaryOp::BitAnd,
+        BinaryOp::BitOr => PyBinaryOp::BitOr,
+        BinaryOp::BitXor => PyBinaryOp::BitXor,
+        BinaryOp::LShift => PyBinaryOp::LShift,
+        BinaryOp::RShift => PyBinaryOp::RShift,
+
         _ => return Err(simple_err("Internal error: Unsupported binary op", span)),
     })
 }

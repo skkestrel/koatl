@@ -1061,10 +1061,18 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
                 Ok(res)
             }
-            6 => Err(()), // Bitwise or
-            5 => Err(()), // Bitwise xor
-            4 => Err(()), // Bitwise and
-            3 => Err(()), // Bit shift
+            6 => self
+                .symbol_table(&[("||", BinaryOp::BitOr)])
+                .map(|(tok, kind)| (None, tok, kind)),
+            5 => self
+                .symbol_table(&[("^^", BinaryOp::BitXor)])
+                .map(|(tok, kind)| (None, tok, kind)),
+            4 => self
+                .symbol_table(&[("&&", BinaryOp::BitAnd)])
+                .map(|(tok, kind)| (None, tok, kind)),
+            3 => self
+                .symbol_table(&[("<<", BinaryOp::LShift), (">>", BinaryOp::RShift)])
+                .map(|(tok, kind)| (None, tok, kind)),
             2 => self
                 .symbol_table(&[("+", BinaryOp::Add), ("-", BinaryOp::Sub)])
                 .map(|(tok, kind)| (None, tok, kind)),

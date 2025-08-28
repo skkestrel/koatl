@@ -265,6 +265,12 @@ pub enum BinaryOp {
     And,
     Or,
 
+    BitAnd,
+    BitOr,
+    BitXor,
+    LShift,
+    RShift,
+
     Coalesce,
     Pipe,
 }

@@ -163,6 +163,12 @@ pub enum PyBinaryOp {
     Nis,
     In,
     Nin,
+
+    BitAnd,
+    BitOr,
+    BitXor,
+    LShift,
+    RShift,
 }
 
 #[derive(Debug, Clone)]
