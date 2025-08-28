@@ -28,7 +28,7 @@ create_stock = (symbol, price, shares, purchase_date) => {
 update_portfolio = (portfolio, action, date) =>
     @Ok(action match:
         {type: "buy", symbol, shares, price} =>
-            let existing = try portfolio[symbol]
+            let existing = check portfolio[symbol]
             existing match:
                 Ok(stock) => {
                     **portfolio
@@ -45,7 +45,7 @@ update_portfolio = (portfolio, action, date) =>
                 }
 
         {type: "sell", symbol, shares} =>
-            let stock = @(try portfolio[symbol]).map_err(_ => KeyError(f"Stock {symbol} not found"))
+            let stock = @(check portfolio[symbol]).map_err(_ => KeyError(f"Stock {symbol} not found"))
 
             stock.shares >= shares then {
                 **portfolio
@@ -56,7 +56,7 @@ update_portfolio = (portfolio, action, date) =>
         {type: "dividend", symbol, amount} =>
             portfolio[symbol]?.(stock => {
                 **portfolio
-                (symbol): {**stock, dividends: (try stock.dividends ?? 0) + amount}
+                (symbol): {**stock, dividends: (check stock.dividends ?? 0) + amount}
             }) ?? portfolio
 
         _ => @Err(ValueError(f"Unknown action: {action}"))

@@ -28,5 +28,5 @@ assert_eq(None.some_global_prop, ())
 assert_eq({required_method: Record.method& self => 42}.derived_method(), 42)
 assert_eq({required_method: Record.method& self => 42}.derived_property, 42)
 
-assert_eq((try "asdf".derived_method).ok, False)
-assert_eq((try "asdf".derived_prop).ok, False)
+assert_eq((check "asdf".derived_method).ok, False)
+assert_eq((check "asdf".derived_prop).ok, False)

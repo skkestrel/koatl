@@ -490,8 +490,31 @@ impl<'src, 'tok> SimpleFmt for MappingKey<STree<'src, 'tok>> {
     fn simple_fmt(&self) -> String {
         match self {
             MappingKey::Ident { token } => token.simple_fmt(),
+            MappingKey::Unit { .. } => "()".to_string(),
             MappingKey::Literal { token } => token.simple_fmt(),
             MappingKey::Expr { key, .. } => format!("({})", key.simple_fmt()),
+            MappingKey::ParenthesizedBlock { body, .. } => {
+                format!("Block({})", body.simple_fmt())
+            }
+            MappingKey::Fstr { begin, parts } => {
+                let mut result = begin.simple_fmt();
+                for (fmt_expr, cont) in parts {
+                    result.push_str(&format!("{{{}}}", fmt_expr.simple_fmt()));
+                    result.push_str(&cont.simple_fmt());
+                }
+                result
+            }
+        }
+    }
+}
+
+impl<'src, 'tok> SimpleFmt for PatternMappingKey<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
+        match self {
+            PatternMappingKey::Ident { token } => token.simple_fmt(),
+            PatternMappingKey::Unit { .. } => "()".to_string(),
+            PatternMappingKey::Literal { token } => token.simple_fmt(),
+            PatternMappingKey::Expr { key, .. } => format!("({})", key.simple_fmt()),
         }
     }
 }

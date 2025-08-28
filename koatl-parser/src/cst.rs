@@ -161,9 +161,20 @@ pub enum MappingKey<TTree: Tree> {
     Literal {
         token: TTree::Token,
     },
+    Fstr {
+        begin: TTree::Token,
+        parts: Vec<(FmtExpr<TTree>, TTree::Token)>,
+    },
     Expr {
         lparen: TTree::Token,
         key: TTree::Expr,
+        rparen: TTree::Token,
+    },
+    ParenthesizedBlock {
+        lparen: TTree::Token,
+        indent: TTree::Token,
+        body: Spanned<Vec<TTree::Stmt>>,
+        dedent: TTree::Token,
         rparen: TTree::Token,
     },
 }

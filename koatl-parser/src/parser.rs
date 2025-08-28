@@ -5,7 +5,6 @@ use std::borrow::Cow;
 use crate::cst::*;
 use crate::lexer::*;
 use crate::parser_error::TriviaRich;
-use crate::simple_fmt::SimpleFmt;
 
 const START_BLOCK: Token = Token::Symbol(":");
 
@@ -579,26 +578,33 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     ctx,
                     "mapping key",
                     |ctx| {
-                        let name = ctx.any_ident()?;
-                        // Convert ident to string literal expression
-                        let token = name; // Reuse the ident token as a string literal
-                        Ok(Expr::Literal { token }.spanned(name.span))
+                        let token = ctx.any_ident()?;
+                        Ok(PatternMappingKey::Ident { token })
+                    },
+                    |ctx| {
+                        let lparen = ctx.symbol("(")?;
+                        let rparen = ctx.symbol(")")?;
+                        Ok(PatternMappingKey::Unit { lparen, rparen })
                     },
                     |ctx| {
                         let token = ctx.literal()?;
-                        Ok(Expr::Literal { token }.spanned(token.span))
+                        Ok(PatternMappingKey::Literal { token })
                     },
                     |ctx| {
-                        let _lparen = ctx.symbol("(")?;
-                        let expr = ctx.expr()?;
-                        let _rparen = ctx.symbol(")")?;
-                        Ok(expr)
+                        let lparen = ctx.symbol("(")?;
+                        let key = ctx.expr()?.boxed();
+                        let rparen = ctx.symbol(")")?;
+                        Ok(PatternMappingKey::Expr {
+                            lparen,
+                            key,
+                            rparen,
+                        })
                     }
                 )?;
                 let colon = ctx.symbol(":")?;
                 let pattern = ctx.as_pattern()?;
                 Ok(PatternMappingItem::Item {
-                    key: key.boxed(),
+                    key,
                     colon,
                     pattern: pattern.boxed(),
                 })
@@ -862,6 +868,31 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                             Ok(MappingKey::Literal { token })
                         },
                         |ctx| {
+                            let (begin, parts) = ctx.fstr()?;
+                            Ok(MappingKey::Fstr { begin, parts })
+                        },
+                        |ctx| {
+                            let lparen = ctx.symbol("(")?;
+                            let rparen = ctx.symbol(")")?;
+                            Ok(MappingKey::Unit { lparen, rparen })
+                        },
+                        |ctx| {
+                            let lparen = ctx.symbol("(")?;
+                            let indent = ctx.token(&Token::Indent)?;
+                            let body = ctx.stmts()?;
+                            let dedent = ctx.token(&Token::Dedent)?;
+                            optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
+                            let rparen = ctx.symbol(")")?;
+
+                            Ok(MappingKey::ParenthesizedBlock {
+                                lparen,
+                                indent,
+                                body,
+                                dedent,
+                                rparen,
+                            })
+                        },
+                        |ctx| {
                             let lparen = ctx.symbol("(")?;
                             let key = ctx.expr()?;
                             let rparen = ctx.symbol(")")?;
@@ -889,7 +920,12 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         Ok(Expr::Mapping { listing }.spanned(self.span_from(start)))
     }
 
-    fn fstr_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
+    fn fstr(
+        &mut self,
+    ) -> ParseResult<(
+        &'tok SToken<'src>,
+        Vec<(SFmtExpr<'src, 'tok>, &'tok SToken<'src>)>,
+    )> {
         let start = self.cursor;
 
         let begin = 'block: {
@@ -943,6 +979,14 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
             parts.push((fmt_expr, cont));
         }
+
+        Ok((begin, parts))
+    }
+
+    fn fstr_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
+        let (begin, parts) = self.fstr()?;
 
         Ok(Expr::Fstr { begin, parts }.spanned(self.span_from(start)))
     }
