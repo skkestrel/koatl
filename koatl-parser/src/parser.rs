@@ -724,12 +724,10 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             .spanned(ctx.span_from(start)))
         };
 
+        let try_expr = Self::try_expr;
         let checked_expr = Self::checked_expr;
-
         let class_expr = Self::class_expr;
-
         let classic_if = Self::classic_if;
-
         let classic_match = Self::classic_match;
 
         first_of!(
@@ -737,6 +735,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             "atom",
             checked_expr,
             class_expr,
+            try_expr,
             classic_if,
             classic_match,
             literal_expr,
@@ -1766,6 +1765,60 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         Ok(expr)
     }
 
+    fn try_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+        let try_kw = self.keyword("try")?;
+        let body = self.colon_block()?;
+
+        let cases = {
+            let mut acc = vec![];
+            loop {
+                let Some(except) = optional!(self, |ctx| {
+                    ctx.token(&Token::Eol)?;
+                    ctx.keyword("except")
+                })?
+                else {
+                    break;
+                };
+
+                let pattern = self.open_pattern()?;
+
+                self.set_error(self.cursor, ErrMsg::Expected("guard or =>".into()));
+
+                let guard = optional!(self, |ctx: &mut Self| {
+                    let if_kw = ctx.keyword("if")?;
+                    let guard_expr = ctx.expr_with_prec(ExprPrec::CaseGuard)?;
+                    Ok((if_kw, guard_expr))
+                })?;
+
+                let body = self.arrow_block(false)?;
+
+                acc.push(ExceptCase {
+                    except,
+                    pattern: pattern.boxed(),
+                    guard: guard.map(|(kw, expr)| (kw, expr.boxed())),
+                    body,
+                });
+            }
+            acc
+        };
+
+        let finally = optional!(self, |ctx: &mut Self| {
+            optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
+            let finally_kw = ctx.keyword("finally")?;
+            let body = ctx.colon_block()?;
+            Ok((finally_kw, body))
+        })?;
+
+        Ok(Expr::Try {
+            try_kw,
+            body,
+            cases,
+            finally,
+        }
+        .spanned(self.span_from(start)))
+    }
+
     fn matches_expr(
         &mut self,
         next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
@@ -2178,58 +2231,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             })
         };
 
-        let try_stmt = |ctx: &mut Self| {
-            let try_kw = ctx.keyword("try")?;
-            let body = ctx.colon_block()?;
-
-            let cases = {
-                let mut acc = vec![];
-                loop {
-                    let Some(except) = optional!(ctx, |ctx| {
-                        ctx.token(&Token::Eol)?;
-                        ctx.keyword("except")
-                    })?
-                    else {
-                        break;
-                    };
-
-                    let pattern = ctx.open_pattern()?;
-
-                    ctx.set_error(ctx.cursor, ErrMsg::Expected("guard or =>".into()));
-
-                    let guard = optional!(ctx, |ctx: &mut Self| {
-                        let if_kw = ctx.keyword("if")?;
-                        let guard_expr = ctx.expr_with_prec(ExprPrec::CaseGuard)?;
-                        Ok((if_kw, guard_expr))
-                    })?;
-
-                    let body = ctx.arrow_block(false)?;
-
-                    acc.push(ExceptCase {
-                        except,
-                        pattern: pattern.boxed(),
-                        guard: guard.map(|(kw, expr)| (kw, expr.boxed())),
-                        body,
-                    });
-                }
-                acc
-            };
-
-            let finally = optional!(ctx, |ctx: &mut Self| {
-                optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
-                let finally_kw = ctx.keyword("finally")?;
-                let body = ctx.colon_block()?;
-                Ok((finally_kw, body))
-            })?;
-
-            Ok(Stmt::Try {
-                try_kw,
-                body,
-                cases,
-                finally,
-            })
-        };
-
         let break_stmt = |ctx: &mut Self| {
             let break_kw = ctx.keyword("break")?;
             Ok(Stmt::Break { break_kw })
@@ -2268,7 +2269,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             expr_stmt,
             while_stmt,
             for_stmt,
-            try_stmt,
             break_stmt,
             continue_stmt,
             return_stmt,
@@ -2351,10 +2351,7 @@ pub fn parse_tokens<'src: 'tok, 'tok>(
     tokens: &'tok TokenList<'src>,
 ) -> (Option<SStmts<'src, 'tok>>, Vec<TriviaRich<'tok, 'src>>) {
     if tokens.0.is_empty() {
-        return (
-            None,
-            vec![TriviaRich::custom((0..0).into(), "No tokens to parse")],
-        );
+        return (Some(vec![].spanned((0..0).into())), vec![]);
     }
 
     let mut ctx = ParseCtx {

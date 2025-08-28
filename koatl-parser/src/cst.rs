@@ -104,13 +104,6 @@ pub enum Stmt<TTree: Tree> {
         tree: ImportTree<TTree>,
     },
 
-    Try {
-        try_kw: TTree::Token,
-        body: ColonBlock<TTree>,
-        cases: Vec<ExceptCase<TTree>>,
-        finally: Option<(TTree::Token, ColonBlock<TTree>)>,
-    },
-
     Break {
         break_kw: TTree::Token,
     },
@@ -433,6 +426,13 @@ pub enum Expr<TTree: Tree> {
         eq: TTree::Token,
         value: TTree::Expr,
         body: ColonBlock<TTree>,
+    },
+
+    Try {
+        try_kw: TTree::Token,
+        body: ColonBlock<TTree>,
+        cases: Vec<ExceptCase<TTree>>,
+        finally: Option<(TTree::Token, ColonBlock<TTree>)>,
     },
 
     Call {

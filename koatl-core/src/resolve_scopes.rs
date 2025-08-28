@@ -994,7 +994,29 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 return expr;
             }
-            Expr::Try(expr, pattern) => {
+            Expr::Try(body, cases, finally) => {
+                let body = body.traverse_guarded(state);
+                let cases = cases
+                    .into_iter()
+                    .map(|case| {
+                        let (pattern, scope, _meta) = pattern_scoped(state, case.pattern);
+
+                        let body = state
+                            .scoped(scope, |state| case.body.traverse_guarded(state))
+                            .value;
+
+                        MatchCase {
+                            pattern,
+                            guard: case.guard.map(|x| x.traverse_guarded(state)),
+                            body,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let finally = finally.map(|x| x.traverse_guarded(state));
+
+                Expr::Try(body, cases, finally)
+            }
+            Expr::Checked(expr, pattern) => {
                 let pattern = if let Some(pattern) = pattern {
                     let (pattern, meta) = pattern.traverse(state, false);
 
@@ -1023,7 +1045,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     None
                 };
 
-                Expr::Try(expr.traverse_guarded(state), pattern)
+                Expr::Checked(expr.traverse_guarded(state), pattern)
             }
             Expr::Decorated(deco, expr) => Expr::Call(
                 deco.traverse(state),
@@ -1605,28 +1627,6 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                     .value;
 
                 Stmt::For(pattern, iter.traverse_guarded(state), body)
-            }
-            Stmt::Checked(body, cases, finally) => {
-                let body = body.traverse_guarded(state);
-                let cases = cases
-                    .into_iter()
-                    .map(|case| {
-                        let (pattern, scope, _meta) = pattern_scoped(state, case.pattern);
-
-                        let body = state
-                            .scoped(scope, |state| case.body.traverse_guarded(state))
-                            .value;
-
-                        MatchCase {
-                            pattern,
-                            guard: case.guard.map(|x| x.traverse_guarded(state)),
-                            body,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                let finally = finally.map(|x| x.traverse_guarded(state));
-
-                Stmt::Checked(body, cases, finally)
             }
             Stmt::Raise(expr) => Stmt::Raise(expr.map(|x| x.traverse_guarded(state))),
             Stmt::Import(tree, reexport) => {

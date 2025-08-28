@@ -41,16 +41,6 @@ impl<'src, 'ast> SStmtExt<'src, 'ast> for Indirect<SStmt<'src>> {
                 body.traverse(ctx);
                 Type::NoReturn
             }
-            Stmt::Checked(body, cases, finally) => {
-                body.traverse(ctx);
-                for case in cases {
-                    case.body.traverse(ctx);
-                }
-                if let Some(finally) = finally {
-                    finally.traverse(ctx);
-                }
-                Type::NoReturn
-            }
             Stmt::Raise(..) | Stmt::Return(..) | Stmt::Break | Stmt::Continue => Type::Bottom,
             Stmt::Import(..) => Type::NoReturn,
             Stmt::Decl(..) => Type::NoReturn,
@@ -159,6 +149,16 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
                 expr.traverse(ctx);
                 Type::Any
             }
+            Expr::Try(body, cases, finally) => {
+                body.traverse(ctx);
+                for case in cases {
+                    case.body.traverse(ctx);
+                }
+                if let Some(finally) = finally {
+                    finally.traverse(ctx);
+                }
+                Type::Any
+            }
             Expr::Match(subject, cases) => {
                 subject.traverse(ctx);
 
@@ -238,7 +238,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
                 other.traverse(ctx);
                 Type::Any
             }
-            Expr::Try(expr, _pattern) => {
+            Expr::Checked(expr, _pattern) => {
                 expr.traverse(ctx);
                 Type::Any
             }

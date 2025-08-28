@@ -185,6 +185,17 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                 };
                 ast::Expr::Tuple(items)
             }
+            cst::Expr::Try {
+                body,
+                cases,
+                finally,
+                ..
+            } => {
+                let exception_cases: Vec<ast::MatchCase<ast::STree<'src>>> =
+                    cases.iter().map(|case| case.lift()).collect();
+                let finally_expr = finally.as_ref().map(|(_, expr)| expr.lift());
+                ast::Expr::Try(body.lift(), exception_cases, finally_expr)
+            }
             cst::Expr::If {
                 cond,
                 body,
@@ -361,7 +372,7 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                 }
             }
             cst::Expr::Checked { expr, pattern, .. } => {
-                ast::Expr::Try(expr.lift(), pattern.as_ref().map(|p| p.lift()))
+                ast::Expr::Checked(expr.lift(), pattern.as_ref().map(|p| p.lift()))
             }
             cst::Expr::Error => panic!("Cannot lift error expression"),
         };
@@ -463,17 +474,6 @@ impl<'src, 'tok> Lift<Indirect<ast::SStmt<'src>>> for cst::SStmt<'src, 'tok> {
             cst::Stmt::Raise { expr, .. } => ast::Stmt::Raise(expr.as_ref().map(|e| e.lift())),
             cst::Stmt::Import { tree, export, .. } => {
                 ast::Stmt::Import(tree.lift(), export.is_some())
-            }
-            cst::Stmt::Try {
-                body,
-                cases,
-                finally,
-                ..
-            } => {
-                let exception_cases: Vec<ast::MatchCase<ast::STree<'src>>> =
-                    cases.iter().map(|case| case.lift()).collect();
-                let finally_expr = finally.as_ref().map(|(_, expr)| expr.lift());
-                ast::Stmt::Checked(body.lift(), exception_cases, finally_expr)
             }
         };
         stmt.spanned(self.span).indirect()

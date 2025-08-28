@@ -95,7 +95,6 @@ pub enum Stmt<'a, TTree: Tree> {
     While(TTree::Expr, TTree::Expr),
     For(TTree::Pattern, TTree::Expr, TTree::Expr),
     Import(ImportTree<'a>, bool),
-    Checked(TTree::Expr, Vec<MatchCase<TTree>>, Option<TTree::Expr>),
     Raise(Option<TTree::Expr>),
 
     Break,
@@ -189,7 +188,8 @@ pub enum Expr<'a, TTree: Tree> {
     MappedScopedAttribute(TTree::Expr, TTree::Expr),
     MappedAttribute(TTree::Expr, SIdent<'a>),
 
-    Try(TTree::Expr, Option<TTree::Pattern>),
+    Try(TTree::Expr, Vec<MatchCase<TTree>>, Option<TTree::Expr>),
+    Checked(TTree::Expr, Option<TTree::Pattern>),
 
     Block(Vec<TTree::Stmt>),
 

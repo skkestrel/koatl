@@ -1413,6 +1413,7 @@ fn matching_except_handler<'src, 'ast>(
     ctx: &mut TlCtx<'src, 'ast>,
     var_name: PyIdent<'src>,
     handlers: &'ast [SMatchCase<'src>],
+    assign_match_value_to: Option<PyIdent<'src>>,
     span: &Span,
 ) -> TlResult<PyExceptHandler<'src>> {
     let a = PyAstBuilder::new(*span);
@@ -1442,6 +1443,9 @@ fn matching_except_handler<'src, 'ast>(
     }
 
     block.extend(match_stmt.pre);
+    if let Some(var_name) = assign_match_value_to {
+        block.push(a.assign(a.ident(var_name, PyAccessCtx::Store), match_stmt.value));
+    }
 
     Ok(PyExceptHandler {
         typ: None,
@@ -1635,21 +1639,6 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     pre.push(a.while_(a.bool(true), new_body_block));
                 }
             }
-            Stmt::Checked(body, excepts, finally) => {
-                let body_block = body.transform(ctx)?.drop_expr(ctx);
-
-                let finally_block = if let Some(finally) = finally {
-                    Some(finally.transform(ctx)?.drop_expr(ctx))
-                } else {
-                    None
-                };
-
-                let var_name = ctx.create_aux_var("e", span.start);
-
-                let excepts = matching_except_handler(ctx, var_name.into(), excepts, &span)?;
-
-                pre.push(a.try_(body_block, vec![excepts], finally_block));
-            }
             Stmt::Break => pre.push(a.break_()),
             Stmt::Continue => pre.push(a.continue_()),
             Stmt::Import(tree, reexport) => {
@@ -1803,7 +1792,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
         }
 
         let value: SPyExpr<'src> = match &expr {
-            Expr::Try(expr, pattern) => {
+            Expr::Checked(expr, pattern) => {
                 let var_name = ctx.create_aux_var("chk", span.start);
 
                 // exception variable doesn't leave the except slope, so rebind it to chk
@@ -1924,7 +1913,34 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                     body_block,
                 ));
 
-                a.load_ident(temp_var.clone())
+                a.load_ident(temp_var)
+            }
+            Expr::Try(body, excepts, finally) => {
+                let temp_var = ctx.create_aux_var("try", span.start);
+
+                let t_body = body.transform(ctx)?;
+                let mut py_body = t_body.pre;
+                py_body.push(a.assign(a.ident(temp_var.clone(), PyAccessCtx::Store), t_body.value));
+
+                let finally_block = if let Some(finally) = finally {
+                    Some(finally.transform(ctx)?.drop_expr(ctx))
+                } else {
+                    None
+                };
+
+                let var_name = ctx.create_aux_var("e", span.start);
+
+                let excepts = matching_except_handler(
+                    ctx,
+                    var_name.into(),
+                    excepts,
+                    Some(temp_var.clone()),
+                    &span,
+                )?;
+
+                pre.push(a.try_(py_body, vec![excepts], finally_block));
+
+                a.load_ident(temp_var)
             }
             Expr::If(cond, then_block, else_block) => pre.bind(transform_if_expr(
                 ctx,

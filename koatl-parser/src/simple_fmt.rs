@@ -77,6 +77,36 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                     format!("({})", items_str)
                 }
             },
+            Expr::Try {
+                body,
+                cases,
+                finally: finally_clause,
+                ..
+            } => {
+                let cases_str = cases
+                    .iter()
+                    .map(|case| {
+                        format!(
+                            "except {} {} {}",
+                            case.pattern.simple_fmt(),
+                            case.guard
+                                .as_ref()
+                                .map(|x| " if ".to_string() + &x.1.simple_fmt())
+                                .unwrap_or_default(),
+                            case.body.simple_fmt()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+
+                let finally_str = if let Some((_, finally_expr)) = finally_clause {
+                    format!("; finally: {}", finally_expr.simple_fmt())
+                } else {
+                    String::new()
+                };
+
+                format!("(try {} \n{}{})", body.simple_fmt(), cases_str, finally_str)
+            }
             Expr::ClassicIf {
                 if_kw: _,
                 cond,
@@ -365,36 +395,6 @@ impl<'src, 'tok> SimpleFmt for SStmtInner<'src, 'tok> {
                     iter.simple_fmt(),
                     body.simple_fmt()
                 )
-            }
-            Stmt::Try {
-                body,
-                cases,
-                finally: finally_clause,
-                ..
-            } => {
-                let cases_str = cases
-                    .iter()
-                    .map(|case| {
-                        format!(
-                            "except {} {} {}",
-                            case.pattern.simple_fmt(),
-                            case.guard
-                                .as_ref()
-                                .map(|x| " if ".to_string() + &x.1.simple_fmt())
-                                .unwrap_or_default(),
-                            case.body.simple_fmt()
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("; ");
-
-                let finally_str = if let Some((_, finally_expr)) = finally_clause {
-                    format!("; finally: {}", finally_expr.simple_fmt())
-                } else {
-                    String::new()
-                };
-
-                format!("try {} \n{}{}", body.simple_fmt(), cases_str, finally_str)
             }
             Stmt::Break { .. } => "break".to_string(),
             Stmt::Continue { .. } => "continue".to_string(),
