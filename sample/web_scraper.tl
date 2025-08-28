@@ -15,7 +15,7 @@ import hashlib
 validate_url = url =>
     url match:
         url_str if url_str.startswith(("http://", "https://")) =>
-            try urlparse(url_str).netloc <> "" ?? False
+            check urlparse(url_str).netloc <> "" ?? False
         _ => False
 
 # Content extraction with pattern matching on HTML elements
@@ -151,7 +151,7 @@ create_scraper = (delay=1.0, max_retries=3, timeout=10) => {
 
             # Check cache first
             let cache_key = url
-            try self.cache[cache_key] match:
+            check self.cache[cache_key] match:
                 Ok(cached_page) =>
                     print(f"📄 Using cached: {url}")
                     return Ok(cached_page)

@@ -117,7 +117,7 @@ We can use coalescing operators to work with try-expressions and the Result mona
 They lazily evaluate the RHS default value on Err, None, and Exceptions.
 
 ```koatl
-config_option = try get_config_value() ?? default_value
+config_option = check get_config_value() ?? default_value
 ```
 
 ### Mapping operators

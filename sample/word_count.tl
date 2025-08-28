@@ -4,7 +4,7 @@ import re
 word_count = url =>
     let result = async memo Async.from_sync(() =>
         print("Fetching URL:", url)
-        try requests.get(url)
+        check requests.get(url)
     )
 
     result.map($

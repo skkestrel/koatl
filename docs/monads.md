@@ -101,7 +101,7 @@ fn f() -> Result<T, E> {
 
 To explicitly mark an exception or None as an Ok value, simply use `Ok(None)`.
 
-While errors typically aren't returned from functions in Python, the `try` operator (see [Operators](operators)) makes it very easy to use these constructions to interface with external code.
+While errors typically aren't returned from functions in Python, the `check` operator (see [Operators](operators)) makes it very easy to use these constructions to interface with external code.
 
 Important: Result provides a default `bind_once` implementation for ALL types that don't otherwise define it;
 this means that (1).bind_once(...) will work, and therefore, the @ operator will also work with bare non-Result values using Result semantics.

@@ -22,14 +22,14 @@
 >>> #         |
 >>> #         |  Get checked values as Results with try-expressions
 >>> #         v                v
->>> (..5).map($ - 1).map(x => try [1, 2, 3][x]).list()
+>>> (..5).map($ - 1).map(x => check [1, 2, 3][x]).list()
 [Err(IndexError(...)), Ok(1), Ok(2), Ok(3), Err(IndexError(...))]
 
 >>> #      Quickly create records with Javascript-like syntax
 >>> #                              |
 >>> #                              |              Coalesce errors and Nones
 >>> #                              v                           v
->>> ["key0", "key1"].map(x => try { key0: "Queried value" }[x] ?? "Default").list()
+>>> ["key0", "key1"].map(x => check { key0: "Queried value" }[x] ?? "Default").list()
 ["Queried value", "Default"]
 
 >>> let fib = x => x < 2 then @Memo.pure(1) else memo @fib(x - 1) + @fib(x - 2)

@@ -1617,12 +1617,15 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let binary5 = |ctx: &mut Self| ctx.binary_expr(5, &binary4);
         let binary6 = |ctx: &mut Self| ctx.binary_expr(6, &binary5);
         let binary7 = |ctx: &mut Self| ctx.binary_expr(7, &binary6);
-        let binary8 = |ctx: &mut Self| ctx.binary_expr(8, &binary7);
-        let slice = |ctx: &mut Self| ctx.slice_expr(&binary8);
-        let matches = |ctx: &mut Self| ctx.matches_expr(&slice);
-        let not_expr = |ctx: &mut Self| ctx.not_expr(&matches);
-        let binary9 = |ctx: &mut Self| ctx.binary_expr(9, &not_expr);
-        let binary10 = |ctx: &mut Self| ctx.binary_expr(10, &binary9);
+        let not_expr = |ctx: &mut Self| ctx.not_expr(&binary7);
+
+        // Matches needs to be above "and" and "or" so we can write "a matches 1 and b matches 2 ..."
+        let matches = |ctx: &mut Self| ctx.matches_expr(&not_expr);
+
+        let binary8 = |ctx: &mut Self| ctx.binary_expr(8, &matches);
+        let binary9 = |ctx: &mut Self| ctx.binary_expr(9, &binary8);
+        let slice = |ctx: &mut Self| ctx.slice_expr(&binary9);
+        let binary10 = |ctx: &mut Self| ctx.binary_expr(10, &slice);
         let memo = |ctx: &mut Self| ctx.memo_expr(&binary10);
         let with_ = |ctx: &mut Self| ctx.with_expr(&memo);
         let if_ = |ctx: &mut Self| ctx.if_expr(&with_);
@@ -1637,7 +1640,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         match level {
             ExprPrec::All => binary11(self),
             ExprPrec::CaseGuard => binary10(self),
-            ExprPrec::Checkable => binary9(self),
+            // Checkable needs to be above matches so we can write "check a matches ..."
+            ExprPrec::Checkable => not_expr(self),
             ExprPrec::Inline => function_or_match(self),
         }
     }
