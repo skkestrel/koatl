@@ -25,7 +25,7 @@ export LazyModule = class:
 
             if hasattr(self._module, attr):
                 return getattr(self._module, attr)
-        except e:
+        except e =>
             raise ValueError(str(e))
 
         raise AttributeError(f"Module '{self._name}' has no attribute '{attr}'")

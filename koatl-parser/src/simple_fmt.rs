@@ -77,6 +77,24 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                     format!("({})", items_str)
                 }
             },
+            Expr::ClassicIf {
+                if_kw: _,
+                cond,
+                then,
+                else_clause,
+            } => {
+                let else_str = if let Some((_, expr)) = else_clause {
+                    format!(" else {}", expr.simple_fmt())
+                } else {
+                    String::new()
+                };
+                format!(
+                    "if {} then {}{}",
+                    cond.simple_fmt(),
+                    then.simple_fmt(),
+                    else_str
+                )
+            }
             Expr::If {
                 cond,
                 then_kw: _,
@@ -163,7 +181,7 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                 }
             }
             Expr::Block { kind } => match kind {
-                BlockKind::Regular { body, .. } => {
+                BlockKind::Regular { body, .. } | BlockKind::Parenthesized { body, .. } => {
                     let stmts_str = body
                         .iter()
                         .map(|stmt| stmt.value.simple_fmt())
@@ -202,6 +220,16 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                     .collect::<Vec<_>>()
                     .join("; ");
                 format!("({} match: {})", scrutinee.simple_fmt(), cases_str)
+            }
+            Expr::ClassicMatch {
+                scrutinee, cases, ..
+            } => {
+                let cases_str = cases
+                    .iter()
+                    .map(|case| case.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                format!("(match {}: {})", scrutinee.simple_fmt(), cases_str)
             }
             Expr::Matches {
                 lhs,
@@ -254,7 +282,7 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                     args.simple_fmt()
                 )
             }
-            Expr::Checked {
+            Expr::Try {
                 expr,
                 except_kw,
                 pattern,

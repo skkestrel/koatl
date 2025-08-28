@@ -992,14 +992,14 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 return expr;
             }
-            Expr::Checked(expr, pattern) => {
+            Expr::Try(expr, pattern) => {
                 let pattern = if let Some(pattern) = pattern {
                     let (pattern, meta) = pattern.traverse(state, false);
 
                     if !meta.captures.is_empty() {
                         state.errors.extend(
                             simple_err(
-                                "Non-'_' captures in a 'matches' are only allowed in 'if ... matches ...', or 'if ... matches not ...' constructions",
+                                "Non-'_' captures in a 'matches' are only allowed in 'if ... matches ...', or 'if ... not matches ...' constructions",
                                 pattern.span,
                             )
                         );
@@ -1021,7 +1021,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     None
                 };
 
-                Expr::Checked(expr.traverse_guarded(state), pattern)
+                Expr::Try(expr.traverse_guarded(state), pattern)
             }
             Expr::Decorated(deco, expr) => Expr::Call(
                 deco.traverse(state),
@@ -1604,7 +1604,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 
                 Stmt::For(pattern, iter.traverse_guarded(state), body)
             }
-            Stmt::Try(body, cases, finally) => {
+            Stmt::Checked(body, cases, finally) => {
                 let body = body.traverse_guarded(state);
                 let cases = cases
                     .into_iter()
@@ -1624,7 +1624,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                     .collect::<Vec<_>>();
                 let finally = finally.map(|x| x.traverse_guarded(state));
 
-                Stmt::Try(body, cases, finally)
+                Stmt::Checked(body, cases, finally)
             }
             Stmt::Raise(expr) => Stmt::Raise(expr.map(|x| x.traverse_guarded(state))),
             Stmt::Import(tree, reexport) => {

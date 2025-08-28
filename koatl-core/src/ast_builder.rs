@@ -69,7 +69,7 @@ impl AstBuilder {
         handlers: Vec<SMatchCase<'src>>,
         orelse: Option<impl IntoIndirect<SExpr<'src>>>,
     ) -> SStmt<'src> {
-        Stmt::Try(body.indirect(), handlers, orelse.map(|o| o.indirect())).spanned(self.span)
+        Stmt::Checked(body.indirect(), handlers, orelse.map(|o| o.indirect())).spanned(self.span)
     }
 
     pub fn raise<'src>(&self, expr: Option<impl IntoIndirect<SExpr<'src>>>) -> SStmt<'src> {

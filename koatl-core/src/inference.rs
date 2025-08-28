@@ -41,7 +41,7 @@ impl<'src, 'ast> SStmtExt<'src, 'ast> for Indirect<SStmt<'src>> {
                 body.traverse(ctx);
                 Type::NoReturn
             }
-            Stmt::Try(body, cases, finally) => {
+            Stmt::Checked(body, cases, finally) => {
                 body.traverse(ctx);
                 for case in cases {
                     case.body.traverse(ctx);
@@ -238,7 +238,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
                 other.traverse(ctx);
                 Type::Any
             }
-            Expr::Checked(expr, _pattern) => {
+            Expr::Try(expr, _pattern) => {
                 expr.traverse(ctx);
                 Type::Any
             }

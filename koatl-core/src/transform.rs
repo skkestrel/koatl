@@ -414,7 +414,7 @@ fn transform_if_matches_not_never_expr<'src, 'ast>(
 
     if *typ != Type::Bottom {
         return Err(simple_err(
-            "then block of 'if ... matches not ...' with named captures must have type Never (raise, return, continue, break)",
+            "then block of 'if ... not matches ...' with named captures must have type Never (raise, return, continue, break)",
             span,
         ));
     }
@@ -1632,7 +1632,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     pre.push(a.while_(a.bool(true), new_body_block));
                 }
             }
-            Stmt::Try(body, excepts, finally) => {
+            Stmt::Checked(body, excepts, finally) => {
                 let body_block = body.transform(ctx)?.drop_expr(ctx);
 
                 let finally_block = if let Some(finally) = finally {
@@ -1800,7 +1800,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
         }
 
         let value: SPyExpr<'src> = match &expr {
-            Expr::Checked(expr, pattern) => {
+            Expr::Try(expr, pattern) => {
                 let var_name = ctx.create_aux_var("chk", span.start);
 
                 // exception variable doesn't leave the except slope, so rebind it to chk

@@ -360,6 +360,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let mut alts = vec![];
 
         loop {
+            self.set_error(self.cursor, ParseErr::unexpected(self.cursor));
+
             let parsed = optional!(self, |ctx| {
                 let pipe = ctx.symbol("|")?;
                 let pattern = ctx.atom_pattern()?;
@@ -674,8 +676,25 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 let rparen = ctx.symbol(")")?;
                 Ok(Expr::Tuple {
                     kind: TupleKind::Unit(lparen, rparen),
-                }
-                .spanned(ctx.span_from(start)))
+                })
+            };
+
+            let block = |ctx: &mut Self| {
+                let indent = ctx.token(&Token::Indent)?;
+                let body = ctx.stmts()?;
+                let dedent = ctx.token(&Token::Dedent)?;
+                optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
+                let rparen = ctx.symbol(")")?;
+
+                Ok(Expr::Block {
+                    kind: BlockKind::Parenthesized {
+                        lparen,
+                        indent,
+                        body,
+                        dedent,
+                        rparen,
+                    },
+                })
             };
 
             let parenthesized_expr = |ctx: &mut Self| {
@@ -686,27 +705,34 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     lparen,
                     expr: expr.boxed(),
                     rparen,
-                }
-                .spanned(ctx.span_from(start)))
+                })
             };
 
-            first_of!(
+            Ok(first_of!(
                 ctx,
                 "parenthesized expression",
                 empty_tuple,
+                block,
                 parenthesized_expr
-            )
+            )?
+            .spanned(ctx.span_from(start)))
         };
 
         let checked_expr = Self::checked_expr;
 
         let class_expr = Self::class_expr;
 
+        let classic_if = Self::classic_if;
+
+        let classic_match = Self::classic_match;
+
         first_of!(
             self,
             "atom",
             checked_expr,
             class_expr,
+            classic_if,
+            classic_match,
             literal_expr,
             ident_expr,
             placeholder,
@@ -720,7 +746,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     fn checked_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
         let start = self.cursor;
 
-        let try_kw = self.keyword("try")?;
+        let try_kw = self.ident("check")?;
         let expr = self.expr_with_prec(ExprPrec::Tryable)?;
         let except_clause = optional!(self, |ctx: &mut Self| {
             let except_kw = ctx.keyword("except")?;
@@ -734,11 +760,56 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             (None, None)
         };
 
-        Ok(Expr::Checked {
+        Ok(Expr::Try {
             try_kw,
             expr: expr.boxed(),
             except_kw,
             pattern,
+        }
+        .spanned(self.span_from(start)))
+    }
+
+    fn classic_if(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
+        let if_kw = self.keyword("if")?;
+        let cond = self.expr()?.boxed();
+
+        let then = self.colon_block()?.boxed();
+
+        let else_clause = optional!(self, |ctx: &mut Self| {
+            optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
+            let else_kw = ctx.keyword("else")?;
+            let else_body = ctx.colon_block()?.boxed();
+            Ok((else_kw, else_body))
+        })?;
+
+        Ok(Expr::ClassicIf {
+            if_kw,
+            cond,
+            then,
+            else_clause,
+        }
+        .spanned(self.span_from(start)))
+    }
+
+    fn classic_match(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
+        let match_kw = self.keyword("match")?;
+        let scrutinee = self.expr()?.boxed();
+        let colon = optional!(self, |ctx: &mut Self| ctx.symbol(":"))?;
+        let indent = self.token(&Token::Indent)?;
+        let cases = self.match_cases()?;
+        let dedent = self.token(&Token::Dedent)?;
+
+        Ok(Expr::Match {
+            scrutinee,
+            match_kw,
+            colon,
+            indent,
+            cases,
+            dedent,
         }
         .spanned(self.span_from(start)))
     }
@@ -1019,7 +1090,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             Token::Symbol("-") => Some(UnaryOp::Neg),
             Token::Symbol("~") => Some(UnaryOp::Inv),
             Token::Symbol("@") => Some(UnaryOp::Bind),
-            Token::Kw("not") => Some(UnaryOp::Not),
             _ => None,
         }
     }
@@ -1033,11 +1103,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         if let Some(token) = self.peek_token() {
             if matches!(
                 token.token,
-                Token::Symbol("+")
-                    | Token::Symbol("-")
-                    | Token::Symbol("~")
-                    | Token::Symbol("@")
-                    | Token::Kw("not")
+                Token::Symbol("+") | Token::Symbol("-") | Token::Symbol("~") | Token::Symbol("@")
             ) {
                 let op = self.next_token().unwrap();
                 let op_kind = Self::token_to_unary_op(&op.token).unwrap();
@@ -1452,6 +1518,31 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         }
     }
 
+    fn not_expr(
+        &mut self,
+        next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
+    ) -> ParseResult<SExpr<'src, 'tok>> {
+        let start = self.cursor;
+
+        let not_variant = optional!(self, |ctx: &mut Self| {
+            let not_kw = ctx.keyword("not")?;
+            let expr = ctx.not_expr(next_level)?;
+
+            Ok(Expr::Unary {
+                op: not_kw,
+                op_kind: UnaryOp::Not,
+                expr: expr.boxed(),
+            }
+            .spanned(ctx.span_from(start)))
+        })?;
+
+        if let Some(not_expr) = not_variant {
+            Ok(not_expr)
+        } else {
+            next_level(self)
+        }
+    }
+
     fn expr_with_prec(&mut self, level: ExprPrec) -> ParseResult<SExpr<'src, 'tok>> {
         self.set_error(self.cursor, ParseErr::expected("expression", self.cursor));
 
@@ -1470,7 +1561,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let binary8 = |ctx: &mut Self| ctx.binary_expr(8, &binary7);
         let slice = |ctx: &mut Self| ctx.slice_expr(&binary8);
         let matches = |ctx: &mut Self| ctx.matches_expr(&slice);
-        let binary9 = |ctx: &mut Self| ctx.binary_expr(9, &matches);
+        let not_expr = |ctx: &mut Self| ctx.not_expr(&matches);
+        let binary9 = |ctx: &mut Self| ctx.binary_expr(9, &not_expr);
         let binary10 = |ctx: &mut Self| ctx.binary_expr(10, &binary9);
         let memo = |ctx: &mut Self| ctx.memo_expr(&binary10);
         let with_ = |ctx: &mut Self| ctx.with_expr(&memo);
@@ -1482,7 +1574,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         match level {
             ExprPrec::All => binary11(self),
             ExprPrec::CaseGuard => if_(self),
-            ExprPrec::Tryable => binary7(self),
+            ExprPrec::Tryable => not_expr(self),
         }
     }
 
@@ -2047,7 +2139,11 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             let cases = {
                 let mut acc = vec![];
                 loop {
-                    let Some(except) = optional!(ctx, |ctx| ctx.keyword("except"))? else {
+                    let Some(except) = optional!(ctx, |ctx| {
+                        optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
+                        ctx.keyword("except")
+                    })?
+                    else {
                         break;
                     };
 
@@ -2073,6 +2169,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             };
 
             let finally = optional!(ctx, |ctx: &mut Self| {
+                optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
                 let finally_kw = ctx.keyword("finally")?;
                 let expr = ctx.colon_block()?;
                 Ok((finally_kw, expr.boxed()))

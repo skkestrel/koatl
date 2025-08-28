@@ -284,6 +284,14 @@ pub enum BlockKind<TTree: Tree> {
         dedent: TTree::Token,
     },
 
+    Parenthesized {
+        lparen: TTree::Token,
+        indent: TTree::Token,
+        body: Vec<TTree::Stmt>,
+        dedent: TTree::Token,
+        rparen: TTree::Token,
+    },
+
     Bare {
         body: Vec<TTree::Stmt>,
     },
@@ -353,11 +361,27 @@ pub enum Expr<TTree: Tree> {
         expr: TTree::Expr,
     },
 
+    ClassicIf {
+        if_kw: TTree::Token,
+        cond: TTree::Expr,
+        then: TTree::Expr,
+        else_clause: Option<(TTree::Token, TTree::Expr)>,
+    },
+
     If {
         cond: TTree::Expr,
         then_kw: TTree::Token,
         then: TTree::Expr,
         else_clause: Option<(TTree::Token, TTree::Expr)>,
+    },
+
+    ClassicMatch {
+        match_kw: TTree::Token,
+        scrutinee: TTree::Expr,
+        colon: Option<TTree::Token>,
+        indent: TTree::Token,
+        cases: Vec<MatchCase<TTree>>,
+        dedent: TTree::Token,
     },
 
     Match {
@@ -427,7 +451,7 @@ pub enum Expr<TTree: Tree> {
         attr: TTree::Token,
     },
 
-    Checked {
+    Try {
         try_kw: TTree::Token,
         expr: TTree::Expr,
         except_kw: Option<TTree::Token>,
@@ -639,7 +663,6 @@ pub struct SStmt<'src, 'tok> {
     pub span: Span,
 }
 
-pub type SFusedBlock<'src, 'tok> = BlockKind<STree<'src, 'tok>>;
 pub type SListing<'src, 'tok, T> = Listing<T, STree<'src, 'tok>>;
 pub type SListItem<'src, 'tok> = ListItem<STree<'src, 'tok>>;
 pub type SMappingItem<'src, 'tok> = MappingItem<STree<'src, 'tok>>;

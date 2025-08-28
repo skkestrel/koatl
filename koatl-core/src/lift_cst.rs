@@ -143,6 +143,12 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                 then,
                 else_clause,
                 ..
+            }
+            | cst::Expr::ClassicIf {
+                cond,
+                then,
+                else_clause,
+                ..
             } => {
                 let else_expr = else_clause.as_ref().map(|(_, expr)| expr.lift());
                 ast::Expr::If(cond.lift(), then.lift(), else_expr)
@@ -163,13 +169,12 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
             ),
             cst::Expr::Block { kind } => {
                 let stmts = match kind {
-                    cst::BlockKind::Regular { body, .. } => {
+                    cst::BlockKind::Regular { body, .. }
+                    | cst::BlockKind::Bare { body, .. }
+                    | cst::BlockKind::Parenthesized { body, .. } => {
                         body.iter().map(|stmt| stmt.lift().indirect()).collect()
                     }
                     cst::BlockKind::Inline { stmt, .. } => vec![stmt.lift().indirect()],
-                    cst::BlockKind::Bare { body, .. } => {
-                        body.iter().map(|stmt| stmt.lift().indirect()).collect()
-                    }
                 };
                 ast::Expr::Block(stmts)
             }
@@ -183,6 +188,9 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                 }
             }
             cst::Expr::Match {
+                scrutinee, cases, ..
+            }
+            | cst::Expr::ClassicMatch {
                 scrutinee, cases, ..
             } => {
                 let cases_list = cases.iter().map(|case| case.lift()).collect();
@@ -294,12 +302,12 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                     ast::Expr::ScopedAttribute(expr.lift(), rhs.lift())
                 }
             }
-            cst::Expr::Checked {
+            cst::Expr::Try {
                 try_kw: _,
                 expr,
                 except_kw: _,
                 pattern,
-            } => ast::Expr::Checked(expr.lift(), pattern.as_ref().map(|p| p.lift())),
+            } => ast::Expr::Try(expr.lift(), pattern.as_ref().map(|p| p.lift())),
             cst::Expr::Error => panic!("Cannot lift error expression"),
         };
         expr.spanned(self.span).indirect()
@@ -410,7 +418,7 @@ impl<'src, 'tok> Lift<ast::SStmt<'src>> for cst::SStmt<'src, 'tok> {
                 let exception_cases: Vec<ast::MatchCase<ast::STree<'src>>> =
                     cases.iter().map(|case| case.lift()).collect();
                 let finally_expr = finally.as_ref().map(|(_, expr)| expr.lift());
-                ast::Stmt::Try(expr.lift(), exception_cases, finally_expr)
+                ast::Stmt::Checked(expr.lift(), exception_cases, finally_expr)
             }
         };
         stmt.spanned(self.span)
