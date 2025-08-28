@@ -5,7 +5,6 @@ use std::borrow::Cow;
 use crate::cst::*;
 use crate::lexer::*;
 use crate::parser_error::TriviaRich;
-use crate::simple_fmt::SimpleFmt;
 
 const START_BLOCK: Token = Token::Symbol(":");
 
@@ -100,6 +99,7 @@ enum ExprPrec {
     CaseGuard,
     All,
     Tryable,
+    Inline,
 }
 
 pub fn true_span(start: usize, end: usize, input: &[SToken]) -> Span {
@@ -136,6 +136,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn set_error(&mut self, cursor: usize, err: ParseErr<'src>) {
+        // println!("set_error {} {:?}", cursor, err);
+
         if let Some((furthest_cursor, _)) = &self.cur_error {
             if cursor > *furthest_cursor {
                 self.cur_error = Some((cursor, err));
@@ -330,6 +332,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         }
         .spanned(self.span_from(start));
 
+        self.set_error(self.cursor, ParseErr::unexpected(self.cursor));
+
         loop {
             let parsed = optional!(self, |ctx| {
                 let dot = ctx.symbol(".")?;
@@ -493,7 +497,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     fn value_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
         let start = self.cursor;
         let dot = self.symbol(".")?;
-        let expr = self.expr()?.boxed();
+        let expr = self.qualified_ident()?.boxed();
         Ok(Pattern::Value { dot, expr }.spanned(self.span_from(start)))
     }
 
@@ -686,14 +690,12 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
                 let rparen = ctx.symbol(")")?;
 
-                Ok(Expr::Block {
-                    kind: BlockKind::Parenthesized {
-                        lparen,
-                        indent,
-                        body,
-                        dedent,
-                        rparen,
-                    },
+                Ok(Expr::ParenthesizedBlock {
+                    lparen,
+                    indent,
+                    body,
+                    dedent,
+                    rparen,
                 })
             };
 
@@ -760,7 +762,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             (None, None)
         };
 
-        Ok(Expr::Try {
+        Ok(Expr::Checked {
             try_kw,
             expr: expr.boxed(),
             except_kw,
@@ -775,19 +777,19 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let if_kw = self.keyword("if")?;
         let cond = self.expr()?.boxed();
 
-        let then = self.colon_block()?.boxed();
+        let body = self.colon_block()?;
 
         let else_clause = optional!(self, |ctx: &mut Self| {
             optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
             let else_kw = ctx.keyword("else")?;
-            let else_body = ctx.colon_block()?.boxed();
+            let else_body = ctx.colon_block()?;
             Ok((else_kw, else_body))
         })?;
 
         Ok(Expr::ClassicIf {
             if_kw,
             cond,
-            then,
+            body,
             else_clause,
         }
         .spanned(self.span_from(start)))
@@ -796,9 +798,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     fn classic_match(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
         let start = self.cursor;
 
-        let match_kw = self.keyword("match")?;
+        let match_kw = self.ident("match")?;
         let scrutinee = self.expr()?.boxed();
-        let colon = optional!(self, |ctx: &mut Self| ctx.symbol(":"))?;
+        let colon = self.symbol(":")?;
         let indent = self.token(&Token::Indent)?;
         let cases = self.match_cases()?;
         let dedent = self.token(&Token::Dedent)?;
@@ -830,7 +832,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         Ok(Expr::Class {
             class_kw,
             args,
-            body: body.boxed(),
+            body,
         }
         .spanned(self.span_from(start)))
     }
@@ -906,7 +908,13 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let mut parts = Vec::new();
 
         loop {
-            let Some(expr) = optional!(self, |ctx| ctx.generic_block(false))? else {
+            let Some((indent, stmts, dedent)) = optional!(self, |ctx| {
+                let indent = ctx.token(&Token::Indent)?;
+                let stmts = ctx.stmts()?;
+                let dedent = ctx.token(&Token::Dedent)?;
+                Ok((indent, stmts, dedent))
+            })?
+            else {
                 break;
             };
 
@@ -918,7 +926,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             })?;
 
             let fmt_expr = FmtExpr {
-                expr: expr.boxed(),
+                indent,
+                stmts,
+                dedent,
                 fmt,
             };
 
@@ -1165,6 +1175,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
             let question = optional!(self, |ctx: &mut Self| ctx.symbol("?"))?;
 
+            self.set_error(self.cursor, ParseErr::unexpected(self.cursor));
+
             let call = |ctx: &mut Self| {
                 let args = ctx.listing("(", ")", Token::Symbol(","), |ctx| ctx.call_item())?;
                 Ok(Postfix::Call { args })
@@ -1397,7 +1409,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let parsed = optional!(self, |ctx: &mut Self| {
             let match_kw = ctx.ident("match")?;
-            let colon = optional!(ctx, |ctx: &mut Self| ctx.symbol(":"))?;
+            let colon = ctx.symbol(":")?;
             let indent = ctx.token(&Token::Indent)?;
             let cases = ctx.match_cases()?;
             let dedent = ctx.token(&Token::Dedent)?;
@@ -1437,7 +1449,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 pattern: pattern.boxed(),
                 eq,
                 value: value.boxed(),
-                body: body.boxed(),
+                body,
             }
             .spanned(ctx.span_from(start)))
         })?;
@@ -1497,16 +1509,14 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let start = self.cursor;
 
         let memo_variant = optional!(self, |ctx: &mut Self| {
-            let async_kw = optional!(ctx, |ctx: &mut Self| ctx.keyword("async"))?;
-            let memo_kw = ctx.keyword("memo")?;
-            let colon = optional!(ctx, |ctx: &mut Self| ctx.symbol(":"))?;
-            let expr = ctx.colon_block()?;
+            let async_kw = optional!(ctx, |ctx: &mut Self| ctx.ident("async"))?;
+            let memo_kw = ctx.ident("memo")?;
+            let body = ctx.colon_block()?;
 
             Ok(Expr::Memo {
                 async_kw,
                 memo_kw,
-                colon,
-                expr: expr.boxed(),
+                body,
             }
             .spanned(ctx.span_from(start)))
         })?;
@@ -1568,13 +1578,16 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let with_ = |ctx: &mut Self| ctx.with_expr(&memo);
         let if_ = |ctx: &mut Self| ctx.if_expr(&with_);
         let match_ = |ctx: &mut Self| ctx.match_expr(&if_);
-        let function = |ctx: &mut Self| ctx.function_expr(&match_);
-        let binary11 = |ctx: &mut Self| ctx.binary_expr(11, &function);
+        let function = |ctx: &mut Self| ctx.function_expr();
+        let function_or_match =
+            |ctx: &mut Self| first_of!(ctx, "function or match", &function, &match_);
+        let binary11 = |ctx: &mut Self| ctx.binary_expr(11, &function_or_match);
 
         match level {
             ExprPrec::All => binary11(self),
-            ExprPrec::CaseGuard => if_(self),
+            ExprPrec::CaseGuard => binary10(self),
             ExprPrec::Tryable => not_expr(self),
+            ExprPrec::Inline => function_or_match(self),
         }
     }
 
@@ -1592,83 +1605,86 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 }
             }
 
-            let pattern = self.as_pattern()?;
+            let pattern = self.open_pattern()?;
 
             let guard = optional!(self, |ctx: &mut Self| {
                 let if_kw = ctx.keyword("if")?;
-                let guard_expr = ctx.expr()?;
+                let guard_expr = ctx.expr_with_prec(ExprPrec::CaseGuard)?;
                 Ok((if_kw, guard_expr))
             })?;
 
-            let (arrow, body) = self.arrow_block()?;
+            let body = self.arrow_block(false)?;
             self.token(&Token::Eol)?;
 
             cases.push(MatchCase {
                 pattern: pattern.boxed(),
                 guard: guard.map(|(kw, expr)| (kw, expr.boxed())),
-                arrow,
-                body: body.boxed(),
+                body,
             });
         }
 
         Ok(cases)
     }
 
-    fn generic_block(&mut self, require_colon: bool) -> ParseResult<SExpr<'src, 'tok>> {
+    fn colon_block(&mut self) -> ParseResult<ColonBlock<STree<'src, 'tok>>> {
         let block = |ctx: &mut Self| {
-            let start = ctx.cursor;
-
-            let colon = if require_colon {
-                Some(ctx.symbol(":")?)
-            } else {
-                None
-            };
+            let colon = ctx.symbol(":")?;
 
             let indent = ctx.token(&Token::Indent)?;
             let body = ctx.stmts()?;
             let dedent = ctx.token(&Token::Dedent)?;
 
-            Ok(Expr::Block {
-                kind: BlockKind::Regular {
-                    colon,
-                    indent,
-                    body,
-                    dedent,
-                },
-            }
-            .spanned(ctx.span_from(start)))
+            Ok(ColonBlock::Block {
+                colon,
+                indent,
+                body,
+                dedent,
+            })
         };
 
         let inline_stmt = |ctx: &mut Self| {
-            let start = ctx.cursor;
-            let colon = if require_colon {
-                optional!(ctx, |ctx: &mut Self| ctx.symbol(":"))?
-            } else {
-                None
-            };
+            let colon = optional!(ctx, |ctx: &mut Self| ctx.symbol(":"))?;
 
             let stmt = ctx.stmt(true)?;
 
-            Ok(Expr::Block {
-                kind: BlockKind::Inline {
-                    colon,
-                    stmt: Box::new(stmt),
-                },
-            }
-            .spanned(ctx.span_from(start)))
+            Ok(ColonBlock::Inline {
+                colon,
+                stmt: Box::new(stmt),
+            })
         };
 
         first_of!(self, "expression or block", block, inline_stmt)
     }
 
-    fn colon_block(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
-        self.generic_block(true)
-    }
-
-    fn arrow_block(&mut self) -> ParseResult<(&'tok SToken<'src>, SExpr<'src, 'tok>)> {
+    fn arrow_block(
+        &mut self,
+        parse_inline_stmt_on_inline_block: bool,
+    ) -> ParseResult<ArrowBlock<STree<'src, 'tok>>> {
         let arrow = self.symbol("=>")?;
-        let block = self.generic_block(false)?;
-        Ok((arrow, block))
+
+        let block = |ctx: &mut Self| {
+            let indent = ctx.token(&Token::Indent)?;
+            let body = ctx.stmts()?;
+            let dedent = ctx.token(&Token::Dedent)?;
+
+            Ok(ArrowBlock::Block {
+                arrow,
+                indent,
+                body,
+                dedent,
+            })
+        };
+
+        let inline_stmt = |ctx: &mut Self| {
+            let stmt = ctx.stmt(parse_inline_stmt_on_inline_block)?;
+
+            Ok(ArrowBlock::Inline {
+                arrow,
+                stmt: Box::new(stmt),
+            })
+        };
+
+        first_of!(self, "expression or block", block, inline_stmt)
     }
 
     fn if_expr(
@@ -1681,23 +1697,23 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let parsed = optional!(self, |ctx: &mut Self| {
             let then_kw = ctx.keyword("then")?;
-            let then = ctx.colon_block()?.boxed();
+            let then = ctx.colon_block()?;
 
             let else_clause = optional!(ctx, |ctx: &mut Self| {
                 optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
                 let else_kw = ctx.keyword("else")?;
                 let else_body = ctx.colon_block()?;
-                Ok((else_kw, else_body.boxed()))
+                Ok((else_kw, else_body))
             })?;
 
             Ok((then_kw, then, else_clause))
         })?;
 
-        if let Some((then_kw, then, else_clause)) = parsed {
+        if let Some((then_kw, body, else_clause)) = parsed {
             expr = Expr::If {
                 cond: expr.boxed(),
                 then_kw,
-                then,
+                body,
                 else_clause,
             }
             .spanned(self.span_from(start));
@@ -1733,10 +1749,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         Ok(expr)
     }
 
-    fn function_expr(
-        &mut self,
-        next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
-    ) -> ParseResult<SExpr<'src, 'tok>> {
+    fn function_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
         let start = self.cursor;
 
         let parenthesized_fn = |ctx: &mut Self| {
@@ -1768,31 +1781,23 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     }
                 )
             })?;
-            let arrow = ctx.symbol("=>")?;
-            let body = ctx.generic_block(false)?;
+            let body = ctx.arrow_block(true)?;
 
-            Ok(Expr::ParenthesizedFn {
-                args,
-                arrow,
-                body: body.boxed(),
-            }
-            .spanned(ctx.span_from(start)))
+            Ok(Expr::ParenthesizedFn { args, body }.spanned(ctx.span_from(start)))
         };
 
         let unary_fn = |ctx: &mut Self| {
             let pattern = ctx.atom_pattern()?;
-            let arrow = ctx.symbol("=>")?;
-            let body = ctx.generic_block(false)?;
+            let body = ctx.arrow_block(true)?;
 
             Ok(Expr::Fn {
                 arg: pattern.boxed(),
-                arrow,
-                body: body.boxed(),
+                body,
             }
             .spanned(ctx.span_from(start)))
         };
 
-        first_of!(self, "function", parenthesized_fn, unary_fn, next_level)
+        first_of!(self, "function", parenthesized_fn, unary_fn)
     }
 
     fn open_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
@@ -1928,17 +1933,24 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn import_tree(&mut self) -> ParseResult<ImportTree<STree<'src, 'tok>>> {
-        // Parse dots (relative imports)
+        let start = self.cursor;
         let mut dots = Vec::new();
+
+        self.set_error(self.cursor, ParseErr::expected("import path", self.cursor));
+
         loop {
-            if let Some(dot) = optional!(self, |ctx: &mut Self| ctx.symbol("."))? {
-                dots.push(dot);
-            } else if let Some(double_dot) = optional!(self, |ctx: &mut Self| ctx.symbol(".."))? {
-                dots.push(double_dot);
-            } else {
+            let Some(tok) = self.peek_token() else {
                 break;
+            };
+
+            match tok.token {
+                Token::Symbol(s) if s == "." => dots.push((tok, 1)),
+                Token::Symbol(s) if s == ".." => dots.push((tok, 2)),
+                _ => break,
             }
+            self.next_token();
         }
+        let dots_span = self.span_from(start);
 
         let mut trunk = Vec::new();
         loop {
@@ -1987,7 +1999,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         )?;
 
         Ok(ImportTree {
-            dots,
+            dots: dots.spanned(dots_span),
             trunk,
             leaf: leaf.spanned(self.span_from(leaf_start)),
         })
@@ -2025,7 +2037,11 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     fn stmt(&mut self, inline: bool) -> ParseResult<SStmt<'src, 'tok>> {
         let start = self.cursor;
 
-        let expr = if inline { Self::expr } else { Self::open_expr };
+        let expr = if inline {
+            |ctx: &mut Self| ctx.expr_with_prec(ExprPrec::Inline)
+        } else {
+            Self::open_expr
+        };
 
         let pattern = if inline {
             Self::atom_pattern
@@ -2037,14 +2053,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             Ok(Stmt::Expr {
                 expr: ctx.parse(expr)?.boxed(),
             })
-        };
-
-        let pattern_debug = |ctx: &mut Self| {
-            let debug = ctx.ident("debug")?;
-            ctx.ident("pattern")?;
-            let pat = ctx.parse(&pattern)?;
-            println!("Parsed pattern: {}", pat.simple_fmt());
-            Ok(Stmt::Break { break_kw: debug })
         };
 
         let pattern_assign = |ctx: &mut Self| {
@@ -2112,7 +2120,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             Ok(Stmt::While {
                 while_kw,
                 cond: cond.boxed(),
-                body: body.boxed(),
+                body,
             })
         };
 
@@ -2128,13 +2136,13 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 pattern: pattern.boxed(),
                 in_kw,
                 iter: iter.boxed(),
-                body: body.boxed(),
+                body,
             })
         };
 
         let try_stmt = |ctx: &mut Self| {
             let try_kw = ctx.keyword("try")?;
-            let expr = ctx.colon_block()?;
+            let body = ctx.colon_block()?;
 
             let cases = {
                 let mut acc = vec![];
@@ -2151,18 +2159,17 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
                     let guard = optional!(ctx, |ctx: &mut Self| {
                         let if_kw = ctx.keyword("if")?;
-                        let guard_expr = ctx.expr()?;
+                        let guard_expr = ctx.expr_with_prec(ExprPrec::CaseGuard)?;
                         Ok((if_kw, guard_expr))
                     })?;
 
-                    let (arrow, body) = ctx.arrow_block()?;
+                    let body = ctx.arrow_block(false)?;
 
                     acc.push(ExceptCase {
                         except,
                         pattern: pattern.boxed(),
                         guard: guard.map(|(kw, expr)| (kw, expr.boxed())),
-                        arrow,
-                        body: body.boxed(),
+                        body,
                     });
                 }
                 acc
@@ -2171,13 +2178,13 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             let finally = optional!(ctx, |ctx: &mut Self| {
                 optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
                 let finally_kw = ctx.keyword("finally")?;
-                let expr = ctx.colon_block()?;
-                Ok((finally_kw, expr.boxed()))
+                let body = ctx.colon_block()?;
+                Ok((finally_kw, body))
             })?;
 
             Ok(Stmt::Try {
                 try_kw,
-                expr: expr.boxed(),
+                body,
                 cases,
                 finally,
             })
@@ -2214,7 +2221,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let stmt = first_of!(
             self,
             "statement",
-            pattern_debug,
             pattern_assign,
             Self::import_stmt,
             Self::decl_stmt,
@@ -2229,14 +2235,11 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             raise_stmt
         )?;
 
-        if !inline {
-            let _ = self.token(&Token::Eol)?;
-        }
-
         Ok(stmt.spanned(self.span_from(start)))
     }
 
-    fn stmts(&mut self) -> ParseResult<Vec<Box<SStmt<'src, 'tok>>>> {
+    fn stmts(&mut self) -> ParseResult<SStmts<'src, 'tok>> {
+        let start = self.cursor;
         let mut stmts = Vec::new();
 
         'outer: loop {
@@ -2250,7 +2253,12 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
             let before = self.save();
 
-            if let Ok(stmt) = self.stmt(false) {
+            if let Ok(stmt) = (|ctx: &mut Self| -> ParseResult<SStmt> {
+                let stmt = ctx.stmt(false)?;
+                ctx.token(&Token::Eol)?;
+                Ok(stmt)
+            })(self)
+            {
                 stmts.push(Box::new(stmt));
             } else {
                 let error = self.take_error().1;
@@ -2284,29 +2292,24 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        Ok(stmts)
+        Ok(stmts.spanned(self.span_from(start)))
     }
 
-    fn program(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
-        let start = self.cursor;
-
+    fn program(&mut self) -> ParseResult<SStmts<'src, 'tok>> {
         let body = self.stmts()?;
 
         if self.cursor != self.input.len() {
             return Err(self.set_error(self.cursor, ParseErr::unexpected(self.cursor)));
         }
 
-        Ok(Expr::Block {
-            kind: BlockKind::Bare { body },
-        }
-        .spanned(self.span_from(start)))
+        Ok(body)
     }
 }
 
 pub fn parse_tokens<'src: 'tok, 'tok>(
     src: &'src str,
     tokens: &'tok TokenList<'src>,
-) -> (Option<SExpr<'src, 'tok>>, Vec<TriviaRich<'tok, 'src>>) {
+) -> (Option<SStmts<'src, 'tok>>, Vec<TriviaRich<'tok, 'src>>) {
     if tokens.0.is_empty() {
         return (
             None,
@@ -2330,8 +2333,6 @@ pub fn parse_tokens<'src: 'tok, 'tok>(
             None
         }
     };
-
-    // println!("{:#?}", expr);
 
     (
         expr,

@@ -551,10 +551,13 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
         }
 
         let transformed = match pattern {
-            Pattern::As(pattern, ident) => PyPattern::As(
-                Some(Box::new(pre.bind(pattern.transform(ctx, info)?))),
-                capture_slot(ctx, ident, info)?,
-            ),
+            Pattern::As(pattern, ident) => match ident {
+                Some(ident) => PyPattern::As(
+                    Some(Box::new(pre.bind(pattern.transform(ctx, info)?))),
+                    capture_slot(ctx, ident, info)?,
+                ),
+                None => pre.bind(pattern.transform(ctx, info)?).value,
+            },
             Pattern::Literal(literal) => match literal.value {
                 Literal::Num(..) | Literal::Str(..) => {
                     PyPattern::Value((PyExpr::Literal(literal.value.transform(ctx)?), span).into())

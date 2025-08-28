@@ -719,7 +719,9 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
             Pattern::As(pattern, name) => {
                 let (pattern, meta) = pattern.traverse(state, allow_uppercase_capture);
                 captures.extend(meta.captures);
-                captures.push(name.value.clone());
+                if let Some(n) = &name {
+                    captures.push(n.value.clone());
+                }
                 default |= meta.default;
                 Pattern::As(pattern, name)
             }

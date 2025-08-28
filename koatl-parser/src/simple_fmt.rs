@@ -80,7 +80,7 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
             Expr::ClassicIf {
                 if_kw: _,
                 cond,
-                then,
+                body,
                 else_clause,
             } => {
                 let else_str = if let Some((_, expr)) = else_clause {
@@ -91,14 +91,14 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                 format!(
                     "if {} then {}{}",
                     cond.simple_fmt(),
-                    then.simple_fmt(),
+                    body.simple_fmt(),
                     else_str
                 )
             }
             Expr::If {
                 cond,
                 then_kw: _,
-                then,
+                body,
                 else_clause,
             } => {
                 let else_str = if let Some((_, expr)) = else_clause {
@@ -109,7 +109,7 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                 format!(
                     "{} then {}{}",
                     cond.simple_fmt(),
-                    then.simple_fmt(),
+                    body.simple_fmt(),
                     else_str
                 )
             }
@@ -180,22 +180,9 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                     format!("({}..{})", start_str, end_str)
                 }
             }
-            Expr::Block { kind } => match kind {
-                BlockKind::Regular { body, .. } | BlockKind::Parenthesized { body, .. } => {
-                    let stmts_str = body
-                        .iter()
-                        .map(|stmt| stmt.value.simple_fmt())
-                        .collect::<Vec<_>>()
-                        .join("; ");
-                    format!("Block({})", stmts_str)
-                }
-                BlockKind::Inline { stmt, .. } => stmt.value.simple_fmt(),
-                BlockKind::Bare { body, .. } => body
-                    .iter()
-                    .map(|stmt| stmt.value.simple_fmt())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            },
+            Expr::ParenthesizedBlock { body, .. } => {
+                format!("Block({})", body.simple_fmt())
+            }
             Expr::Mapping { listing } => listing.simple_fmt(),
             Expr::Await { expr, .. } => {
                 format!("(await {})", expr.simple_fmt())
@@ -207,9 +194,9 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                     from_kw.map(|_| " from").unwrap_or_default()
                 )
             }
-            Expr::Memo { async_kw, expr, .. } => {
+            Expr::Memo { async_kw, body, .. } => {
                 let async_str = if async_kw.is_some() { "async " } else { "" };
-                format!("({}memo {})", async_str, expr.simple_fmt())
+                format!("({}memo {})", async_str, body.simple_fmt())
             }
             Expr::Match {
                 scrutinee, cases, ..
@@ -282,7 +269,7 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                     args.simple_fmt()
                 )
             }
-            Expr::Try {
+            Expr::Checked {
                 expr,
                 except_kw,
                 pattern,
@@ -380,7 +367,7 @@ impl<'src, 'tok> SimpleFmt for SStmtInner<'src, 'tok> {
                 )
             }
             Stmt::Try {
-                expr,
+                body,
                 cases,
                 finally: finally_clause,
                 ..
@@ -407,7 +394,7 @@ impl<'src, 'tok> SimpleFmt for SStmtInner<'src, 'tok> {
                     String::new()
                 };
 
-                format!("try {}: {}{}", expr.simple_fmt(), cases_str, finally_str)
+                format!("try {} \n{}{}", body.simple_fmt(), cases_str, finally_str)
             }
             Stmt::Break { .. } => "break".to_string(),
             Stmt::Continue { .. } => "continue".to_string(),
@@ -431,13 +418,19 @@ impl<'src, 'tok> SimpleFmt for SStmtInner<'src, 'tok> {
 
 impl<'src, 'tok> SimpleFmt for ImportTree<STree<'src, 'tok>> {
     fn simple_fmt(&self) -> String {
-        let dots_str = self.dots.iter().map(|_| "..").collect::<Vec<_>>().join("");
+        let dots_str = self
+            .dots
+            .value
+            .iter()
+            .map(|(x, _)| x.token.simple_fmt())
+            .collect::<Vec<_>>()
+            .join("");
         let trunk_str = self
             .trunk
             .iter()
-            .map(|(ident, _)| ident.simple_fmt())
+            .map(|(ident, _)| ident.simple_fmt() + ".")
             .collect::<Vec<_>>()
-            .join(".");
+            .join("");
         let leaf_str = self.leaf.value.simple_fmt();
 
         if !trunk_str.is_empty() {
@@ -554,13 +547,44 @@ impl<'src, 'tok> SimpleFmt for ArgDefItem<STree<'src, 'tok>> {
     }
 }
 
+impl<'src, 'tok> SimpleFmt for SStmts<'src, 'tok> {
+    fn simple_fmt(&self) -> String {
+        self.value
+            .iter()
+            .map(|stmt| stmt.value.simple_fmt())
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+}
+
+impl<'src, 'tok> SimpleFmt for ArrowBlock<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
+        let stmts = match &self {
+            ArrowBlock::Block { body, .. } => body,
+            ArrowBlock::Inline { stmt, .. } => &vec![stmt.clone()].spanned(stmt.span),
+        };
+
+        format!("=> Block({})", stmts.simple_fmt())
+    }
+}
+
+impl<'src, 'tok> SimpleFmt for ColonBlock<STree<'src, 'tok>> {
+    fn simple_fmt(&self) -> String {
+        let stmts = match &self {
+            ColonBlock::Block { body, .. } => body,
+            ColonBlock::Inline { stmt, .. } => &vec![stmt.clone()].spanned(stmt.span),
+        };
+
+        format!(": Block({})", stmts.simple_fmt())
+    }
+}
+
 impl<'src, 'tok> SimpleFmt for FmtExpr<STree<'src, 'tok>> {
     fn simple_fmt(&self) -> String {
-        let expr_str = self.expr.simple_fmt();
         if let Some((_, fmt)) = &self.fmt {
-            format!("{}!{}", expr_str, fmt.simple_fmt())
+            format!("{}!{}", self.stmts.simple_fmt(), fmt.simple_fmt())
         } else {
-            expr_str
+            self.stmts.simple_fmt()
         }
     }
 }

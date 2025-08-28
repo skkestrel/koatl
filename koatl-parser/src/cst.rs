@@ -56,7 +56,7 @@ pub enum ImportLeaf<TTree: Tree> {
 
 #[derive(Debug, Clone)]
 pub struct ImportTree<TTree: Tree> {
-    pub dots: Vec<TTree::Token>,
+    pub dots: Spanned<Vec<(TTree::Token, usize)>>,
     // ident, dot
     pub trunk: Vec<(TTree::Token, TTree::Token)>,
     pub leaf: Spanned<ImportLeaf<TTree>>,
@@ -86,7 +86,7 @@ pub enum Stmt<TTree: Tree> {
     While {
         while_kw: TTree::Token,
         cond: TTree::Expr,
-        body: TTree::Expr,
+        body: ColonBlock<TTree>,
     },
 
     For {
@@ -94,7 +94,7 @@ pub enum Stmt<TTree: Tree> {
         pattern: TTree::Pattern,
         in_kw: TTree::Token,
         iter: TTree::Expr,
-        body: TTree::Expr,
+        body: ColonBlock<TTree>,
     },
 
     Import {
@@ -105,9 +105,9 @@ pub enum Stmt<TTree: Tree> {
 
     Try {
         try_kw: TTree::Token,
-        expr: TTree::Expr,
+        body: ColonBlock<TTree>,
         cases: Vec<ExceptCase<TTree>>,
-        finally: Option<(TTree::Token, TTree::Expr)>,
+        finally: Option<(TTree::Token, ColonBlock<TTree>)>,
     },
 
     Break {
@@ -131,7 +131,9 @@ pub enum Stmt<TTree: Tree> {
 
 #[derive(Debug, Clone)]
 pub struct FmtExpr<TTree: Tree> {
-    pub expr: TTree::Expr,
+    pub indent: TTree::Token,
+    pub stmts: Spanned<Vec<TTree::Stmt>>,
+    pub dedent: TTree::Token,
     pub fmt: Option<(TTree::Token, TTree::Expr)>,
 }
 
@@ -217,8 +219,7 @@ pub enum ArgDefItem<TTree: Tree> {
 pub struct MatchCase<TTree: Tree> {
     pub pattern: TTree::Pattern,
     pub guard: Option<(TTree::Token, TTree::Expr)>,
-    pub arrow: TTree::Token,
-    pub body: TTree::Expr,
+    pub body: ArrowBlock<TTree>,
 }
 
 #[derive(Debug, Clone)]
@@ -226,8 +227,7 @@ pub struct ExceptCase<TTree: Tree> {
     pub except: TTree::Token,
     pub pattern: TTree::Pattern,
     pub guard: Option<(TTree::Token, TTree::Expr)>,
-    pub arrow: TTree::Token,
-    pub body: TTree::Expr,
+    pub body: ArrowBlock<TTree>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -276,24 +276,12 @@ pub enum TupleKind<TTree: Tree> {
 }
 
 #[derive(Debug, Clone)]
-pub enum BlockKind<TTree: Tree> {
-    Regular {
-        colon: Option<TTree::Token>,
+pub enum ColonBlock<TTree: Tree> {
+    Block {
+        colon: TTree::Token,
         indent: TTree::Token,
-        body: Vec<TTree::Stmt>,
+        body: Spanned<Vec<TTree::Stmt>>,
         dedent: TTree::Token,
-    },
-
-    Parenthesized {
-        lparen: TTree::Token,
-        indent: TTree::Token,
-        body: Vec<TTree::Stmt>,
-        dedent: TTree::Token,
-        rparen: TTree::Token,
-    },
-
-    Bare {
-        body: Vec<TTree::Stmt>,
     },
 
     Inline {
@@ -303,9 +291,28 @@ pub enum BlockKind<TTree: Tree> {
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr<TTree: Tree> {
+pub enum ArrowBlock<TTree: Tree> {
     Block {
-        kind: BlockKind<TTree>,
+        arrow: TTree::Token,
+        indent: TTree::Token,
+        body: Spanned<Vec<TTree::Stmt>>,
+        dedent: TTree::Token,
+    },
+
+    Inline {
+        arrow: TTree::Token,
+        stmt: TTree::Stmt,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum Expr<TTree: Tree> {
+    ParenthesizedBlock {
+        lparen: TTree::Token,
+        indent: TTree::Token,
+        body: Spanned<Vec<TTree::Stmt>>,
+        dedent: TTree::Token,
+        rparen: TTree::Token,
     },
 
     Literal {
@@ -357,28 +364,27 @@ pub enum Expr<TTree: Tree> {
     Memo {
         async_kw: Option<TTree::Token>,
         memo_kw: TTree::Token,
-        colon: Option<TTree::Token>,
-        expr: TTree::Expr,
+        body: ColonBlock<TTree>,
     },
 
     ClassicIf {
         if_kw: TTree::Token,
         cond: TTree::Expr,
-        then: TTree::Expr,
-        else_clause: Option<(TTree::Token, TTree::Expr)>,
+        body: ColonBlock<TTree>,
+        else_clause: Option<(TTree::Token, ColonBlock<TTree>)>,
     },
 
     If {
         cond: TTree::Expr,
         then_kw: TTree::Token,
-        then: TTree::Expr,
-        else_clause: Option<(TTree::Token, TTree::Expr)>,
+        body: ColonBlock<TTree>,
+        else_clause: Option<(TTree::Token, ColonBlock<TTree>)>,
     },
 
     ClassicMatch {
         match_kw: TTree::Token,
         scrutinee: TTree::Expr,
-        colon: Option<TTree::Token>,
+        colon: TTree::Token,
         indent: TTree::Token,
         cases: Vec<MatchCase<TTree>>,
         dedent: TTree::Token,
@@ -387,7 +393,7 @@ pub enum Expr<TTree: Tree> {
     Match {
         scrutinee: TTree::Expr,
         match_kw: TTree::Token,
-        colon: Option<TTree::Token>,
+        colon: TTree::Token,
         indent: TTree::Token,
         cases: Vec<MatchCase<TTree>>,
         dedent: TTree::Token,
@@ -402,7 +408,7 @@ pub enum Expr<TTree: Tree> {
     Class {
         class_kw: TTree::Token,
         args: Option<Listing<CallItem<TTree>, TTree>>,
-        body: TTree::Expr,
+        body: ColonBlock<TTree>,
     },
 
     With {
@@ -410,7 +416,7 @@ pub enum Expr<TTree: Tree> {
         pattern: TTree::Pattern,
         eq: TTree::Token,
         value: TTree::Expr,
-        body: TTree::Expr,
+        body: ColonBlock<TTree>,
     },
 
     Call {
@@ -451,7 +457,7 @@ pub enum Expr<TTree: Tree> {
         attr: TTree::Token,
     },
 
-    Try {
+    Checked {
         try_kw: TTree::Token,
         expr: TTree::Expr,
         except_kw: Option<TTree::Token>,
@@ -460,14 +466,12 @@ pub enum Expr<TTree: Tree> {
 
     Fn {
         arg: TTree::Pattern,
-        arrow: TTree::Token,
-        body: TTree::Expr,
+        body: ArrowBlock<TTree>,
     },
 
     ParenthesizedFn {
         args: Listing<ArgDefItem<TTree>, TTree>,
-        arrow: TTree::Token,
-        body: TTree::Expr,
+        body: ArrowBlock<TTree>,
     },
 
     Fstr {
@@ -663,6 +667,7 @@ pub struct SStmt<'src, 'tok> {
     pub span: Span,
 }
 
+pub type SColonBlock<'src, 'tok> = ColonBlock<STree<'src, 'tok>>;
 pub type SListing<'src, 'tok, T> = Listing<T, STree<'src, 'tok>>;
 pub type SListItem<'src, 'tok> = ListItem<STree<'src, 'tok>>;
 pub type SMappingItem<'src, 'tok> = MappingItem<STree<'src, 'tok>>;
@@ -670,3 +675,5 @@ pub type SMatchCase<'src, 'tok> = MatchCase<STree<'src, 'tok>>;
 pub type SCallItem<'src, 'tok> = CallItem<STree<'src, 'tok>>;
 pub type SArgDefItem<'src, 'tok> = ArgDefItem<STree<'src, 'tok>>;
 pub type SFmtExpr<'src, 'tok> = FmtExpr<STree<'src, 'tok>>;
+
+pub type SStmts<'src, 'tok> = Spanned<Vec<Box<SStmt<'src, 'tok>>>>;

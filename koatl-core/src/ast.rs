@@ -226,7 +226,7 @@ pub enum PatternClassItem<'a, TTree: Tree> {
 pub enum Pattern<'a, TTree: Tree> {
     Capture(Option<SIdent<'a>>),
     Value(TTree::Expr),
-    As(TTree::Pattern, SIdent<'a>),
+    As(TTree::Pattern, Option<SIdent<'a>>),
     Or(Vec<TTree::Pattern>),
     Literal(SLiteral<'a>),
     Sequence(Vec<PatternSequenceItem<'a, TTree>>),
