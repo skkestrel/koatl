@@ -512,21 +512,72 @@ trait PyLiteralExt<'src> {
 impl<'src> PyLiteralExt<'src> for PyLiteral<'src> {
     fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>, span: &Span) -> PyTlResult<PyObject> {
         Ok(match self {
-            PyLiteral::Num(num) => {
+            PyLiteral::Int(num) => {
                 let num = num.replace('_', "");
-
                 match num.parse::<i128>() {
                     Ok(i) => ctx.ast_node("Constant", (i,), span)?,
-                    Err(_) => match num.parse::<f64>() {
-                        Ok(f) => ctx.ast_node("Constant", (f,), span)?,
-                        Err(_) => {
-                            return Err(PyTlErr {
-                                message: format!("Invalid number literal: {}", num),
-                                py_err: None,
-                                span: Some(*span),
-                            });
-                        }
-                    },
+                    Err(_) => {
+                        return Err(PyTlErr {
+                            message: format!("Invalid integer literal: {}", num),
+                            py_err: None,
+                            span: Some(*span),
+                        });
+                    }
+                }
+            }
+            PyLiteral::IntBin(num) => {
+                let num = num.replace('_', "");
+                // Keep the 0b prefix for Python compatibility
+                match i128::from_str_radix(&num[2..], 2) {
+                    Ok(i) => ctx.ast_node("Constant", (i,), span)?,
+                    Err(_) => {
+                        return Err(PyTlErr {
+                            message: format!("Invalid binary literal: {}", num),
+                            py_err: None,
+                            span: Some(*span),
+                        });
+                    }
+                }
+            }
+            PyLiteral::IntOct(num) => {
+                let num = num.replace('_', "");
+                // Keep the 0o prefix for Python compatibility
+                match i128::from_str_radix(&num[2..], 8) {
+                    Ok(i) => ctx.ast_node("Constant", (i,), span)?,
+                    Err(_) => {
+                        return Err(PyTlErr {
+                            message: format!("Invalid octal literal: {}", num),
+                            py_err: None,
+                            span: Some(*span),
+                        });
+                    }
+                }
+            }
+            PyLiteral::IntHex(num) => {
+                let num = num.replace('_', "");
+                // Keep the 0x prefix for Python compatibility
+                match i128::from_str_radix(&num[2..], 16) {
+                    Ok(i) => ctx.ast_node("Constant", (i,), span)?,
+                    Err(_) => {
+                        return Err(PyTlErr {
+                            message: format!("Invalid hexadecimal literal: {}", num),
+                            py_err: None,
+                            span: Some(*span),
+                        });
+                    }
+                }
+            }
+            PyLiteral::Float(num) => {
+                let num = num.replace('_', "");
+                match num.parse::<f64>() {
+                    Ok(f) => ctx.ast_node("Constant", (f,), span)?,
+                    Err(_) => {
+                        return Err(PyTlErr {
+                            message: format!("Invalid float literal: {}", num),
+                            py_err: None,
+                            span: Some(*span),
+                        });
+                    }
                 }
             }
             PyLiteral::Bool(b) => ctx.ast_node("Constant", (b,), span)?,

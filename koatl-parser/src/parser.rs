@@ -212,7 +212,15 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let next: Option<&SToken<'src>> = self.next_token();
 
         if let Some(found) = next {
-            if let Token::Num(_) | Token::Str(_) | Token::Bool(_) | Token::None = found.token {
+            if let Token::Int(_)
+            | Token::IntBin(_)
+            | Token::IntHex(_)
+            | Token::IntOct(_)
+            | Token::Float(_)
+            | Token::Str(_)
+            | Token::Bool(_)
+            | Token::None = found.token
+            {
                 return Ok(found);
             }
         }

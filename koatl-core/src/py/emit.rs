@@ -299,7 +299,43 @@ impl PyBinaryOp {
 impl PyLiteral<'_> {
     pub fn emit_to(&mut self, ctx: &mut EmitCtx, prec: f32) -> TlResult<()> {
         match self {
-            PyLiteral::Num(num) => {
+            PyLiteral::Int(num) => {
+                if prec > 15. {
+                    ctx.emit("(");
+                    ctx.emit(&num.to_string());
+                    ctx.emit(")");
+                } else {
+                    ctx.emit(&num.to_string());
+                }
+            }
+            PyLiteral::IntBin(num) => {
+                if prec > 15. {
+                    ctx.emit("(");
+                    ctx.emit(&num.to_string());
+                    ctx.emit(")");
+                } else {
+                    ctx.emit(&num.to_string());
+                }
+            }
+            PyLiteral::IntOct(num) => {
+                if prec > 15. {
+                    ctx.emit("(");
+                    ctx.emit(&num.to_string());
+                    ctx.emit(")");
+                } else {
+                    ctx.emit(&num.to_string());
+                }
+            }
+            PyLiteral::IntHex(num) => {
+                if prec > 15. {
+                    ctx.emit("(");
+                    ctx.emit(&num.to_string());
+                    ctx.emit(")");
+                } else {
+                    ctx.emit(&num.to_string());
+                }
+            }
+            PyLiteral::Float(num) => {
                 if prec > 15. {
                     ctx.emit("(");
                     ctx.emit(&num.to_string());

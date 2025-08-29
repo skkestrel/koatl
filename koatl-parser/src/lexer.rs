@@ -33,7 +33,13 @@ pub enum Token<'src> {
     FstrBegin(String),
     FstrContinue(String),
 
-    Num(&'src str),
+    Int(&'src str),
+    IntBin(&'src str),
+    IntOct(&'src str),
+    IntHex(&'src str),
+
+    Float(&'src str),
+
     Kw(&'src str),
 
     Symbol(&'src str),
@@ -94,7 +100,11 @@ impl fmt::Display for Token<'_> {
         match self {
             Token::None => write!(f, "<none>"),
             Token::Bool(x) => write!(f, "<literal {x}>"),
-            Token::Num(n) => write!(f, "<literal {n}>"),
+            Token::Int(n) => write!(f, "<literal {n}>"),
+            Token::IntBin(n) => write!(f, "<literal 0b{n}>"),
+            Token::IntHex(n) => write!(f, "<literal 0x{n}>"),
+            Token::IntOct(n) => write!(f, "<literal 0o{n}>"),
+            Token::Float(n) => write!(f, "<literal {n}>"),
             Token::Str(s) => write!(f, "<literal {s}>"),
             Token::Symbol(s) => write!(f, "{s}"),
             Token::Ident(s) => write!(f, "{s}"),
@@ -448,37 +458,169 @@ impl<'src> TokenizeCtx<'src> {
                 self.span_since(&start),
                 "expected a number",
             ));
-        };
-
-        let mut digits_before_dot = false;
-        let mut digits_after_dot = false;
-        let mut after_dot = false;
-
-        while let Some(c) = self.peek() {
-            if self.look_ahead(|x| x.parse_seq("..")).is_ok() {
-                break;
-            }
-
-            if c == '.' {
-                after_dot = true;
-            } else {
-                if !(c.is_ascii_digit() || c == '_') {
-                    break;
-                }
-
-                if after_dot && c.is_ascii_digit() {
-                    digits_after_dot = true;
-                }
-
-                if !after_dot && c.is_ascii_digit() {
-                    digits_before_dot = true;
-                }
-            }
-
-            self.next();
         }
 
-        if !digits_before_dot && !digits_after_dot {
+        // Handle different number formats
+        if self.peek() == Some('0') {
+            self.next(); // consume '0'
+
+            // Check for binary, octal, or hex prefix
+            match self.peek() {
+                Some('b') | Some('B') => {
+                    self.next(); // consume 'b'
+                    return self.parse_binary_number(start);
+                }
+                Some('o') | Some('O') => {
+                    self.next(); // consume 'o'
+                    return self.parse_octal_number(start);
+                }
+                Some('x') | Some('X') => {
+                    self.next(); // consume 'x'
+                    return self.parse_hex_number(start);
+                }
+                Some('.') => {
+                    // Handle 0. or 0.123
+                    if self.look_ahead(|x| x.parse_seq("..")).is_ok() {
+                        // This is 0 followed by .., so just return integer 0
+                        let span = self.span_since(&start);
+                        let num_str = self.slice_since(&start);
+                        return Ok((Token::Int(num_str), span, false));
+                    } else {
+                        // This is a float starting with 0.
+                        return self.parse_decimal_float(start, true);
+                    }
+                }
+                Some(c) if c.is_ascii_digit() || c == '_' => {
+                    // Continue parsing as decimal integer or float
+                    return self.parse_decimal_number(start, true);
+                }
+                Some('e') | Some('E') => {
+                    // Handle 0e5 format
+                    return self.parse_decimal_float(start, true);
+                }
+                _ => {
+                    // Just "0" followed by something else, return integer 0
+                    let span = self.span_since(&start);
+                    let num_str = self.slice_since(&start);
+                    return Ok((Token::Int(num_str), span, false));
+                }
+            }
+        } else if self.peek() == Some('.') {
+            // Handle .2 format
+            return self.parse_decimal_float(start, false);
+        } else {
+            // Regular decimal number
+            return self.parse_decimal_number(start, false);
+        }
+    }
+
+    fn parse_binary_number(&mut self, start: usize) -> TResult<'src, (Token<'src>, Span, bool)> {
+        let mut has_digits = false;
+
+        while let Some(c) = self.peek() {
+            if c == '0' || c == '1' {
+                has_digits = true;
+                self.next();
+            } else if c == '_' {
+                self.next(); // Allow underscores for readability
+            } else {
+                break;
+            }
+        }
+
+        if !has_digits {
+            return Err(LexError::custom(
+                self.span_since(&start),
+                "expected at least one binary digit after 0b",
+            ));
+        }
+
+        let span = self.span_since(&start);
+        let num_str = self.slice_since(&start);
+        Ok((Token::IntBin(num_str), span, false))
+    }
+
+    fn parse_octal_number(&mut self, start: usize) -> TResult<'src, (Token<'src>, Span, bool)> {
+        let mut has_digits = false;
+
+        while let Some(c) = self.peek() {
+            if c.is_ascii_digit() && c <= '7' {
+                has_digits = true;
+                self.next();
+            } else if c == '_' {
+                self.next(); // Allow underscores for readability
+            } else {
+                break;
+            }
+        }
+
+        if !has_digits {
+            return Err(LexError::custom(
+                self.span_since(&start),
+                "expected at least one octal digit after 0o",
+            ));
+        }
+
+        let span = self.span_since(&start);
+        let num_str = self.slice_since(&start);
+        Ok((Token::IntOct(num_str), span, false))
+    }
+
+    fn parse_hex_number(&mut self, start: usize) -> TResult<'src, (Token<'src>, Span, bool)> {
+        let mut has_digits = false;
+
+        while let Some(c) = self.peek() {
+            if c.is_ascii_hexdigit() {
+                has_digits = true;
+                self.next();
+            } else if c == '_' {
+                self.next(); // Allow underscores for readability
+            } else {
+                break;
+            }
+        }
+
+        if !has_digits {
+            return Err(LexError::custom(
+                self.span_since(&start),
+                "expected at least one hex digit after 0x",
+            ));
+        }
+
+        let span = self.span_since(&start);
+        let num_str = self.slice_since(&start);
+        Ok((Token::IntHex(num_str), span, false))
+    }
+
+    fn parse_decimal_number(
+        &mut self,
+        start: usize,
+        has_leading_zero: bool,
+    ) -> TResult<'src, (Token<'src>, Span, bool)> {
+        let mut has_digits = has_leading_zero;
+
+        // Parse integer part
+        while let Some(c) = self.peek() {
+            if c.is_ascii_digit() {
+                has_digits = true;
+                self.next();
+            } else if c == '_' {
+                self.next(); // Allow underscores for readability
+            } else {
+                break;
+            }
+        }
+
+        // Check for decimal point or exponent
+        if self.peek() == Some('.') && !self.look_ahead(|x| x.parse_seq("..")).is_ok() {
+            // This is a float
+            return self.parse_decimal_float(start, has_digits);
+        } else if matches!(self.peek(), Some('e') | Some('E')) {
+            // This is a float with exponent
+            return self.parse_decimal_float(start, has_digits);
+        }
+
+        if !has_digits {
             return Err(LexError::custom(
                 self.span_since(&start),
                 "expected at least one digit",
@@ -487,8 +629,74 @@ impl<'src> TokenizeCtx<'src> {
 
         let span = self.span_since(&start);
         let num_str = self.slice_since(&start);
+        Ok((Token::Int(num_str), span, false))
+    }
 
-        Ok((Token::Num(num_str), span, after_dot))
+    fn parse_decimal_float(
+        &mut self,
+        start: usize,
+        has_integer_part: bool,
+    ) -> TResult<'src, (Token<'src>, Span, bool)> {
+        let mut has_fractional_digits = false;
+
+        // Parse decimal point and fractional part
+        if self.peek() == Some('.') && !self.look_ahead(|x| x.parse_seq("..")).is_ok() {
+            self.next(); // consume '.'
+
+            // Parse fractional digits
+            while let Some(c) = self.peek() {
+                if c.is_ascii_digit() {
+                    has_fractional_digits = true;
+                    self.next();
+                } else if c == '_' {
+                    self.next(); // Allow underscores for readability
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Must have digits either before or after decimal point
+        if !has_integer_part && !has_fractional_digits {
+            return Err(LexError::custom(
+                self.span_since(&start),
+                "expected digits in float literal",
+            ));
+        }
+
+        // Parse optional exponent
+        if matches!(self.peek(), Some('e') | Some('E')) {
+            self.next(); // consume 'e' or 'E'
+
+            // Optional sign
+            if matches!(self.peek(), Some('+') | Some('-')) {
+                self.next();
+            }
+
+            // Exponent digits (required)
+            let mut has_exp_digits = false;
+            while let Some(c) = self.peek() {
+                if c.is_ascii_digit() {
+                    has_exp_digits = true;
+                    self.next();
+                } else if c == '_' {
+                    self.next(); // Allow underscores for readability
+                } else {
+                    break;
+                }
+            }
+
+            if !has_exp_digits {
+                return Err(LexError::custom(
+                    self.span_since(&start),
+                    "expected digits in exponent",
+                ));
+            }
+        }
+
+        let span = self.span_since(&start);
+        let num_str = self.slice_since(&start);
+        Ok((Token::Float(num_str), span, true))
     }
 
     fn parse_newline(&mut self) -> TResult<'src, Trivium<'src>> {
@@ -1433,7 +1641,7 @@ mod tests {
 
         assert_has_token_with_trivia(
             &token_list,
-            Token::Num("42"),
+            Token::Int("42"),
             vec![],
             vec![whitespace_trivium("  "), newline_trivium()],
         );
@@ -1453,7 +1661,7 @@ mod tests {
 
         assert_has_token_with_trivia(
             &token_list,
-            Token::Num("42"),
+            Token::Int("42"),
             vec![],
             vec![
                 whitespace_trivium("  "),
@@ -1495,7 +1703,7 @@ mod tests {
 
         assert_has_token_with_trivia(
             &token_list,
-            Token::Num("42"),
+            Token::Int("42"),
             vec![],
             vec![newline_trivium()],
         );
@@ -1519,7 +1727,7 @@ x = 42  #- Block comment -#"#;
 
         assert_has_token_with_trivia(
             &token_list,
-            Token::Num("42"),
+            Token::Int("42"),
             vec![],
             vec![
                 whitespace_trivium("  "),
@@ -1701,7 +1909,7 @@ if condition:
 
         assert_has_token_with_trivia(
             &token_list,
-            Token::Num("1"),
+            Token::Int("1"),
             vec![],
             vec![
                 whitespace_trivium(" "),
@@ -1757,5 +1965,60 @@ z
                 newline_trivium(),
             ],
         );
+    }
+
+    #[test]
+    fn test_number_literals() {
+        // Test various number literal formats
+        let test_cases = vec![
+            ("42", Token::Int("42")),
+            ("0", Token::Int("0")),
+            ("0b1010", Token::IntBin("0b1010")),
+            ("0B1010", Token::IntBin("0B1010")),
+            ("0b01_010", Token::IntBin("0b01_010")),
+            ("0o123", Token::IntOct("0o123")),
+            ("0O123", Token::IntOct("0O123")),
+            ("0x123f", Token::IntHex("0x123f")),
+            ("0X123F", Token::IntHex("0X123F")),
+            ("0xDEAD_BEEF", Token::IntHex("0xDEAD_BEEF")),
+            ("1.34", Token::Float("1.34")),
+            (".2", Token::Float(".2")),
+            ("5.", Token::Float("5.")),
+            ("5.e-5", Token::Float("5.e-5")),
+            ("1.23e10", Token::Float("1.23e10")),
+            ("1e5", Token::Float("1e5")),
+            ("1E-5", Token::Float("1E-5")),
+            ("2.5e+3", Token::Float("2.5e+3")),
+            ("123_456", Token::Int("123_456")),
+            ("12.34_56", Token::Float("12.34_56")),
+        ];
+
+        for (source, expected_token) in test_cases {
+            let token_list = simple_tokenize(source);
+
+            // Find the expected token in the list
+            let found = token_list
+                .0
+                .iter()
+                .any(|stoken| stoken.token == expected_token);
+            assert!(
+                found,
+                "Expected token {:?} not found in source '{}'",
+                expected_token, source
+            );
+        }
+    }
+
+    #[test]
+    fn test_zero_followed_by_range() {
+        // Test that "0.." is parsed as "0" followed by ".."
+        let source = "0..5";
+        let token_list = simple_tokenize(source);
+
+        // Should have tokens: Int("0"), Symbol(".."), Int("5")
+        assert!(token_list.0.len() >= 3);
+        assert_eq!(token_list.0[0].token, Token::Int("0"));
+        assert_eq!(token_list.0[1].token, Token::Symbol(".."));
+        assert_eq!(token_list.0[2].token, Token::Int("5"));
     }
 }

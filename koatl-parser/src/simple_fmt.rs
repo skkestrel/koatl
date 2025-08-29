@@ -729,7 +729,7 @@ impl<'src> SimpleFmt for Token<'src> {
     fn simple_fmt(&self) -> String {
         match self {
             Token::Ident(s) => s.to_string(),
-            Token::Num(s) => s.to_string(),
+            Token::Int(s) => s.to_string(),
             Token::Str(s) => format!("\"{}\"", s),
             Token::Bool(b) => b.to_string(),
             Token::None => "None".to_string(),

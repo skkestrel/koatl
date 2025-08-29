@@ -31,11 +31,11 @@ static PY_KWS_SET: Lazy<HashSet<String>> = Lazy::new(|| {
 });
 
 trait IdentExt<'src> {
-    fn escape(&self) -> PyIdent<'src>;
+    fn escape(&self) -> PyToken<'src>;
 }
 
 impl<'src> IdentExt<'src> for Ident<'src> {
-    fn escape(&self) -> PyIdent<'src> {
+    fn escape(&self) -> PyToken<'src> {
         if PY_KWS_SET.contains(self.0.as_ref()) {
             format!("{}_", self.0).into()
         } else {
@@ -46,7 +46,7 @@ impl<'src> IdentExt<'src> for Ident<'src> {
 
 #[derive(Debug, Clone)]
 struct PyDecl<'src> {
-    ident: PyIdent<'src>,
+    ident: PyToken<'src>,
 }
 
 #[allow(dead_code)]
@@ -54,7 +54,7 @@ struct TlCtx<'src, 'ast> {
     source: &'src str,
     filename: &'src str,
     line_cache: LineColCache,
-    export_stars: Vec<PyIdent<'src>>,
+    export_stars: Vec<PyToken<'src>>,
 
     ident_counts: HashMap<Ident<'src>, usize>,
     py_decls: HashMap<DeclarationKey, PyDecl<'src>>,
@@ -106,7 +106,7 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
         self.line_cache.linecol(cursor)
     }
 
-    fn create_aux_var(&self, typ: &str, cursor: usize) -> PyIdent<'src> {
+    fn create_aux_var(&self, typ: &str, cursor: usize) -> PyToken<'src> {
         let (line, col) = self.linecol(cursor);
         format!("_{}_l{}c{}", typ, line, col).into()
     }
@@ -127,7 +127,7 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
             .ok_or_else(|| simple_err("Internal: Unresolved pattern", pattern.span))
     }
 
-    fn decl_py_ident(&mut self, decl_key: DeclarationKey) -> TlResult<PyIdent<'src>> {
+    fn decl_py_ident(&mut self, decl_key: DeclarationKey) -> TlResult<PyToken<'src>> {
         let decl = &self.declarations[decl_key];
         let scope = &self.scopes[decl.scope];
 
@@ -151,7 +151,7 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
         Ok(entry.ident.clone())
     }
 
-    fn py_ident(&mut self, expr: &SExpr<'src>) -> TlResult<PyIdent<'src>> {
+    fn py_ident(&mut self, expr: &SExpr<'src>) -> TlResult<PyToken<'src>> {
         let Expr::Ident(_) = &expr.value else {
             return Err(simple_err("Internal: expected an Expr::Ident", expr.span));
         };
@@ -524,7 +524,7 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
             ctx: &mut TlCtx<'src, 'ast>,
             ident: &SIdent<'src>,
             info: &PatternInfo,
-        ) -> TlResult<Option<PyIdent<'src>>> {
+        ) -> TlResult<Option<PyToken<'src>>> {
             if ident.value.0 == "_" {
                 Ok(None)
             } else {
@@ -542,7 +542,7 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
             ctx: &mut TlCtx<'src, 'ast>,
             ident: &Option<SIdent<'src>>,
             info: &PatternInfo,
-        ) -> TlResult<Option<PyIdent<'src>>> {
+        ) -> TlResult<Option<PyToken<'src>>> {
             if let Some(ident) = ident {
                 capture_slot(ctx, ident, info)
             } else {
@@ -559,7 +559,12 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
                 None => pre.bind(pattern.transform(ctx, info)?).value,
             },
             Pattern::Literal(literal) => match literal.value {
-                Literal::Num(..) | Literal::Str(..) => {
+                Literal::Int(..)
+                | Literal::IntBin(..)
+                | Literal::IntOct(..)
+                | Literal::IntHex(..)
+                | Literal::Float(..)
+                | Literal::Str(..) => {
                     PyPattern::Value((PyExpr::Literal(literal.value.transform(ctx)?), span).into())
                 }
                 Literal::Bool(..) | Literal::None => {
@@ -702,7 +707,7 @@ fn create_throwing_matcher<'src, 'ast>(
     ctx: &mut TlCtx<'src, 'ast>,
     pattern: &'ast SPattern<'src>,
     pattern_meta: &'ast PatternInfo,
-) -> TlResult<(PyBlock<'src>, PyIdent<'src>)> {
+) -> TlResult<(PyBlock<'src>, PyToken<'src>)> {
     if let Pattern::Capture(Some(ident)) = &pattern.value {
         if pattern_meta.decls.len() != 1 {
             return Err(simple_err(
@@ -1411,9 +1416,9 @@ fn transform_postfix_expr<'src, 'ast>(
 
 fn matching_except_handler<'src, 'ast>(
     ctx: &mut TlCtx<'src, 'ast>,
-    var_name: PyIdent<'src>,
+    var_name: PyToken<'src>,
     handlers: &'ast [SMatchCase<'src>],
-    assign_match_value_to: Option<PyIdent<'src>>,
+    assign_match_value_to: Option<PyToken<'src>>,
     span: &Span,
 ) -> TlResult<PyExceptHandler<'src>> {
     let a = PyAstBuilder::new(*span);
@@ -1492,7 +1497,11 @@ trait LiteralExt<'src> {
 impl<'src> LiteralExt<'src> for Literal<'src> {
     fn transform<'ast>(&'ast self, _ctx: &TlCtx<'src, 'ast>) -> TlResult<PyLiteral<'src>> {
         let value = match self {
-            Literal::Num(num) => PyLiteral::Num(num.to_owned()),
+            Literal::Int(num) => PyLiteral::Int(num.to_owned()),
+            Literal::IntBin(num) => PyLiteral::IntBin(num.to_owned()),
+            Literal::IntOct(num) => PyLiteral::IntOct(num.to_owned()),
+            Literal::IntHex(num) => PyLiteral::IntHex(num.to_owned()),
+            Literal::Float(num) => PyLiteral::Float(num.to_owned()),
             Literal::Str(s) => PyLiteral::Str(s.to_owned()),
             Literal::Bool(b) => PyLiteral::Bool(*b),
             Literal::None => PyLiteral::None,
@@ -2322,7 +2331,7 @@ fn py_fn_bindings<'src, 'ast>(
     ctx: &mut TlCtx<'src, 'ast>,
     memo_captures: &FnInfo,
     span: Span,
-) -> TlResult<(PyBlock<'src>, Vec<PyIdent<'src>>, Vec<PyIdent<'src>>)> {
+) -> TlResult<(PyBlock<'src>, Vec<PyToken<'src>>, Vec<PyToken<'src>>)> {
     let a = PyAstBuilder::new(span);
 
     let mut nonlocals = vec![];
@@ -2362,8 +2371,8 @@ fn py_fn_bindings<'src, 'ast>(
 
 pub struct TransformOutput<'src> {
     pub py_block: PyBlock<'src>,
-    pub exports: Vec<PyIdent<'src>>,
-    pub module_star_exports: Vec<PyIdent<'src>>,
+    pub exports: Vec<PyToken<'src>>,
+    pub module_star_exports: Vec<PyToken<'src>>,
 }
 
 pub fn transform_ast<'src, 'ast>(

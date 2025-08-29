@@ -77,7 +77,11 @@ impl<'src> STokenExt<'src> for SToken<'src> {
 
     fn lift_as_literal(&self) -> Spanned<ast::Literal<'src>> {
         match &self.token {
-            Token::Num(n) => ast::Literal::Num(Cow::Borrowed(n)),
+            Token::Int(n) => ast::Literal::Int(Cow::Borrowed(n)),
+            Token::IntHex(n) => ast::Literal::IntHex(Cow::Borrowed(n)),
+            Token::IntOct(n) => ast::Literal::IntOct(Cow::Borrowed(n)),
+            Token::IntBin(n) => ast::Literal::IntBin(Cow::Borrowed(n)),
+            Token::Float(n) => ast::Literal::Float(Cow::Borrowed(n)),
             Token::Str(s) => ast::Literal::Str(s.clone().into()),
             Token::Bool(b) => ast::Literal::Bool(*b),
             Token::None => ast::Literal::None,

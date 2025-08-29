@@ -50,7 +50,12 @@ pub type SIdent<'a> = Spanned<Ident<'a>>;
 
 #[derive(Debug, Clone)]
 pub enum Literal<'a> {
-    Num(Cow<'a, str>),
+    Float(Cow<'a, str>),
+    Int(Cow<'a, str>),
+    IntHex(Cow<'a, str>),
+    IntOct(Cow<'a, str>),
+    IntBin(Cow<'a, str>),
+
     Str(Cow<'a, str>),
     Bool(bool),
     None,

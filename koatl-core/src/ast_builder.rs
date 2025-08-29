@@ -190,8 +190,8 @@ impl AstBuilder {
     }
 
     // Literal builders
-    pub fn num<'src>(&self, value: impl Into<Cow<'src, str>>) -> SExpr<'src> {
-        Expr::Literal(Literal::Num(value.into()).spanned(self.span)).spanned(self.span)
+    pub fn int<'src>(&self, value: impl Into<Cow<'src, str>>) -> SExpr<'src> {
+        Expr::Literal(Literal::Int(value.into()).spanned(self.span)).spanned(self.span)
     }
 
     pub fn str<'src>(&self, value: impl Into<Cow<'src, str>>) -> SExpr<'src> {

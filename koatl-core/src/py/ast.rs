@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use koatl_parser::lexer::Span;
 
-pub type PyIdent<'a> = Cow<'a, str>;
+pub type PyToken<'a> = Cow<'a, str>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyAccessCtx {
@@ -13,14 +13,14 @@ pub enum PyAccessCtx {
 
 #[derive(Debug, Clone)]
 pub struct PyImportAlias<'a> {
-    pub name: PyIdent<'a>,
-    pub as_name: Option<PyIdent<'a>>,
+    pub name: PyToken<'a>,
+    pub as_name: Option<PyToken<'a>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct PyExceptHandler<'a> {
     pub typ: Option<SPyExpr<'a>>,
-    pub name: Option<PyIdent<'a>>,
+    pub name: Option<PyToken<'a>>,
     pub body: PyBlock<'a>,
 }
 
@@ -46,7 +46,7 @@ impl<'a> PyDecorators<'a> {
 
 #[derive(Debug, Clone)]
 pub struct PyFnDef<'a> {
-    pub name: PyIdent<'a>,
+    pub name: PyToken<'a>,
     pub args: Vec<PyArgDefItem<'a>>,
     pub body: PyBlock<'a>,
     pub decorators: PyDecorators<'a>,
@@ -55,7 +55,7 @@ pub struct PyFnDef<'a> {
 
 #[derive(Debug, Clone)]
 pub struct PyClassDef<'a> {
-    pub name: PyIdent<'a>,
+    pub name: PyToken<'a>,
     pub bases: Vec<PyCallItem<'a>>,
     pub body: PyBlock<'a>,
     pub decorators: PyDecorators<'a>,
@@ -71,10 +71,10 @@ pub enum PyStmt<'a> {
     Return(SPyExpr<'a>),
     Raise(Option<SPyExpr<'a>>),
     Assert(SPyExpr<'a>, Option<SPyExpr<'a>>),
-    Global(Vec<PyIdent<'a>>),
-    Nonlocal(Vec<PyIdent<'a>>),
+    Global(Vec<PyToken<'a>>),
+    Nonlocal(Vec<PyToken<'a>>),
     Import(Vec<PyImportAlias<'a>>),
-    ImportFrom(Option<PyIdent<'a>>, Vec<PyImportAlias<'a>>, usize),
+    ImportFrom(Option<PyToken<'a>>, Vec<PyImportAlias<'a>>, usize),
     FnDef(PyFnDef<'a>),
     ClassDef(PyClassDef<'a>),
     While(SPyExpr<'a>, PyBlock<'a>),
@@ -182,16 +182,16 @@ pub enum PyUnaryOp {
 #[derive(Debug, Clone)]
 pub enum PyCallItem<'a> {
     Arg(SPyExpr<'a>),
-    Kwarg(PyIdent<'a>, SPyExpr<'a>),
+    Kwarg(PyToken<'a>, SPyExpr<'a>),
     ArgSpread(SPyExpr<'a>),
     KwargSpread(SPyExpr<'a>),
 }
 
 #[derive(Debug, Clone)]
 pub enum PyArgDefItem<'a> {
-    Arg(PyIdent<'a>, Option<SPyExpr<'a>>),
-    ArgSpread(PyIdent<'a>),
-    KwargSpread(PyIdent<'a>),
+    Arg(PyToken<'a>, Option<SPyExpr<'a>>),
+    ArgSpread(PyToken<'a>),
+    KwargSpread(PyToken<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -208,7 +208,7 @@ pub enum PyDictItem<'a> {
 
 #[derive(Debug, Clone)]
 pub enum PyFstrPart<'a> {
-    Str(PyIdent<'a>),
+    Str(PyToken<'a>),
     Expr(SPyExpr<'a>, Option<SPyExpr<'a>>),
 }
 
@@ -216,12 +216,12 @@ pub enum PyFstrPart<'a> {
 pub enum PyExpr<'a> {
     Literal(PyLiteral<'a>),
     Fstr(Vec<PyFstrPart<'a>>),
-    Name(PyIdent<'a>, PyAccessCtx),
+    Name(PyToken<'a>, PyAccessCtx),
 
     Binary(PyBinaryOp, Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
     Unary(PyUnaryOp, Box<SPyExpr<'a>>),
     Call(Box<SPyExpr<'a>>, Vec<PyCallItem<'a>>),
-    Attribute(Box<SPyExpr<'a>>, PyIdent<'a>, PyAccessCtx),
+    Attribute(Box<SPyExpr<'a>>, PyToken<'a>, PyAccessCtx),
     Subscript(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>, PyAccessCtx),
 
     IfExpr(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
@@ -264,8 +264,12 @@ impl<T> From<(T, Span)> for PySpanned<T> {
 
 #[derive(Debug, Clone)]
 pub enum PyLiteral<'a> {
-    Num(PyIdent<'a>),
-    Str(PyIdent<'a>),
+    Int(PyToken<'a>),
+    IntBin(PyToken<'a>),
+    IntOct(PyToken<'a>),
+    IntHex(PyToken<'a>),
+    Float(PyToken<'a>),
+    Str(PyToken<'a>),
     Bool(bool),
     None,
 }
@@ -273,21 +277,21 @@ pub enum PyLiteral<'a> {
 #[derive(Debug, Clone)]
 pub enum PyPatternSequenceItem<'a> {
     Item(SPyPattern<'a>),
-    Spread(Option<PyIdent<'a>>),
+    Spread(Option<PyToken<'a>>),
 }
 
 #[derive(Debug, Clone)]
 pub enum PyPattern<'a> {
     Value(SPyExpr<'a>),
     Singleton(PyLiteral<'a>),
-    As(Option<Box<SPyPattern<'a>>>, Option<PyIdent<'a>>),
+    As(Option<Box<SPyPattern<'a>>>, Option<PyToken<'a>>),
     Or(Vec<SPyPattern<'a>>),
     Sequence(Vec<PyPatternSequenceItem<'a>>),
-    Mapping(Vec<(SPyExpr<'a>, SPyPattern<'a>)>, Option<PyIdent<'a>>),
+    Mapping(Vec<(SPyExpr<'a>, SPyPattern<'a>)>, Option<PyToken<'a>>),
     Class(
         SPyExpr<'a>,
         Vec<SPyPattern<'a>>,
-        Vec<(PyIdent<'a>, SPyPattern<'a>)>,
+        Vec<(PyToken<'a>, SPyPattern<'a>)>,
     ),
 }
 

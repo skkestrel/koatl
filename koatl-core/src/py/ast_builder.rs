@@ -43,12 +43,12 @@ impl PyAstBuilder {
         (PyStmt::Assert(expr, msg), self.span).into()
     }
 
-    pub fn global<'src>(&self, names: Vec<impl Into<PyIdent<'src>>>) -> SPyStmt<'src> {
+    pub fn global<'src>(&self, names: Vec<impl Into<PyToken<'src>>>) -> SPyStmt<'src> {
         let names = names.into_iter().map(|name| name.into()).collect();
         (PyStmt::Global(names), self.span).into()
     }
 
-    pub fn nonlocal<'src>(&self, names: Vec<impl Into<PyIdent<'src>>>) -> SPyStmt<'src> {
+    pub fn nonlocal<'src>(&self, names: Vec<impl Into<PyToken<'src>>>) -> SPyStmt<'src> {
         let names = names.into_iter().map(|name| name.into()).collect();
         (PyStmt::Nonlocal(names), self.span).into()
     }
@@ -59,7 +59,7 @@ impl PyAstBuilder {
 
     pub fn import_from<'src>(
         &self,
-        module: impl Into<Option<PyIdent<'src>>>,
+        module: impl Into<Option<PyToken<'src>>>,
         aliases: Vec<PyImportAlias<'src>>,
         level: usize,
     ) -> SPyStmt<'src> {
@@ -68,7 +68,7 @@ impl PyAstBuilder {
 
     pub fn fn_def<'src>(
         &self,
-        name: impl Into<PyIdent<'src>>,
+        name: impl Into<PyToken<'src>>,
         args: Vec<PyArgDefItem<'src>>,
         body: PyBlock<'src>,
         async_: bool,
@@ -88,7 +88,7 @@ impl PyAstBuilder {
 
     pub fn class_def<'src>(
         &self,
-        name: impl Into<PyIdent<'src>>,
+        name: impl Into<PyToken<'src>>,
         bases: Vec<PyCallItem<'src>>,
         body: PyBlock<'src>,
     ) -> SPyStmt<'src> {
@@ -181,11 +181,11 @@ impl PyAstBuilder {
             .into()
     }
 
-    pub fn ident<'src>(&self, name: impl Into<PyIdent<'src>>, ctx: PyAccessCtx) -> SPyExpr<'src> {
+    pub fn ident<'src>(&self, name: impl Into<PyToken<'src>>, ctx: PyAccessCtx) -> SPyExpr<'src> {
         (PyExpr::Name(name.into(), ctx), self.span).into()
     }
 
-    pub fn load_ident<'src>(&self, name: impl Into<PyIdent<'src>>) -> SPyExpr<'src> {
+    pub fn load_ident<'src>(&self, name: impl Into<PyToken<'src>>) -> SPyExpr<'src> {
         self.ident(name, PyAccessCtx::Load)
     }
 
@@ -193,11 +193,11 @@ impl PyAstBuilder {
         (PyExpr::Literal(lit), self.span).into()
     }
 
-    pub fn num<'src>(&self, value: impl Into<PyIdent<'src>>) -> SPyExpr<'src> {
-        (PyExpr::Literal(PyLiteral::Num(value.into())), self.span).into()
+    pub fn num<'src>(&self, value: impl Into<PyToken<'src>>) -> SPyExpr<'src> {
+        (PyExpr::Literal(PyLiteral::Int(value.into())), self.span).into()
     }
 
-    pub fn str<'src>(&self, value: impl Into<PyIdent<'src>>) -> SPyExpr<'src> {
+    pub fn str<'src>(&self, value: impl Into<PyToken<'src>>) -> SPyExpr<'src> {
         (PyExpr::Literal(PyLiteral::Str(value.into())), self.span).into()
     }
 
@@ -237,7 +237,7 @@ impl PyAstBuilder {
     pub fn attribute<'src>(
         &self,
         value: SPyExpr<'src>,
-        attr: impl Into<PyIdent<'src>>,
+        attr: impl Into<PyToken<'src>>,
         ctx: PyAccessCtx,
     ) -> SPyExpr<'src> {
         (
@@ -320,7 +320,7 @@ impl PyAstBuilder {
 
     pub fn call_kwarg<'src>(
         &self,
-        name: impl Into<PyIdent<'src>>,
+        name: impl Into<PyToken<'src>>,
         value: SPyExpr<'src>,
     ) -> PyCallItem<'src> {
         PyCallItem::Kwarg(name.into(), value)
@@ -337,17 +337,17 @@ impl PyAstBuilder {
     // Utility builders for argument definitions
     pub fn arg_def<'src>(
         &self,
-        name: impl Into<PyIdent<'src>>,
+        name: impl Into<PyToken<'src>>,
         default: Option<SPyExpr<'src>>,
     ) -> PyArgDefItem<'src> {
         PyArgDefItem::Arg(name.into(), default)
     }
 
-    pub fn arg_def_spread<'src>(&self, name: impl Into<PyIdent<'src>>) -> PyArgDefItem<'src> {
+    pub fn arg_def_spread<'src>(&self, name: impl Into<PyToken<'src>>) -> PyArgDefItem<'src> {
         PyArgDefItem::ArgSpread(name.into())
     }
 
-    pub fn kwarg_def_spread<'src>(&self, name: impl Into<PyIdent<'src>>) -> PyArgDefItem<'src> {
+    pub fn kwarg_def_spread<'src>(&self, name: impl Into<PyToken<'src>>) -> PyArgDefItem<'src> {
         PyArgDefItem::KwargSpread(name.into())
     }
 
@@ -370,7 +370,7 @@ impl PyAstBuilder {
     }
 
     // Utility builders for f-string parts
-    pub fn fstr_str<'src>(&self, text: impl Into<PyIdent<'src>>) -> PyFstrPart<'src> {
+    pub fn fstr_str<'src>(&self, text: impl Into<PyToken<'src>>) -> PyFstrPart<'src> {
         PyFstrPart::Str(text.into())
     }
 
@@ -385,8 +385,8 @@ impl PyAstBuilder {
     // Utility builders for import aliases
     pub fn import_alias<'src>(
         &self,
-        name: impl Into<PyIdent<'src>>,
-        as_name: impl Into<Option<PyIdent<'src>>>,
+        name: impl Into<PyToken<'src>>,
+        as_name: impl Into<Option<PyToken<'src>>>,
     ) -> PyImportAlias<'src> {
         PyImportAlias {
             name: name.into(),
@@ -398,7 +398,7 @@ impl PyAstBuilder {
     pub fn except_handler<'src>(
         &self,
         typ: Option<SPyExpr<'src>>,
-        name: Option<impl Into<PyIdent<'src>>>,
+        name: Option<impl Into<PyToken<'src>>>,
         body: PyBlock<'src>,
     ) -> PyExceptHandler<'src> {
         PyExceptHandler {
