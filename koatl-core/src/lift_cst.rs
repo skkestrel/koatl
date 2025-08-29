@@ -18,14 +18,14 @@ fn lift_fstr<'src, 'tok>(
     parts: &[(cst::FmtExpr<cst::STree<'src, 'tok>>, &'tok SToken<'src>)],
 ) -> ast::Expr<'src, ast::STree<'src>> {
     let begin_str = match &begin.token {
-        Token::FstrBegin(_, s) => s.clone(),
-        _ => panic!("Expected FstrBegin token"),
+        Token::FstrInner(_, s) => s.clone(),
+        _ => panic!("Expected FstrInner token"),
     };
     let fmt_parts = parts
         .iter()
         .map(|(fmt_expr, cont)| {
             let cont_str = match &cont.token {
-                Token::FstrContinue(_, s) => s.clone(),
+                Token::FstrInner(_, s) => s.clone(),
                 _ => panic!("Expected FstrContinue token"),
             };
 
@@ -82,7 +82,7 @@ impl<'src> STokenExt<'src> for SToken<'src> {
             Token::IntOct(n) => ast::Literal::IntOct(Cow::Borrowed(n)),
             Token::IntBin(n) => ast::Literal::IntBin(Cow::Borrowed(n)),
             Token::Float(n) => ast::Literal::Float(Cow::Borrowed(n)),
-            Token::Str(s, _) => ast::Literal::Str(s.clone().into()),
+            Token::Str(_, s) => ast::Literal::Str(s.clone().into()),
             Token::Bool(b) => ast::Literal::Bool(*b),
             Token::None => ast::Literal::None,
             _ => panic!("Expected literal token, got {:?}", self.token),
@@ -156,27 +156,19 @@ impl<'src, 'tok> Lift<ast::MappingItem<ast::STree<'src>>>
                     .indirect(),
             ),
             cst::MappingItem::Item { key, value, .. } => {
-                let key_expr = match key {
-                    cst::MappingKey::Unit { lparen, .. } => {
-                        ast::Expr::Tuple(vec![]).spanned(lparen.span).indirect()
-                    }
-                    cst::MappingKey::ParenthesizedBlock { body, .. } => body.lift(),
+                let key_expr = match &key.value {
+                    cst::MappingKey::Unit { .. } => ast::Expr::Tuple(vec![]),
+                    cst::MappingKey::ParenthesizedBlock { body, .. } => body.lift().value,
                     cst::MappingKey::Ident { token } => ast::Expr::Literal(
                         ast::Literal::Str(token.lift_as_ident().value.0).spanned(token.span),
-                    )
-                    .spanned(token.span)
-                    .indirect(),
+                    ),
                     cst::MappingKey::Literal { token } => {
                         ast::Expr::Literal(token.lift_as_literal())
-                            .spanned(token.span)
-                            .indirect()
                     }
-                    cst::MappingKey::Fstr { begin, parts } => {
-                        lift_fstr(begin, parts).spanned(begin.span).indirect()
-                    }
-                    cst::MappingKey::Expr { key, .. } => key.lift(),
+                    cst::MappingKey::Fstr { head, parts, .. } => lift_fstr(head, parts),
+                    cst::MappingKey::Expr { key, .. } => key.lift().value,
                 };
-                ast::MappingItem::Item(key_expr, value.lift())
+                ast::MappingItem::Item(key_expr.spanned(key.span).indirect(), value.lift())
             }
             cst::MappingItem::Spread { expr, .. } => ast::MappingItem::Spread(expr.lift()),
         }
@@ -287,7 +279,7 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                 };
                 ast::Expr::Fn(args_list, body.lift())
             }
-            cst::Expr::Fstr { begin, parts } => lift_fstr(begin, parts),
+            cst::Expr::Fstr { head, parts, .. } => lift_fstr(head, parts),
             cst::Expr::Decorated {
                 expr, decorator, ..
             } => ast::Expr::Decorated(expr.lift(), decorator.lift()),
@@ -603,7 +595,18 @@ impl<'src, 'tok> Lift<ast::PatternMappingItem<'src, ast::STree<'src>>>
                 ast::PatternMappingItem::Ident(name.lift_as_ident())
             }
             cst::PatternMappingItem::Item { key, pattern, .. } => {
-                ast::PatternMappingItem::Item(key.lift(), pattern.lift())
+                let expr = match &key.value {
+                    cst::PatternMappingKey::Unit { .. } => ast::Expr::Tuple(vec![]),
+                    cst::PatternMappingKey::Ident { token } => ast::Expr::Literal(
+                        ast::Literal::Str(token.lift_as_ident().value.0).spanned(token.span),
+                    ),
+                    cst::PatternMappingKey::Literal { token } => {
+                        ast::Expr::Literal(token.lift_as_literal())
+                    }
+                    cst::PatternMappingKey::Expr { key, .. } => key.lift().value,
+                };
+
+                ast::PatternMappingItem::Item(expr.spanned(key.span).indirect(), pattern.lift())
             }
             cst::PatternMappingItem::Spread { name, .. } => {
                 ast::PatternMappingItem::Spread(name.lift_as_capture())
@@ -636,27 +639,6 @@ impl<'src, 'tok> Lift<ast::ImportTree<'src>> for cst::ImportTree<cst::STree<'src
                 .collect(),
             leaf: self.leaf.value.lift().spanned(self.leaf.span),
         }
-    }
-}
-
-impl<'src, 'tok> Lift<ast::Indirect<ast::SExpr<'src>>>
-    for cst::PatternMappingKey<cst::STree<'src, 'tok>>
-{
-    fn lift(&self) -> ast::Indirect<ast::SExpr<'src>> {
-        let expr = match self {
-            cst::PatternMappingKey::Unit { lparen, .. } => {
-                ast::Expr::Tuple(vec![]).spanned(lparen.span)
-            }
-            cst::PatternMappingKey::Ident { token } => ast::Expr::Literal(
-                ast::Literal::Str(token.lift_as_ident().value.0).spanned(token.span),
-            )
-            .spanned(token.span),
-            cst::PatternMappingKey::Literal { token } => {
-                ast::Expr::Literal(token.lift_as_literal()).spanned(token.span)
-            }
-            cst::PatternMappingKey::Expr { key, .. } => return key.lift(),
-        };
-        expr.indirect()
     }
 }
 

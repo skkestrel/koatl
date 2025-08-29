@@ -158,7 +158,9 @@ pub enum MappingKey<TTree: Tree> {
     },
     Fstr {
         begin: TTree::Token,
+        head: TTree::Token,
         parts: Vec<(FmtExpr<TTree>, TTree::Token)>,
+        end: TTree::Token,
     },
     Expr {
         lparen: TTree::Token,
@@ -180,7 +182,7 @@ pub enum MappingItem<TTree: Tree> {
         ident: TTree::Token,
     },
     Item {
-        key: MappingKey<TTree>,
+        key: Spanned<MappingKey<TTree>>,
         colon: TTree::Token,
         value: TTree::Expr,
     },
@@ -500,7 +502,9 @@ pub enum Expr<TTree: Tree> {
 
     Fstr {
         begin: TTree::Token,
-        parts: Vec<(FmtExpr<TTree>, TTree::Token)>,
+        head: TTree::Token,                         // Initial FstrInner content
+        parts: Vec<(FmtExpr<TTree>, TTree::Token)>, // (expression, FstrInner)
+        end: TTree::Token,
     },
 
     // these are removed during desugaring
@@ -558,7 +562,7 @@ pub enum PatternMappingItem<TTree: Tree> {
         name: TTree::Token,
     },
     Item {
-        key: PatternMappingKey<TTree>,
+        key: Spanned<PatternMappingKey<TTree>>,
         colon: TTree::Token,
         pattern: TTree::Pattern,
     },

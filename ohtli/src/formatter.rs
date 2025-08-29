@@ -43,33 +43,28 @@ pub struct Layout {
 
 #[derive(Debug, Clone)]
 pub enum LayoutElement {
-    /// A sequence of lines that can be rendered inline or as a block
-    Listing {
-        lines: Vec<Line>,
-        layout_mode: ListingMode,
-    },
     /// A single line of tokens separated by spaces
     Line(Line),
-    /// A colon block `: body` - can be inline or indented block
+    /// Block structure with colon
     ColonBlock {
         colon_line: Line,
         body: Vec<Line>,
         is_inline: bool,
     },
-    /// An arrow block `=> body` - can be inline or indented block  
+    /// Block structure with arrow
     ArrowBlock {
         arrow_line: Line,
         body: Vec<Line>,
         is_inline: bool,
     },
-    /// Raw text content (for fallback/debugging)
+    /// Plain text content
     Text {
         content: String,
-        preserve_trivia: bool,
+        preserve_whitespace: bool,
     },
-    /// Line breaks
+    /// Newlines
     Newline { count: usize },
-    /// Comments (line or block)
+    /// Comments
     Comment {
         content: String,
         is_line_comment: bool,
@@ -80,17 +75,24 @@ pub enum LayoutElement {
 #[derive(Debug, Clone)]
 pub struct Line {
     pub tokens: Vec<Token>,
-    pub break_after: bool,
     pub indent_level: usize,
-    pub allow_break: bool,
 }
 
 /// Individual tokens in a line
 #[derive(Debug, Clone)]
 pub enum Token {
-    /// Atomic token (literals, identifiers, keywords, operators)
+    /// Atomic token (literals, identifiers, keywords, operators) - always has space before/after
     Atomic(String),
-    /// Postfix operation (method call, attribute access, subscript)
+    /// Token that attaches to the previous token without space (like punctuation)
+    Attached(String),
+    /// Line break with optional count
+    LineBreak { count: usize },
+    /// A sequence of lines that can be rendered inline or as a block
+    Listing {
+        lines: Vec<Line>,
+        layout_mode: ListingMode,
+    },
+    /// Postfix operation (method call, attribute access, subscript) - attaches without space
     Postfix {
         base: Box<Token>,
         operation: PostfixOp,
@@ -171,14 +173,12 @@ impl<'a> LayoutCalculator<'a> {
     fn layout_statement(&mut self, stmt: &SStmt, tokens: &[SToken]) -> Vec<LayoutElement> {
         let mut elements = Vec::new();
 
-        // Simple implementation: just convert to text for now
-        let text = self.statement_to_text(stmt);
-        if !text.is_empty() {
+        // Use the new token-based approach
+        let statement_tokens = self.statement_to_tokens(stmt);
+        if !statement_tokens.is_empty() {
             elements.push(LayoutElement::Line(Line {
-                tokens: vec![Token::Atomic(text)],
-                break_after: false,
+                tokens: statement_tokens,
                 indent_level: 0,
-                allow_break: true,
             }));
         }
 
@@ -241,27 +241,41 @@ impl<'a> LayoutCalculator<'a> {
     }
 
     fn statement_to_text(&self, stmt: &SStmt) -> String {
-        // Very basic text representation - just for demonstration
+        // Deprecated: Use statement_to_tokens instead
+        let tokens = self.statement_to_tokens(stmt);
+        tokens
+            .into_iter()
+            .map(|token| match token {
+                Token::Atomic(text) => text,
+                _ => "/* complex token */".to_string(),
+            })
+            .collect()
+    }
+
+    fn statement_to_tokens(&self, stmt: &SStmt) -> Vec<Token> {
         match &stmt.value {
-            Stmt::Expr { expr } => self.expr_to_text(expr),
+            Stmt::Expr { expr } => self.expr_to_tokens(expr),
             Stmt::PatternAssign {
                 modifier, lhs, rhs, ..
             } => {
+                let mut tokens = Vec::new();
                 if let Some(modifier) = modifier {
-                    format!(
-                        "{} {} = {}",
-                        self.token_to_text(modifier),
-                        self.pattern_to_text(lhs),
-                        self.expr_to_text(rhs)
-                    )
-                } else {
-                    format!("{} = {}", self.pattern_to_text(lhs), self.expr_to_text(rhs))
+                    tokens.push(Token::Atomic(self.token_to_text(modifier)));
+                    tokens.push(Token::Atomic(" ".to_string()));
                 }
+                tokens.extend(self.pattern_to_tokens(lhs));
+                tokens.push(Token::Atomic(" = ".to_string()));
+                tokens.extend(self.expr_to_tokens(rhs));
+                tokens
             }
             Stmt::Assign { lhs, rhs, .. } => {
-                format!("{} = {}", self.expr_to_text(lhs), self.expr_to_text(rhs))
+                let mut tokens = Vec::new();
+                tokens.extend(self.expr_to_tokens(lhs));
+                tokens.push(Token::Atomic(" = ".to_string()));
+                tokens.extend(self.expr_to_tokens(rhs));
+                tokens
             }
-            _ => format!("/* statement */"),
+            _ => vec![Token::Atomic("/* statement */".to_string())],
         }
     }
 
@@ -301,7 +315,7 @@ impl<'a> LayoutCalculator<'a> {
                         .iter()
                         .map(|item| match &item.item {
                             MappingItem::Item { key, value, .. } => {
-                                let key_text = match key {
+                                let key_text = match &key.value {
                                     MappingKey::Ident { token } => self.token_to_text(token),
                                     MappingKey::Literal { token } => self.token_to_text(token),
                                     MappingKey::Expr { key, .. } => self.expr_to_text(key),
@@ -471,12 +485,343 @@ impl<'a> LayoutCalculator<'a> {
         }
     }
 
-    fn pattern_to_text(&self, pattern: &SPattern) -> String {
-        match &pattern.value {
-            Pattern::Capture { name } => self.token_to_text(name),
-            Pattern::Literal { token } => self.token_to_text(token),
-            _ => format!("/* pattern */"),
+    fn expr_to_tokens(&self, expr: &SExpr) -> Vec<Token> {
+        match &expr.value {
+            Expr::Literal { token } => vec![Token::Atomic(self.token_to_text(token))],
+            Expr::Ident { token } => vec![Token::Atomic(self.token_to_text(token))],
+            Expr::Binary { lhs, rhs, op, .. } => {
+                let mut tokens = Vec::new();
+                tokens.extend(self.expr_to_tokens(lhs));
+                tokens.push(Token::Atomic(format!(" {} ", op.token)));
+                tokens.extend(self.expr_to_tokens(rhs));
+                tokens
+            }
+            Expr::Unary { op, expr, .. } => {
+                let mut tokens = vec![Token::Atomic(op.token.to_string())];
+                tokens.extend(self.expr_to_tokens(expr));
+                tokens
+            }
+            Expr::List { listing } => {
+                let mut tokens = vec![Token::Atomic("[".to_string())];
+                let item_tokens: Vec<Token> = match listing {
+                    Listing::Inline { items, .. }
+                    | Listing::Block { items, .. }
+                    | Listing::Open { items } => items
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(i, item)| {
+                            let mut item_tokens = match &item.item {
+                                ListItem::Item { expr } => self.expr_to_tokens(expr),
+                                ListItem::Spread { expr, .. } => {
+                                    let mut spread_tokens = vec![Token::Atomic("...".to_string())];
+                                    spread_tokens.extend(self.expr_to_tokens(expr));
+                                    spread_tokens
+                                }
+                            };
+                            if i > 0 {
+                                item_tokens.insert(0, Token::Atomic(", ".to_string()));
+                            }
+                            item_tokens
+                        })
+                        .collect(),
+                };
+                tokens.extend(item_tokens);
+                tokens.push(Token::Atomic("]".to_string()));
+                tokens
+            }
+            Expr::Mapping { listing } => {
+                let mut tokens = vec![Token::Atomic("{".to_string())];
+                let item_tokens: Vec<Token> = match listing {
+                    Listing::Inline { items, .. }
+                    | Listing::Block { items, .. }
+                    | Listing::Open { items } => items
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(i, item)| {
+                            let mut item_tokens = match &item.item {
+                                MappingItem::Item { key, value, .. } => {
+                                    let mut key_tokens = match &key.value {
+                                        MappingKey::Ident { token } => {
+                                            vec![Token::Atomic(self.token_to_text(token))]
+                                        }
+                                        MappingKey::Literal { token } => {
+                                            vec![Token::Atomic(self.token_to_text(token))]
+                                        }
+                                        MappingKey::Expr { key, .. } => self.expr_to_tokens(key),
+                                        _ => vec![Token::Atomic("/* key */".to_string())],
+                                    };
+                                    key_tokens.push(Token::Atomic(": ".to_string()));
+                                    key_tokens.extend(self.expr_to_tokens(value));
+                                    key_tokens
+                                }
+                                MappingItem::Ident { ident } => {
+                                    vec![Token::Atomic(self.token_to_text(ident))]
+                                }
+                                MappingItem::Spread { expr, .. } => {
+                                    let mut spread_tokens = vec![Token::Atomic("...".to_string())];
+                                    spread_tokens.extend(self.expr_to_tokens(expr));
+                                    spread_tokens
+                                }
+                            };
+                            if i > 0 {
+                                item_tokens.insert(0, Token::Atomic(", ".to_string()));
+                            }
+                            item_tokens
+                        })
+                        .collect(),
+                };
+                tokens.extend(item_tokens);
+                tokens.push(Token::Atomic("}".to_string()));
+                tokens
+            }
+            Expr::MethodCall {
+                expr, method, args, ..
+            } => {
+                let mut tokens = Vec::new();
+                tokens.extend(self.expr_to_tokens(expr));
+                tokens.push(Token::Atomic(".".to_string()));
+                tokens.push(Token::Atomic(self.token_to_text(method)));
+                tokens.push(Token::Atomic("(".to_string()));
+
+                let arg_tokens: Vec<Token> = match args {
+                    Listing::Inline { items, .. }
+                    | Listing::Block { items, .. }
+                    | Listing::Open { items } => items
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(i, item)| {
+                            let mut item_tokens = match &item.item {
+                                CallItem::Arg { expr } => self.expr_to_tokens(expr),
+                                CallItem::ArgSpread { expr, .. } => {
+                                    let mut spread_tokens = vec![Token::Atomic("*".to_string())];
+                                    spread_tokens.extend(self.expr_to_tokens(expr));
+                                    spread_tokens
+                                }
+                                CallItem::Kwarg { name, expr, .. } => {
+                                    let mut kwarg_tokens =
+                                        vec![Token::Atomic(self.token_to_text(name))];
+                                    kwarg_tokens.push(Token::Atomic("=".to_string()));
+                                    kwarg_tokens.extend(self.expr_to_tokens(expr));
+                                    kwarg_tokens
+                                }
+                                CallItem::KwargSpread { expr, .. } => {
+                                    let mut spread_tokens = vec![Token::Atomic("**".to_string())];
+                                    spread_tokens.extend(self.expr_to_tokens(expr));
+                                    spread_tokens
+                                }
+                            };
+                            if i > 0 {
+                                item_tokens.insert(0, Token::Atomic(", ".to_string()));
+                            }
+                            item_tokens
+                        })
+                        .collect(),
+                };
+                tokens.extend(arg_tokens);
+                tokens.push(Token::Atomic(")".to_string()));
+                tokens
+            }
+            Expr::Attribute { expr, attr, .. } => {
+                let mut tokens = Vec::new();
+                tokens.extend(self.expr_to_tokens(expr));
+                tokens.push(Token::Atomic(".".to_string()));
+                tokens.push(Token::Atomic(self.token_to_text(attr)));
+                tokens
+            }
+            Expr::Subscript { expr, indices, .. } => {
+                let mut tokens = Vec::new();
+                tokens.extend(self.expr_to_tokens(expr));
+                tokens.push(Token::Atomic("[".to_string()));
+
+                let index_tokens: Vec<Token> = match indices {
+                    Listing::Inline { items, .. }
+                    | Listing::Block { items, .. }
+                    | Listing::Open { items } => items
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(i, item)| {
+                            let mut item_tokens = match &item.item {
+                                ListItem::Item { expr } => self.expr_to_tokens(expr),
+                                ListItem::Spread { expr, .. } => {
+                                    let mut spread_tokens = vec![Token::Atomic("...".to_string())];
+                                    spread_tokens.extend(self.expr_to_tokens(expr));
+                                    spread_tokens
+                                }
+                            };
+                            if i > 0 {
+                                item_tokens.insert(0, Token::Atomic(", ".to_string()));
+                            }
+                            item_tokens
+                        })
+                        .collect(),
+                };
+                tokens.extend(index_tokens);
+                tokens.push(Token::Atomic("]".to_string()));
+                tokens
+            }
+            Expr::Call { expr, args, .. } => {
+                let mut tokens = Vec::new();
+                tokens.extend(self.expr_to_tokens(expr));
+                tokens.push(Token::Atomic("(".to_string()));
+
+                let arg_tokens: Vec<Token> = match args {
+                    Listing::Inline { items, .. }
+                    | Listing::Block { items, .. }
+                    | Listing::Open { items } => items
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(i, item)| {
+                            let mut item_tokens = match &item.item {
+                                CallItem::Arg { expr } => self.expr_to_tokens(expr),
+                                CallItem::ArgSpread { expr, .. } => {
+                                    let mut spread_tokens = vec![Token::Atomic("*".to_string())];
+                                    spread_tokens.extend(self.expr_to_tokens(expr));
+                                    spread_tokens
+                                }
+                                CallItem::Kwarg { name, expr, .. } => {
+                                    let mut kwarg_tokens =
+                                        vec![Token::Atomic(self.token_to_text(name))];
+                                    kwarg_tokens.push(Token::Atomic("=".to_string()));
+                                    kwarg_tokens.extend(self.expr_to_tokens(expr));
+                                    kwarg_tokens
+                                }
+                                CallItem::KwargSpread { expr, .. } => {
+                                    let mut spread_tokens = vec![Token::Atomic("**".to_string())];
+                                    spread_tokens.extend(self.expr_to_tokens(expr));
+                                    spread_tokens
+                                }
+                            };
+                            if i > 0 {
+                                item_tokens.insert(0, Token::Atomic(", ".to_string()));
+                            }
+                            item_tokens
+                        })
+                        .collect(),
+                };
+                tokens.extend(arg_tokens);
+                tokens.push(Token::Atomic(")".to_string()));
+                tokens
+            }
+            Expr::If {
+                cond,
+                body,
+                else_clause,
+                ..
+            } => {
+                let mut tokens = Vec::new();
+                tokens.extend(self.expr_to_tokens(cond));
+                tokens.push(Token::Atomic(" then ".to_string()));
+                tokens.push(Token::Atomic(self.colon_block_to_text(body)));
+                if let Some((_, else_body)) = else_clause {
+                    tokens.push(Token::Atomic(" else ".to_string()));
+                    tokens.push(Token::Atomic(self.colon_block_to_text(else_body)));
+                }
+                tokens
+            }
+            Expr::Fn { arg, body } => {
+                let mut tokens = Vec::new();
+                tokens.extend(self.pattern_to_tokens(arg));
+                tokens.push(Token::Atomic(" => ".to_string()));
+                tokens.push(Token::Atomic(self.arrow_block_to_text(body)));
+                tokens
+            }
+            Expr::ParenthesizedFn { args, body } => {
+                let mut tokens = Vec::new();
+                let param_tokens: Vec<Token> = match args {
+                    Listing::Inline { items, .. }
+                    | Listing::Block { items, .. }
+                    | Listing::Open { items } => items
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(i, item)| {
+                            let mut item_tokens = match &item.item {
+                                ArgDefItem::Arg { pattern, .. } => self.pattern_to_tokens(pattern),
+                                _ => vec![Token::Atomic("/* arg */".to_string())],
+                            };
+                            if i > 0 {
+                                item_tokens.insert(0, Token::Atomic(", ".to_string()));
+                            }
+                            item_tokens
+                        })
+                        .collect(),
+                };
+                if param_tokens.len() <= 1 {
+                    tokens.extend(param_tokens);
+                } else {
+                    tokens.push(Token::Atomic("(".to_string()));
+                    tokens.extend(param_tokens);
+                    tokens.push(Token::Atomic(")".to_string()));
+                }
+                tokens.push(Token::Atomic(" => ".to_string()));
+                tokens.push(Token::Atomic(self.arrow_block_to_text(body)));
+                tokens
+            }
+            Expr::Slice { start, stop, .. } => {
+                let mut tokens = Vec::new();
+                if let Some(start) = start {
+                    tokens.extend(self.expr_to_tokens(start));
+                }
+                tokens.push(Token::Atomic("..".to_string()));
+                if let Some(stop) = stop {
+                    tokens.extend(self.expr_to_tokens(stop));
+                }
+                tokens
+            }
+            Expr::Await { expr, .. } => {
+                let mut tokens = vec![Token::Atomic("@".to_string())];
+                tokens.extend(self.expr_to_tokens(expr));
+                tokens
+            }
+            Expr::Memo { body, .. } => {
+                let mut tokens = vec![Token::Atomic("memo ".to_string())];
+                tokens.push(Token::Atomic(self.colon_block_to_text(body)));
+                tokens
+            }
+            Expr::Placeholder { token } => vec![Token::Atomic(self.token_to_text(token))],
+            Expr::Parenthesized { expr, .. } => {
+                let mut tokens = vec![Token::Atomic("(".to_string())];
+                tokens.extend(self.expr_to_tokens(expr));
+                tokens.push(Token::Atomic(")".to_string()));
+                tokens
+            }
+            Expr::Match {
+                scrutinee, cases, ..
+            } => {
+                let mut tokens = Vec::new();
+                tokens.extend(self.expr_to_tokens(scrutinee));
+                tokens.push(Token::Atomic(" match:".to_string()));
+                tokens.push(Token::LineBreak { count: 1 });
+                for case in cases {
+                    tokens.push(Token::Atomic("    ".to_string()));
+                    tokens.extend(self.pattern_to_tokens(&case.pattern));
+                    tokens.push(Token::Atomic(" => ".to_string()));
+                    tokens.push(Token::Atomic(self.arrow_block_to_text(&case.body)));
+                    tokens.push(Token::LineBreak { count: 1 });
+                }
+                tokens
+            }
+            _ => vec![Token::Atomic("/* expr */".to_string())],
         }
+    }
+
+    fn pattern_to_tokens(&self, pattern: &SPattern) -> Vec<Token> {
+        match &pattern.value {
+            Pattern::Capture { name } => vec![Token::Atomic(self.token_to_text(name))],
+            Pattern::Literal { token } => vec![Token::Atomic(self.token_to_text(token))],
+            _ => vec![Token::Atomic("/* pattern */".to_string())],
+        }
+    }
+
+    fn pattern_to_text(&self, pattern: &SPattern) -> String {
+        // Deprecated: Use pattern_to_tokens instead
+        let tokens = self.pattern_to_tokens(pattern);
+        tokens
+            .into_iter()
+            .map(|token| match token {
+                Token::Atomic(text) => text,
+                _ => "/* complex token */".to_string(),
+            })
+            .collect()
     }
 
     fn token_to_text(&self, token: &koatl_parser::lexer::SToken) -> String {
@@ -493,9 +838,12 @@ impl<'a> LayoutCalculator<'a> {
             Token::Float(s) => s.to_string(),
             Token::Kw(s) => s.to_string(),
             Token::Symbol(s) => s.to_string(),
-            Token::Str(orig, _) => orig.to_string(),
-            Token::FstrBegin(orig, _) => orig.to_string(),
-            Token::FstrContinue(orig, _) => orig.to_string(),
+            Token::Str(s, _) => s.to_string(),
+            Token::FstrInner(s, _) => s.to_string(),
+            Token::FstrBegin(s) => s.to_string(),
+            Token::FstrEnd(s) => s.to_string(),
+            Token::VerbatimFstrBegin(s) => s.to_string(),
+            Token::VerbatimFstrEnd(s) => s.to_string(),
             Token::Indent | Token::Dedent | Token::Eol => panic!(),
         }
     }
@@ -597,9 +945,6 @@ impl<'a> LayoutWriter<'a> {
             LayoutElement::Line(line) => {
                 self.render_line(line);
             }
-            LayoutElement::Listing { lines, layout_mode } => {
-                self.render_listing(lines, layout_mode);
-            }
             LayoutElement::ColonBlock {
                 colon_line,
                 body,
@@ -637,20 +982,31 @@ impl<'a> LayoutWriter<'a> {
         // Add indentation based on line's indent level
         self.add_indentation(line.indent_level);
 
-        // Render tokens with spaces between them
+        // Render tokens with intelligent spacing
         for (i, token) in line.tokens.iter().enumerate() {
             if i > 0 {
-                self.output.push(' ');
+                let prev_token = &line.tokens[i - 1];
+                if self.needs_space_between(prev_token, token) {
+                    self.output.push(' ');
+                }
             }
             self.render_token(token);
         }
-
-        // Add line break if specified
-        if line.break_after {
-            self.output.push('\n');
-        }
     }
 
+    /// Determine if a space is needed between two consecutive tokens
+    fn needs_space_between(&self, prev: &Token, current: &Token) -> bool {
+        match (prev, current) {
+            // No space if current token is attached
+            (_, Token::Attached(_)) => false,
+            // No space for postfix operations
+            (_, Token::Postfix { .. }) => false,
+            // Line breaks don't need spaces
+            (Token::LineBreak { .. }, _) | (_, Token::LineBreak { .. }) => false,
+            // Otherwise, atomic tokens and other types need spaces
+            _ => true,
+        }
+    }
     fn add_indentation(&mut self, level: usize) {
         // Only add indentation if we're at the start of a line
         if self.output.ends_with('\n') || self.output.is_empty() {
@@ -664,6 +1020,17 @@ impl<'a> LayoutWriter<'a> {
         match token {
             Token::Atomic(content) => {
                 self.output.push_str(content);
+            }
+            Token::Attached(content) => {
+                self.output.push_str(content);
+            }
+            Token::LineBreak { count } => {
+                for _ in 0..*count {
+                    self.output.push('\n');
+                }
+            }
+            Token::Listing { lines, layout_mode } => {
+                self.render_listing(lines, layout_mode);
             }
             Token::Postfix { base, operation } => {
                 self.render_token(base);

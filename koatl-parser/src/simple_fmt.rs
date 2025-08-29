@@ -316,19 +316,22 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
             Expr::ParenthesizedFn { args, body, .. } => {
                 format!("{} => {}", args.simple_fmt(), body.simple_fmt())
             }
-            Expr::Fstr { begin, parts } => {
-                if parts.is_empty() {
-                    format!("f\"{}\"", begin.token.simple_fmt())
-                } else {
-                    let parts_str = parts
-                        .iter()
-                        .map(|(fmt_expr, cont)| {
-                            format!("{{{}}}{}", fmt_expr.simple_fmt(), cont.simple_fmt())
-                        })
-                        .collect::<Vec<_>>()
-                        .join("");
-                    format!("f\"{}{}\"", begin.token.simple_fmt(), parts_str)
+            Expr::Fstr {
+                begin,
+                head,
+                parts,
+                end,
+            } => {
+                let mut result = begin.token.simple_fmt();
+                result.push_str(&head.token.simple_fmt());
+
+                for (fmt_expr, inner) in parts {
+                    result.push_str(&format!("{{{}}}", fmt_expr.simple_fmt()));
+                    result.push_str(&inner.token.simple_fmt());
                 }
+
+                result.push_str(&end.token.simple_fmt());
+                result
             }
             Expr::Decorated {
                 expr, decorator, ..
@@ -492,12 +495,19 @@ impl<'src, 'tok> SimpleFmt for MappingKey<STree<'src, 'tok>> {
             MappingKey::ParenthesizedBlock { body, .. } => {
                 format!("Block({})", body.simple_fmt())
             }
-            MappingKey::Fstr { begin, parts } => {
+            MappingKey::Fstr {
+                begin,
+                head,
+                parts,
+                end,
+            } => {
                 let mut result = begin.simple_fmt();
-                for (fmt_expr, cont) in parts {
+                result.push_str(&head.simple_fmt());
+                for (fmt_expr, inner) in parts {
                     result.push_str(&format!("{{{}}}", fmt_expr.simple_fmt()));
-                    result.push_str(&cont.simple_fmt());
+                    result.push_str(&inner.simple_fmt());
                 }
+                result.push_str(&end.simple_fmt());
                 result
             }
         }
@@ -520,7 +530,7 @@ impl<'src, 'tok> SimpleFmt for MappingItem<STree<'src, 'tok>> {
         match self {
             MappingItem::Ident { ident } => ident.simple_fmt(),
             MappingItem::Item { key, value, .. } => {
-                format!("{}: {}", key.simple_fmt(), value.simple_fmt())
+                format!("{}: {}", key.value.simple_fmt(), value.simple_fmt())
             }
             MappingItem::Spread { expr, .. } => {
                 format!("**{}", expr.simple_fmt())
@@ -661,7 +671,7 @@ impl<'src, 'tok> SimpleFmt for PatternMappingItem<STree<'src, 'tok>> {
         match self {
             PatternMappingItem::Ident { name } => name.simple_fmt(),
             PatternMappingItem::Item { key, pattern, .. } => {
-                format!("{}: {}", key.simple_fmt(), pattern.simple_fmt())
+                format!("{}: {}", key.value.simple_fmt(), pattern.simple_fmt())
             }
             PatternMappingItem::Spread { name, .. } => {
                 format!("**{}", name.simple_fmt())
@@ -727,8 +737,11 @@ impl<'src> SimpleFmt for Token<'src> {
             Token::Ident(s) => s.to_string(),
             Token::Int(s) => s.to_string(),
             Token::Str(orig, _) => orig.to_string(),
-            Token::FstrBegin(orig, _) => orig.to_string(),
-            Token::FstrContinue(orig, _) => orig.to_string(),
+            Token::FstrBegin(s) => s.to_string(),
+            Token::FstrEnd(s) => s.to_string(),
+            Token::VerbatimFstrBegin(s) => s.to_string(),
+            Token::VerbatimFstrEnd(s) => s.to_string(),
+            Token::FstrInner(s, _) => s.to_string(),
             Token::Bool(b) => b.to_string(),
             Token::None => "None".to_string(),
             Token::Symbol(s) => s.to_string(),

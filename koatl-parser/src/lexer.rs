@@ -30,8 +30,12 @@ pub enum Token<'src> {
     Bool(bool),
 
     Str(&'src str, String),
-    FstrBegin(&'src str, String),
-    FstrContinue(&'src str, String),
+
+    FstrBegin(&'src str),
+    FstrEnd(&'src str),
+    VerbatimFstrBegin(&'src str),
+    VerbatimFstrEnd(&'src str),
+    FstrInner(&'src str, String),
 
     Int(&'src str),
     IntBin(&'src str),
@@ -109,8 +113,11 @@ impl fmt::Display for Token<'_> {
             Token::Symbol(s) => write!(f, "{s}"),
             Token::Ident(s) => write!(f, "{s}"),
             Token::Kw(s) => write!(f, "<{s}>"),
-            Token::FstrBegin(_, s) => write!(f, "<f_begin {s}>"),
-            Token::FstrContinue(_, s) => write!(f, "<f_middle {s}>"),
+            Token::FstrBegin(s) => write!(f, "{s}"),
+            Token::FstrEnd(s) => write!(f, "{s}"),
+            Token::VerbatimFstrBegin(s) => write!(f, "{s}"),
+            Token::VerbatimFstrEnd(s) => write!(f, "{s}"),
+            Token::FstrInner(s, _) => write!(f, "{s}"),
             Token::Indent => write!(f, "<indent>"),
             Token::Dedent => write!(f, "<dedent>"),
             Token::Eol => write!(f, "<eol>"),
@@ -968,19 +975,11 @@ impl<'src> TokenizeCtx<'src> {
 
                 if seen_quotes == ending_char_count {
                     let span = self.span_since(&marker);
-                    if tokens.len() == 0 {
-                        tokens.push(SToken::new(
-                            Token::FstrBegin(self.slice_since(&marker), current_str),
-                            span,
-                            Vec::new(), // First token trivia will be assigned later.
-                        ));
-                    } else {
-                        tokens.push(SToken::new(
-                            Token::FstrContinue(self.slice_since(&marker), current_str),
-                            span,
-                            Vec::new(),
-                        ));
-                    }
+                    tokens.push(SToken::new(
+                        Token::FstrInner(self.slice_since(&marker), current_str),
+                        span,
+                        Vec::new(),
+                    ));
 
                     self.rewind(ending_marker);
 
@@ -1004,19 +1003,11 @@ impl<'src> TokenizeCtx<'src> {
                 let span = self.span_since(&marker);
                 let trivia = self.parse_trivia()?;
 
-                let mut new_token = if tokens.len() == 0 {
-                    SToken::new(
-                        Token::FstrBegin(self.slice_since(&marker), current_str),
-                        span,
-                        Vec::new(),
-                    )
-                } else {
-                    SToken::new(
-                        Token::FstrContinue(self.slice_since(&marker), current_str),
-                        span,
-                        Vec::new(),
-                    )
-                };
+                let mut new_token = SToken::new(
+                    Token::FstrInner(self.slice_since(&marker), current_str),
+                    span,
+                    Vec::new(),
+                );
 
                 new_token.trailing_trivia = trivia;
                 tokens.push(new_token);
@@ -1150,22 +1141,56 @@ impl<'src> TokenizeCtx<'src> {
         self.parse_seq("f")?;
         let mut quote_count = 0;
 
+        let after_rf = self.cursor();
+
         while self.try_parse(|x| x.parse_char(ch)).is_ok() {
             quote_count += 1;
         }
 
         if quote_count == 2 {
-            let span = self.span_since(&start);
-            return Ok(TokenList(vec![SToken::new(
-                Token::FstrBegin(self.slice_since(&start), String::new()),
-                span,
-                Vec::new(),
-            )]));
+            let start_rng = start..after_rf + 1;
+            let end_rng = after_rf + 1..after_rf + 2;
+
+            return Ok(TokenList(vec![
+                SToken::new(
+                    if verbatim {
+                        Token::VerbatimFstrBegin(&self.input[start_rng.clone()])
+                    } else {
+                        Token::FstrBegin(&self.input[start_rng.clone()])
+                    },
+                    Span::new(start_rng.clone()),
+                    Vec::new(),
+                ),
+                SToken::new(
+                    Token::FstrInner("", "".into()),
+                    Span::new(start_rng.end..start_rng.end),
+                    Vec::new(),
+                ),
+                SToken::new(
+                    if verbatim {
+                        Token::VerbatimFstrEnd(&self.input[end_rng.clone()])
+                    } else {
+                        Token::FstrEnd(&self.input[end_rng.clone()])
+                    },
+                    Span::new(end_rng),
+                    Vec::new(),
+                ),
+            ]));
         }
 
         verbatim |= quote_count >= 3;
 
-        let inner = self.parse_fstr_inner(ch, quote_count, verbatim)?;
+        let mut tokens = vec![];
+        tokens.push(SToken::new(
+            if verbatim {
+                Token::VerbatimFstrBegin(self.slice_since(&start))
+            } else {
+                Token::FstrBegin(self.slice_since(&start))
+            },
+            self.span_since(&start),
+            Vec::new(),
+        ));
+        tokens.extend(self.parse_fstr_inner(ch, quote_count, verbatim)?);
 
         let start = self.cursor();
 
@@ -1184,7 +1209,17 @@ impl<'src> TokenizeCtx<'src> {
             ));
         }
 
-        return Ok(inner);
+        tokens.push(SToken::new(
+            if verbatim {
+                Token::VerbatimFstrEnd(self.slice_since(&start))
+            } else {
+                Token::FstrEnd(self.slice_since(&start))
+            },
+            self.span_since(&start),
+            Vec::new(),
+        ));
+
+        Ok(TokenList(tokens))
     }
 
     fn parse_str_start(&mut self) -> TResult<'src, ()> {
@@ -1883,12 +1918,19 @@ x = 42
 
         assert_has_token_with_trivia(
             &token_list,
-            Token::Str("\"hello world\"", "hello world".into()),
+            Token::FstrBegin("f\""),
             vec![
                 newline_trivium(),
                 block_comment_trivium("#- comment before string -#"),
                 whitespace_trivium(" "),
             ],
+            vec![],
+        );
+
+        assert_has_token_with_trivia(
+            &token_list,
+            Token::FstrEnd("\""),
+            vec![],
             vec![
                 whitespace_trivium(" "),
                 comment_trivium("# Comment after string"),

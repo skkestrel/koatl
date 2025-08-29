@@ -581,6 +581,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 Ok(PatternMappingItem::Spread { stars, name })
             },
             |ctx| {
+                let start = ctx.cursor;
                 let key = first_of!(
                     ctx,
                     "mapping key",
@@ -611,7 +612,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 let colon = ctx.symbol(":")?;
                 let pattern = ctx.as_pattern()?;
                 Ok(PatternMappingItem::Item {
-                    key,
+                    key: key.spanned(ctx.span_from(start)),
                     colon,
                     pattern: pattern.boxed(),
                 })
@@ -862,6 +863,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     })
                 },
                 |ctx| {
+                    let start = ctx.cursor;
                     let key = first_of!(
                         ctx,
                         "mapping key",
@@ -874,8 +876,13 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                             Ok(MappingKey::Literal { token })
                         },
                         |ctx| {
-                            let (begin, parts) = ctx.fstr()?;
-                            Ok(MappingKey::Fstr { begin, parts })
+                            let (begin, head, parts, end) = ctx.fstr()?;
+                            Ok(MappingKey::Fstr {
+                                begin,
+                                head,
+                                parts,
+                                end,
+                            })
                         },
                         |ctx| {
                             let lparen = ctx.symbol("(")?;
@@ -911,8 +918,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     )?;
                     let colon = ctx.symbol(":")?;
                     let value = ctx.expr()?;
+
                     Ok(MappingItem::Item {
-                        key,
+                        key: key.spanned(ctx.span_from(start)),
                         colon,
                         value: value.boxed(),
                     })
@@ -930,14 +938,16 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         &mut self,
     ) -> ParseResult<(
         &'tok SToken<'src>,
+        &'tok SToken<'src>,
         Vec<(SFmtExpr<'src, 'tok>, &'tok SToken<'src>)>,
+        &'tok SToken<'src>,
     )> {
         let start = self.cursor;
 
         let begin = 'block: {
             let next = self.next_token();
             if let Some(token) = next {
-                if let Token::FstrBegin(..) = token.token {
+                if let Token::FstrBegin(_) | Token::VerbatimFstrBegin(_) = token.token {
                     break 'block token;
                 }
             }
@@ -947,7 +957,19 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let mut parts = Vec::new();
 
+        // First, get the head (initial FstrInner content)
+        let head = 'block: {
+            let next = self.next_token();
+            if let Some(token) = next {
+                if let Token::FstrInner(..) = token.token {
+                    break 'block token;
+                }
+            }
+            return Err(self.set_error(start, ErrMsg::Expected("f-string head content".into())));
+        };
+
         loop {
+            // Check for expression block
             let Some((indent, stmts, dedent)) = optional!(self, |ctx| {
                 let indent = ctx.token(&Token::Indent)?;
                 let stmts = ctx.stmts()?;
@@ -972,29 +994,50 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 fmt,
             };
 
-            let cont = 'block: {
+            // Get the following FstrInner content
+            let inner_content = 'block: {
                 let next = self.next_token();
                 if let Some(token) = next {
-                    if let Token::FstrContinue(..) = token.token {
+                    if let Token::FstrInner(..) = token.token {
                         break 'block token;
                     }
                 }
-
-                return Err(self.set_error(start, ErrMsg::Expected("f-string continue".into())));
+                return Err(self.set_error(
+                    start,
+                    ErrMsg::Expected("f-string content after expression".into()),
+                ));
             };
 
-            parts.push((fmt_expr, cont));
+            parts.push((fmt_expr, inner_content));
         }
 
-        Ok((begin, parts))
+        // Expect closing FstrEnd or VerbatimFstrEnd
+        let end = 'block: {
+            let next = self.next_token();
+            if let Some(token) = next {
+                if let Token::FstrEnd(_) | Token::VerbatimFstrEnd(_) = token.token {
+                    break 'block token;
+                }
+            }
+
+            return Err(self.set_error(start, ErrMsg::Expected("f-string end".into())));
+        };
+
+        Ok((begin, head, parts, end))
     }
 
     fn fstr_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
         let start = self.cursor;
 
-        let (begin, parts) = self.fstr()?;
+        let (begin, head, parts, end) = self.fstr()?;
 
-        Ok(Expr::Fstr { begin, parts }.spanned(self.span_from(start)))
+        Ok(Expr::Fstr {
+            begin,
+            head,
+            parts,
+            end,
+        }
+        .spanned(self.span_from(start)))
     }
 
     fn symbol_table<T: Clone>(
