@@ -1,8 +1,4 @@
-use crate::{
-    Token,
-    cst::*,
-    lexer::{SToken, py_escape_fstr},
-};
+use crate::{Token, cst::*, lexer::SToken};
 
 pub trait SimpleFmt {
     fn simple_fmt(&self) -> String;
@@ -730,13 +726,13 @@ impl<'src> SimpleFmt for Token<'src> {
         match self {
             Token::Ident(s) => s.to_string(),
             Token::Int(s) => s.to_string(),
-            Token::Str(s) => format!("\"{}\"", s),
+            Token::Str(orig, _) => orig.to_string(),
+            Token::FstrBegin(orig, _) => orig.to_string(),
+            Token::FstrContinue(orig, _) => orig.to_string(),
             Token::Bool(b) => b.to_string(),
             Token::None => "None".to_string(),
             Token::Symbol(s) => s.to_string(),
             Token::Kw(s) => s.to_string(),
-            Token::FstrBegin(s) => py_escape_fstr(s),
-            Token::FstrContinue(s) => py_escape_fstr(s),
             _ => format!("{:?}", self),
         }
     }

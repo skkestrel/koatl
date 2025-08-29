@@ -5,6 +5,5 @@ edition = "2021"
 
 [dependencies]
 koatl-parser = { path = "../koatl-parser" }
-koatl-core = { path = "../koatl-core" }
 clap = { version = "4.0", features = ["derive"] }
 anyhow = "1.0"

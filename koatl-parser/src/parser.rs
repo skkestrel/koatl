@@ -217,7 +217,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             | Token::IntHex(_)
             | Token::IntOct(_)
             | Token::Float(_)
-            | Token::Str(_)
+            | Token::Str(..)
             | Token::Bool(_)
             | Token::None = found.token
             {
@@ -937,7 +937,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let begin = 'block: {
             let next = self.next_token();
             if let Some(token) = next {
-                if let Token::FstrBegin(_) = token.token {
+                if let Token::FstrBegin(..) = token.token {
                     break 'block token;
                 }
             }
@@ -975,7 +975,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             let cont = 'block: {
                 let next = self.next_token();
                 if let Some(token) = next {
-                    if let Token::FstrContinue(_) = token.token {
+                    if let Token::FstrContinue(..) = token.token {
                         break 'block token;
                     }
                 }

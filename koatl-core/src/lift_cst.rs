@@ -18,14 +18,14 @@ fn lift_fstr<'src, 'tok>(
     parts: &[(cst::FmtExpr<cst::STree<'src, 'tok>>, &'tok SToken<'src>)],
 ) -> ast::Expr<'src, ast::STree<'src>> {
     let begin_str = match &begin.token {
-        Token::FstrBegin(s) => s.clone(),
+        Token::FstrBegin(_, s) => s.clone(),
         _ => panic!("Expected FstrBegin token"),
     };
     let fmt_parts = parts
         .iter()
         .map(|(fmt_expr, cont)| {
             let cont_str = match &cont.token {
-                Token::FstrContinue(s) => s.clone(),
+                Token::FstrContinue(_, s) => s.clone(),
                 _ => panic!("Expected FstrContinue token"),
             };
 
@@ -82,7 +82,7 @@ impl<'src> STokenExt<'src> for SToken<'src> {
             Token::IntOct(n) => ast::Literal::IntOct(Cow::Borrowed(n)),
             Token::IntBin(n) => ast::Literal::IntBin(Cow::Borrowed(n)),
             Token::Float(n) => ast::Literal::Float(Cow::Borrowed(n)),
-            Token::Str(s) => ast::Literal::Str(s.clone().into()),
+            Token::Str(s, _) => ast::Literal::Str(s.clone().into()),
             Token::Bool(b) => ast::Literal::Bool(*b),
             Token::None => ast::Literal::None,
             _ => panic!("Expected literal token, got {:?}", self.token),
