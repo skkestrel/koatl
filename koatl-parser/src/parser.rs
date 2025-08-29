@@ -2325,11 +2325,15 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
                 // Recover
                 self.rewind(before);
+
                 let mut indent_level = 0;
                 loop {
                     match self.peek_token() {
                         Some(tok) if tok.token == Token::Eol => {
                             if indent_level == 0 {
+                                stmts.push(Box::new(
+                                    Stmt::Error.spanned(self.span_from(self.cursor)),
+                                ));
                                 self.next();
                                 break;
                             }
@@ -2337,13 +2341,19 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         Some(tok) if tok.token == Token::Dedent => {
                             indent_level -= 1;
                             if indent_level < 0 {
+                                stmts.push(Box::new(
+                                    Stmt::Error.spanned(self.span_from(self.cursor)),
+                                ));
                                 break 'outer;
                             }
                         }
                         Some(tok) if tok.token == Token::Indent => {
                             indent_level += 1;
                         }
-                        None => break 'outer,
+                        None => {
+                            stmts.push(Box::new(Stmt::Error.spanned(self.span_from(self.cursor))));
+                            break 'outer;
+                        }
                         _ => {}
                     }
                     self.next();

@@ -392,7 +392,6 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
             cst::Expr::Checked { expr, pattern, .. } => {
                 ast::Expr::Checked(expr.lift(), pattern.as_ref().map(|p| p.lift()))
             }
-            cst::Expr::Error => panic!("Cannot lift error expression"),
         };
         expr.spanned(self.span).indirect()
     }
@@ -493,6 +492,7 @@ impl<'src, 'tok> Lift<Indirect<ast::SStmt<'src>>> for cst::SStmt<'src, 'tok> {
             cst::Stmt::Import { tree, export, .. } => {
                 ast::Stmt::Import(tree.lift(), export.is_some())
             }
+            cst::Stmt::Error => panic!("Cannot lift error stmt"),
         };
         stmt.spanned(self.span).indirect()
     }

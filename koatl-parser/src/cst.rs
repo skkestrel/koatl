@@ -121,6 +121,8 @@ pub enum Stmt<TTree: Tree> {
     Expr {
         expr: TTree::Expr,
     },
+
+    Error,
 }
 
 #[derive(Debug, Clone)]
@@ -516,8 +518,6 @@ pub enum Expr<TTree: Tree> {
         expr: TTree::Expr,
         rparen: TTree::Token,
     },
-
-    Error,
 }
 
 // Patterns

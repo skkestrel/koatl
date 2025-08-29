@@ -339,7 +339,6 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
             } => {
                 format!("{} & {}", expr.simple_fmt(), decorator.simple_fmt())
             }
-            Expr::Error => "<error>".to_string(),
         }
     }
 }
@@ -412,6 +411,7 @@ impl<'src, 'tok> SimpleFmt for SStmtInner<'src, 'tok> {
                 let export_str = if export.is_some() { "export " } else { "" };
                 format!("{}import {}", export_str, tree.simple_fmt())
             }
+            Stmt::Error { .. } => "/* parse error */".to_string(),
         }
     }
 }
