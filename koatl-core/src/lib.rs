@@ -120,11 +120,7 @@ pub fn transpile_to_py_ast<'src>(
 
     let mut py_ast = output.py_block;
 
-    let a = PyAstBuilder::new(Span {
-        start: 0,
-        end: 0,
-        context: (),
-    });
+    let a = PyAstBuilder::new(Span::new(0..0));
 
     if options.inject_prelude {
         py_ast.0.insert(
@@ -218,7 +214,7 @@ pub fn format_errs(errs: &TlErrs, filename: &str, src: &str) -> Vec<u8> {
     let mut writer = Vec::<u8>::new();
 
     for e in &errs.0 {
-        let range = e.span.map(|e| e.into_range()).unwrap_or(0..0);
+        let range = e.span.map(|e| e.start..e.end).unwrap_or(0..0);
 
         Report::build(ReportKind::Error, (filename.clone(), range.clone()))
             .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
@@ -235,7 +231,7 @@ pub fn format_errs(errs: &TlErrs, filename: &str, src: &str) -> Vec<u8> {
                     label.clone()
                 };
 
-                Label::new((filename.clone(), span.into_range()))
+                Label::new((filename.clone(), span.start..span.end))
                     .with_message(msg)
                     .with_color(Color::Yellow)
             }))
@@ -256,12 +252,9 @@ pub fn parse_tl<'src>(src: &'src str) -> (Option<SExpr<'src>>, TlErrs) {
             .into_iter()
             .map(|e| TlErr {
                 kind: TlErrKind::Tokenize,
-                message: e.reason().to_string(),
-                span: Some(*e.span()),
-                contexts: e
-                    .contexts()
-                    .map(|(label, span)| (label.to_string(), *span))
-                    .collect(),
+                message: e.message.to_string(),
+                span: Some(e.span),
+                contexts: vec![],
             })
             .collect(),
     ));
@@ -278,12 +271,9 @@ pub fn parse_tl<'src>(src: &'src str) -> (Option<SExpr<'src>>, TlErrs) {
             .into_iter()
             .map(|e| TlErr {
                 kind: TlErrKind::Parse,
-                message: e.reason().to_string(),
-                span: Some(*e.span()),
-                contexts: e
-                    .contexts()
-                    .map(|(label, span)| (label.to_string(), *span))
-                    .collect(),
+                span: Some(e.0),
+                message: e.1,
+                contexts: vec![],
             })
             .collect(),
     ));

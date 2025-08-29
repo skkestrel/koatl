@@ -28,6 +28,19 @@ fn lift_fstr<'src, 'tok>(
                 Token::FstrContinue(s) => s.clone(),
                 _ => panic!("Expected FstrContinue token"),
             };
+
+            if fmt_expr.stmts.value.len() == 1 {
+                if let cst::Stmt::Expr { expr } = &fmt_expr.stmts.value[0].value {
+                    return (
+                        ast::FmtExpr {
+                            expr: expr.lift(),
+                            fmt: fmt_expr.fmt.as_ref().map(|(_, fmt)| fmt.lift()),
+                        },
+                        cont_str.spanned(cont.span),
+                    );
+                }
+            }
+
             (
                 ast::FmtExpr {
                     expr: fmt_expr.stmts.lift(),
@@ -37,6 +50,7 @@ fn lift_fstr<'src, 'tok>(
             )
         })
         .collect();
+
     ast::Expr::Fstr(begin_str.spanned(begin.span), fmt_parts)
 }
 

@@ -1,15 +1,26 @@
 #![allow(unused_variables, dead_code)]
 
-pub type Span = SimpleSpan<usize, ()>;
+#[derive(Debug, Clone, Copy)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
 
-use chumsky::{
-    input::{Cursor, InputRef, StrInput},
-    label::LabelError,
-    prelude::*,
-};
+impl Span {
+    pub fn new(range: Range<usize>) -> Self {
+        Span {
+            start: range.start,
+            end: range.end,
+        }
+    }
+}
+
 use std::{
+    borrow::Cow,
     collections::HashSet,
     fmt::{self},
+    ops::Range,
+    str::CharIndices,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -40,14 +51,14 @@ pub enum TriviumType {
     BlockComment,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Trivium<'src> {
     pub span: Span,
     pub typ: TriviumType,
     pub value: &'src str,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct SToken<'src> {
     pub span: Span,
     pub token: Token<'src>,
@@ -134,11 +145,24 @@ pub enum ParseBlockEndType {
     EolOrEof,
 }
 
-pub type TOutput<'src> = TokenList<'src>;
-pub type TError<'src> = Rich<'src, char, Span>;
-pub type TExtra<'src> = extra::Full<TError<'src>, (), ()>;
+#[derive(Debug)]
+pub struct LexError<'src> {
+    pub span: Span,
+    pub message: Cow<'src, str>,
+}
 
-type TResult<'src, T> = Result<T, TError<'src>>;
+impl<'src> LexError<'src> {
+    pub fn custom(span: Span, message: impl Into<Cow<'src, str>>) -> Self {
+        LexError {
+            span,
+            message: message.into(),
+        }
+    }
+}
+
+pub type TOutput<'src> = TokenList<'src>;
+
+type TResult<'src, T> = Result<T, LexError<'src>>;
 
 pub fn py_escape_str(s: &str) -> String {
     let mut escaped_string = String::new();
@@ -195,21 +219,18 @@ pub fn is_valid_ident(s: &str) -> bool {
     s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-struct TokenizeCtx<'src: 'parse, 'parse, 'input, TInput>
-where
-    TInput: StrInput<'src, Token = char, Span = SimpleSpan, Slice = &'src str>,
-{
-    input: &'input mut InputRef<'src, 'parse, TInput, TExtra<'src>>,
+struct TokenizeCtx<'src> {
+    input: &'src str,
+    iterator: CharIndices<'src>,
+    peeked: Option<(usize, char)>,
+
     keywords: HashSet<String>,
     keep_trivia: bool,
     unassigned_trivia: Vec<Trivium<'src>>,
 }
 
-impl<'src: 'parse, 'parse, 'input, TInput> TokenizeCtx<'src, 'parse, 'input, TInput>
-where
-    TInput: StrInput<'src, Token = char, Span = SimpleSpan, Slice = &'src str>,
-{
-    fn new(input: &'input mut InputRef<'src, 'parse, TInput, TExtra<'src>>) -> Self {
+impl<'src> TokenizeCtx<'src> {
+    fn new(input: &'src str) -> Self {
         static KEYWORDS: &[&str] = &[
             "if", "then", "else", "import", "export", "as", "class", "while", "for", "in", "break",
             "continue", "with", "yield", "global", "return", "raise", "try", "except", "finally",
@@ -217,49 +238,85 @@ where
         ];
 
         let keywords = HashSet::<String>::from_iter(KEYWORDS.iter().map(|s| s.to_string()));
+        let mut it = input.char_indices();
+        let next = it.next();
 
         TokenizeCtx {
             input,
+            iterator: it,
+            peeked: next,
+
             keywords,
             keep_trivia: false,
             unassigned_trivia: Vec::new(),
         }
     }
 
-    fn cursor(&self) -> Cursor<'src, 'parse, TInput> {
-        self.input.cursor()
+    fn cursor(&self) -> usize {
+        match self.peeked {
+            Some((pos, _)) => pos,
+            None => self.input.len(),
+        }
     }
 
-    fn ucursor(&self) -> usize {
-        *self.cursor().inner()
+    fn save(&self) -> usize {
+        self.cursor()
+    }
+
+    fn rewind(&mut self, x: usize) {
+        self.iterator = self.input[x..].char_indices();
+        self.peeked = self.iterator.next();
+        // Adjust the position to be absolute, not relative to the slice
+        if let Some((offset, ch)) = self.peeked {
+            self.peeked = Some((x + offset, ch));
+        }
     }
 
     fn peek(&mut self) -> Option<char> {
-        self.input.peek()
+        self.peeked.map(|(_, c)| c)
     }
 
     fn next(&mut self) -> Option<char> {
-        self.input.next()
+        let v = self.peek();
+        let old_pos = self.cursor();
+        self.peeked = self.iterator.next();
+
+        // Adjust the position to be absolute, not relative to the slice
+        if let Some((offset, ch)) = self.peeked {
+            // Calculate the absolute position based on the previous position
+            let new_pos = if let Some(consumed_char) = v {
+                old_pos + consumed_char.len_utf8()
+            } else {
+                old_pos
+            };
+            // The offset from CharIndices should align with our calculated position
+            self.peeked = Some((new_pos, ch));
+        }
+
+        v
     }
 
-    fn span_since(&mut self, start: &Cursor<'src, 'parse, TInput>) -> Span {
-        self.input.span_since(start)
+    fn span_since(&mut self, start: &usize) -> Span {
+        Span {
+            start: *start,
+            end: self.cursor(),
+        }
     }
 
-    fn slice_since(&mut self, range: &Cursor<'src, 'parse, TInput>) -> &'src str {
-        self.input.slice_since(range..)
+    fn slice_since(&mut self, start: &usize) -> &'src str {
+        &self.input[*start..self.cursor()]
     }
 
     fn try_parse<TOut>(
         &mut self,
         parse_fn: impl FnOnce(&mut Self) -> TResult<'src, TOut>,
     ) -> TResult<'src, TOut> {
-        let start = self.input.save();
+        let start = self.save();
 
         match parse_fn(self) {
             Ok(result) => Ok(result),
             Err(e) => {
-                self.input.rewind(start);
+                self.rewind(start);
                 Err(e)
             }
         }
@@ -269,15 +326,15 @@ where
         &mut self,
         parse_fn: impl FnOnce(&mut Self) -> TResult<'src, TOut>,
     ) -> TResult<'src, TOut> {
-        let start = self.input.save();
+        let start = self.save();
 
         match parse_fn(self) {
             Ok(r) => {
-                self.input.rewind(start);
+                self.rewind(start);
                 Ok(r)
             }
             Err(e) => {
-                self.input.rewind(start);
+                self.rewind(start);
                 Err(e)
             }
         }
@@ -288,7 +345,7 @@ where
         let mut indent_level: usize = 0;
 
         if self.peek().is_none() {
-            return Err(Rich::custom(
+            return Err(LexError::custom(
                 self.span_since(&start),
                 "expected indentation, not eof",
             ));
@@ -311,7 +368,10 @@ where
 
         let c = self.peek();
         if c.is_none_or(|c| !c.is_ascii_alphabetic() && c != '_') {
-            return Err(Rich::custom(self.span_since(&start), "expected identifier"));
+            return Err(LexError::custom(
+                self.span_since(&start),
+                "expected identifier",
+            ));
         }
 
         while let Some(c) = self.peek() {
@@ -347,7 +407,7 @@ where
         ];
         const MONOGRAMS: &str = "[](){}<>.,;:!?@$%^&*+-=|\\/`~";
 
-        let saved = self.input.save();
+        let saved = self.save();
         let start = self.cursor();
         for _ in 0..3 {
             self.next();
@@ -356,7 +416,7 @@ where
         let sl = self.slice_since(&start);
         for polygram in POLYGRAMS {
             if sl.starts_with(polygram) {
-                self.input.rewind(saved);
+                self.rewind(saved);
                 for _ in 0..polygram.len() {
                     self.next();
                 }
@@ -365,14 +425,17 @@ where
         }
         for monogram in MONOGRAMS.chars() {
             if sl.starts_with(monogram) {
-                self.input.rewind(saved);
+                self.rewind(saved);
                 self.next();
                 let symbol = self.slice_since(&start);
                 return Ok((Token::Symbol(symbol), self.span_since(&start)));
             }
         }
 
-        Err(Rich::custom(self.span_since(&start), "expected a symbol"))
+        Err(LexError::custom(
+            self.span_since(&start),
+            "expected a symbol",
+        ))
     }
 
     fn parse_number(&mut self) -> TResult<'src, (Token<'src>, Span, bool)> {
@@ -381,7 +444,10 @@ where
         let c = self.peek();
 
         if c.is_none_or(|c| !(c.is_ascii_digit() || c == '.')) {
-            return Err(Rich::custom(self.span_since(&start), "expected a number"));
+            return Err(LexError::custom(
+                self.span_since(&start),
+                "expected a number",
+            ));
         };
 
         let mut digits_before_dot = false;
@@ -413,7 +479,7 @@ where
         }
 
         if !digits_before_dot && !digits_after_dot {
-            return Err(Rich::custom(
+            return Err(LexError::custom(
                 self.span_since(&start),
                 "expected at least one digit",
             ));
@@ -445,7 +511,10 @@ where
         }
 
         if err {
-            return Err(Rich::custom(self.span_since(&start), "expected newline"));
+            return Err(LexError::custom(
+                self.span_since(&start),
+                "expected newline",
+            ));
         } else {
             Ok(Trivium {
                 span: self.span_since(&start),
@@ -467,7 +536,7 @@ where
             return Ok(vec![]);
         }
 
-        return Err(Rich::custom(
+        return Err(LexError::custom(
             self.span_since(&self.cursor()),
             "expected newline or end of file",
         ));
@@ -491,7 +560,10 @@ where
         }
 
         if !found_one {
-            return Err(Rich::custom(self.span_since(&start), "expected whitespace"));
+            return Err(LexError::custom(
+                self.span_since(&start),
+                "expected whitespace",
+            ));
         }
 
         Ok(Trivium {
@@ -503,7 +575,7 @@ where
 
     fn parse_empty_line(&mut self) -> TResult<'src, Vec<Trivium<'src>>> {
         if self.peek().is_none() {
-            return Err(Rich::custom(
+            return Err(LexError::custom(
                 self.span_since(&self.cursor()),
                 "expected empty line, found eof",
             ));
@@ -523,7 +595,7 @@ where
         let start = self.cursor();
 
         if self.next() != Some('#') {
-            return Err(Rich::custom(
+            return Err(LexError::custom(
                 self.span_since(&start),
                 "expected line comment",
             ));
@@ -562,7 +634,7 @@ where
             self.next();
         }
 
-        return Err(Rich::custom(
+        return Err(LexError::custom(
             self.span_since(&start),
             "unterminated block comment",
         ));
@@ -601,7 +673,7 @@ where
         let start = self.cursor();
 
         if self.next() != Some(c) {
-            return Err(Rich::custom(
+            return Err(LexError::custom(
                 self.span_since(&start),
                 format!("expected '{c}'"),
             ));
@@ -615,7 +687,7 @@ where
 
         for c in seq.chars() {
             if self.next() != Some(c) {
-                return Err(Rich::custom(
+                return Err(LexError::custom(
                     self.span_since(&start),
                     format!("expected '{c}'"),
                 ));
@@ -641,10 +713,16 @@ where
                     }
                 }
 
-                Err(Rich::custom(self.span_since(&start), "unterminated escape"))
+                Err(LexError::custom(
+                    self.span_since(&start),
+                    "unterminated escape",
+                ))
             }
             Some(c) => Ok(c),
-            None => Err(Rich::custom(self.span_since(&start), "unterminated string")),
+            None => Err(LexError::custom(
+                self.span_since(&start),
+                "unterminated string",
+            )),
         }
     }
 
@@ -659,17 +737,17 @@ where
         let mut current_str = String::new();
 
         let mut seen_quotes = 0;
-        let mut ending_marker = self.input.save();
+        let mut ending_marker = self.save();
         loop {
             if !verbatim && self.try_parse(|x| x.parse_newline()).is_ok() {
-                return Err(Rich::custom(
+                return Err(LexError::custom(
                     self.span_since(&marker),
                     "unterminated fstring",
                 ));
             }
 
             let Some(peeked) = self.peek() else {
-                return Err(Rich::custom(
+                return Err(LexError::custom(
                     self.span_since(&marker),
                     "unterminated fstring",
                 ));
@@ -696,7 +774,7 @@ where
                         ));
                     }
 
-                    self.input.rewind(ending_marker);
+                    self.rewind(ending_marker);
 
                     return Ok(TokenList(tokens));
                 }
@@ -713,7 +791,7 @@ where
             } else if self.try_parse(|x| x.parse_seq("}}")).is_ok() {
                 current_str.push('}');
             } else if self.try_parse(|x| x.parse_char('}')).is_ok() {
-                return Err(Rich::custom(self.span_since(&marker), "unexpected '}'"));
+                return Err(LexError::custom(self.span_since(&marker), "unexpected '}'"));
             } else if self.try_parse(|x| x.parse_char('{')).is_ok() {
                 let span = self.span_since(&marker);
                 let trivia = self.parse_trivia()?;
@@ -748,13 +826,19 @@ where
 
                 tokens.push(SToken::new(
                     Token::Indent,
-                    Span::new(inner_span.context, inner_span.start..inner_span.start),
+                    Span {
+                        start: inner_span.start,
+                        end: inner_span.start,
+                    },
                     Vec::new(),
                 ));
                 tokens.extend(inner_tokens.0);
                 tokens.push(SToken::new(
                     Token::Dedent,
-                    Span::new(inner_span.context, inner_span.end..inner_span.end),
+                    Span {
+                        start: inner_span.end,
+                        end: inner_span.end,
+                    },
                     Vec::new(),
                 ));
                 tokens.extend(format_tokens);
@@ -763,7 +847,7 @@ where
             } else {
                 let next_char = if verbatim {
                     self.next().ok_or_else(|| {
-                        Rich::custom(self.span_since(&marker), "unterminated verbatim fstring")
+                        LexError::custom(self.span_since(&marker), "unterminated verbatim fstring")
                     })?
                 } else {
                     self.parse_escaped_char()?
@@ -775,7 +859,7 @@ where
             }
 
             if save_marker {
-                ending_marker = self.input.save();
+                ending_marker = self.save();
             }
         }
     }
@@ -801,11 +885,17 @@ where
         let mut s = String::new();
         loop {
             if !verbatim && self.try_parse(|x| x.parse_newline()).is_ok() {
-                return Err(Rich::custom(self.span_since(&start), "unterminated string"));
+                return Err(LexError::custom(
+                    self.span_since(&start),
+                    "unterminated string",
+                ));
             }
 
             let Some(peeked) = self.peek() else {
-                return Err(Rich::custom(self.span_since(&start), "unterminated string"));
+                return Err(LexError::custom(
+                    self.span_since(&start),
+                    "unterminated string",
+                ));
             };
 
             let mut push_next = false;
@@ -869,7 +959,7 @@ where
         }
 
         if quote_count != close_quote_count {
-            return Err(Rich::custom(
+            return Err(LexError::custom(
                 self.span_since(&start),
                 format!(
                     "expected {} closing quotes, found {}",
@@ -911,7 +1001,7 @@ where
             return Ok(TokenList(vec![SToken::new(token, span, Vec::new())]));
         }
 
-        Err(Rich::custom(
+        Err(LexError::custom(
             self.span_since(&self.cursor()),
             "expected string start",
         ))
@@ -946,19 +1036,19 @@ where
 
                 line_tokens.push(SToken::new(
                     Token::Indent,
-                    Span::new(
-                        new_block_span.context,
-                        new_block_span.start..new_block_span.start,
-                    ),
+                    Span {
+                        start: new_block_span.start,
+                        end: new_block_span.start,
+                    },
                     Vec::new(),
                 ));
                 line_tokens.extend(new_block_tokens.0);
                 line_tokens.push(SToken::new(
                     Token::Dedent,
-                    Span::new(
-                        new_block_span.context,
-                        new_block_span.end..new_block_span.end,
-                    ),
+                    Span {
+                        start: new_block_span.end,
+                        end: new_block_span.end,
+                    },
                     Vec::new(),
                 ));
 
@@ -973,13 +1063,13 @@ where
                     cur_block_unassigned_trivia.extend(empty_line_trivia);
                 }
 
-                let before_indentation = self.input.save();
+                let before_indentation = self.save();
 
                 let Ok((line_indent_level, line_indent_span, line_indent_trivia)) =
                     self.try_parse(|x| x.parse_indentation())
                 else {
                     if block_indent.is_none() {
-                        return Err(Rich::custom(
+                        return Err(LexError::custom(
                             self.span_since(&self.cursor()),
                             "expected an indented block",
                         ));
@@ -993,7 +1083,7 @@ where
 
                 if let Some(block_indent) = block_indent {
                     if line_indent_level > block_indent {
-                        self.input.rewind(before_indentation);
+                        self.rewind(before_indentation);
 
                         // handle continuation
                         let (mut continuation_tokens, continuation_break_type, _span) = self
@@ -1013,7 +1103,7 @@ where
                             continue 'lines;
                         }
                     } else if line_indent_level < block_indent {
-                        self.input.rewind(before_indentation);
+                        self.rewind(before_indentation);
 
                         break ParseBlockEndType::EolOrEof;
                     } else if !line_tokens.is_empty() {
@@ -1032,7 +1122,7 @@ where
                         ParseBlockMode::BeginInput => {}
                         ParseBlockMode::NewBlock => {
                             if line_indent_level <= current_indent {
-                                return Err(Rich::custom(
+                                return Err(LexError::custom(
                                     line_indent_span,
                                     "expected an indented block",
                                 ));
@@ -1040,7 +1130,7 @@ where
                         }
                         ParseBlockMode::Continuation => {
                             if line_indent_level <= current_indent {
-                                return Err(Rich::custom(
+                                return Err(LexError::custom(
                                     line_indent_span,
                                     "expected an indented continuation",
                                 ));
@@ -1062,11 +1152,11 @@ where
                     let tok;
 
                     let start_curs = self.cursor();
-                    let saved = self.input.save();
+                    let saved = self.save();
 
                     if let Ok((token, span, after_dot)) = self.try_parse(|ctx| ctx.parse_number()) {
                         if after_dot && self.peek() == Some('.') {
-                            return Err(Rich::custom(
+                            return Err(LexError::custom(
                                 self.span_since(&self.cursor()),
                                 "unexpected '.'",
                             ));
@@ -1084,7 +1174,7 @@ where
 
                     if let Token::Symbol("!") = &tok.token {
                         // Format specifier delimiter; end block.
-                        self.input.rewind(saved);
+                        self.rewind(saved);
                         break 'lines ParseBlockEndType::Delimiter;
                     }
 
@@ -1097,27 +1187,16 @@ where
 
                             if let Some((open_delim_char, span)) = delim_stack.pop() {
                                 if open_delim_char != corresponding_open {
-                                    let mut err = TError::custom(
+                                    return Err(LexError::custom(
                                         self.span_since(&start_curs),
                                         format!(
                                             "unmatched delimiter '{}', found '{}'",
                                             open_delim_char, s
                                         ),
-                                    );
-
-                                    // why?
-                                    <chumsky::error::Rich<'_, char> as LabelError<
-                                        '_,
-                                        TInput,
-                                        &str,
-                                    >>::in_context(
-                                        &mut err, "here", span
-                                    );
-
-                                    return Err(err);
+                                    ));
                                 }
                             } else {
-                                self.input.rewind(saved);
+                                self.rewind(saved);
                                 break 'lines ParseBlockEndType::Delimiter;
                             }
                         }
@@ -1153,7 +1232,7 @@ where
             }
 
             let Ok(newline_trivium) = self.try_parse(|x| x.parse_newline_or_eof()) else {
-                return Err(Rich::custom(
+                return Err(LexError::custom(
                     self.span_since(&self.cursor()),
                     format!("unexpected '{}'", self.peek().unwrap()),
                 ));
@@ -1189,9 +1268,15 @@ where
          *   ^ this is a continuation that immediately ends due to ]
          */
         let block_span = if let Some(last_block_token) = tokens.last_mut() {
-            Span::new((), *start.inner()..last_block_token.span.end)
+            Span {
+                start: start,
+                end: last_block_token.span.end,
+            }
         } else {
-            Span::new((), *start.inner()..*start.inner())
+            Span {
+                start: start,
+                end: start,
+            }
         };
 
         let len = tokens.len();
@@ -1222,28 +1307,21 @@ where
     }
 }
 
-fn lexer<'src, TInput>(keep_trivia: bool) -> impl Parser<'src, TInput, TOutput<'src>, TExtra<'src>>
-where
-    TInput: StrInput<'src, Token = char, Span = SimpleSpan, Slice = &'src str>,
-{
-    custom(move |input| {
-        let mut ctx = TokenizeCtx::new(input);
-        if keep_trivia {
-            ctx.keep_trivia = true;
-        }
-        ctx.tokenize_input()
-    })
-}
-
 pub fn tokenize<'src>(
     s: &'src str,
     keep_trivia: bool,
-) -> (Option<TokenList<'src>>, Vec<TError<'src>>) {
-    let output = lexer(keep_trivia)
-        .parse(s.map_span(|s| Span::new(s.context, s.start()..s.end())))
-        .into_output_errors();
+) -> (Option<TokenList<'src>>, Vec<LexError<'src>>) {
+    let mut ctx = TokenizeCtx::new(s);
+    if keep_trivia {
+        ctx.keep_trivia = true;
+    }
 
-    output
+    let tokens = ctx.tokenize_input();
+
+    match tokens {
+        Ok(tokens) => (Some(tokens), vec![]),
+        Err(err) => (None, vec![err]),
+    }
 }
 
 #[cfg(test)]
@@ -1312,7 +1390,7 @@ mod tests {
 
     fn simple_trivium(typ: TriviumType, value: &str) -> Trivium {
         Trivium {
-            span: Span::new((), 0..0),
+            span: Span { start: 0, end: 0 },
             typ,
             value,
         }

@@ -41,11 +41,7 @@ impl EmitCtx {
         self.source.push_str(text);
         let end = self.source.len();
 
-        Span {
-            context: (),
-            start,
-            end,
-        }
+        Span { start, end }
     }
 
     pub fn emit_escaped_str(&mut self, text: &str) -> Span {
@@ -53,11 +49,7 @@ impl EmitCtx {
         self.source.push_str(&py_escape_str(text));
         let end = self.source.len();
 
-        Span {
-            context: (),
-            start,
-            end,
-        }
+        Span { start, end }
     }
 
     pub fn emit_escaped_fstr(&mut self, text: &str) -> Span {
@@ -65,11 +57,7 @@ impl EmitCtx {
         self.source.push_str(&py_escape_fstr(text));
         let end = self.source.len();
 
-        Span {
-            context: (),
-            start,
-            end,
-        }
+        Span { start, end }
     }
 
     fn emit_indent(&mut self) -> Span {
@@ -242,11 +230,7 @@ impl SPyPattern<'_> {
 
         let span_end = ctx.source.len();
 
-        self.py_span = Some(Span {
-            context: (),
-            start: span_start,
-            end: span_end,
-        });
+        self.py_span = Some(Span::new(span_start..span_end));
 
         Ok(())
     }
@@ -546,7 +530,6 @@ impl SPyExpr<'_> {
         let span_end = ctx.source.len();
 
         self.py_span = Some(Span {
-            context: (),
             start: span_start,
             end: span_end,
         });
@@ -887,7 +870,6 @@ impl SPyStmt<'_> {
 
         let end_span = ctx.source.len();
         self.py_span = Some(Span {
-            context: (),
             start: start_span,
             end: end_span,
         });
@@ -904,11 +886,7 @@ mod tests {
 
     use super::*;
 
-    const DUMMY_SPAN: Span = Span {
-        context: (),
-        start: 0,
-        end: 0,
-    };
+    const DUMMY_SPAN: Span = Span { start: 0, end: 0 };
 
     #[test]
     fn test_expr_to_source() {

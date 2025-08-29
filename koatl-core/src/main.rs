@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         Err(errs) => {
             errs.0.into_iter().for_each(|e| {
-                let range = e.span.map(|e| e.into_range()).unwrap_or(0..0);
+                let range = e.span.map(|e| e.start..e.end).unwrap_or(0..0);
                 let err_prefix = match e.kind {
                     TlErrKind::Tokenize => "Tokenization Error: ",
                     TlErrKind::Parse => "Parser Error: ",
@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .with_color(Color::Red),
                     )
                     .with_labels(e.contexts.into_iter().map(|(label, span)| {
-                        Label::new((filename.clone(), span.into_range()))
+                        Label::new((filename.clone(), span.start..span.end))
                             .with_message(format!("while parsing this {label}"))
                             .with_color(Color::Yellow)
                     }))

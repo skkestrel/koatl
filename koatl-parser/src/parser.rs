@@ -4,7 +4,6 @@ use std::borrow::Cow;
 
 use crate::cst::*;
 use crate::lexer::*;
-use crate::parser_error::TriviaRich;
 
 const START_BLOCK: Token = Token::Symbol(":");
 
@@ -93,7 +92,7 @@ pub fn true_span(start: usize, end: usize, input: &[SToken]) -> Span {
         input.last().map_or(0, |t| t.span.end)
     };
 
-    Span::from(start..end)
+    Span::new(start..end)
 }
 
 impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
@@ -2361,9 +2360,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 pub fn parse_tokens<'src: 'tok, 'tok>(
     src: &'src str,
     tokens: &'tok TokenList<'src>,
-) -> (Option<SStmts<'src, 'tok>>, Vec<TriviaRich<'tok, 'src>>) {
+) -> (Option<SStmts<'src, 'tok>>, Vec<(Span, String)>) {
     if tokens.0.is_empty() {
-        return (Some(vec![].spanned((0..0).into())), vec![]);
+        return (Some(vec![].spanned(Span::new(0..0))), vec![]);
     }
 
     let mut ctx = ParseCtx {
@@ -2388,7 +2387,7 @@ pub fn parse_tokens<'src: 'tok, 'tok>(
         ctx.errors
             .iter()
             .map(|err| {
-                TriviaRich::custom(
+                (
                     true_span(err.index, err.index + 1, ctx.input),
                     format!("{:?}", err.message),
                 )
