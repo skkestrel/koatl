@@ -1,11 +1,39 @@
-use ohtli::{Config, Formatter};
+use koatl_parser::{parse_tokens, tokenize};
+use ohtli::{
+    formatter::{stmt_to_lines, LayoutCalculator, LayoutWriter},
+    Config, Formatter,
+};
 
 fn assert_compare_formatting(input: &str, expected: &str) {
-    let formatter = Formatter::new(Config::default());
-    let result = formatter.format(input);
-    match result {
-        Ok(formatted) => assert_eq!(formatted.trim(), expected.trim()),
-        Err(e) => panic!("Formatting should not error: {:?}", e),
+    let config = Config::default();
+
+    let (tokens, lex_errors) = tokenize(input, true);
+
+    let Some(tokens) = tokens else {
+        panic!("Lexing errors: {:?}", lex_errors)
+    };
+
+    let (cst, parse_errors) = parse_tokens(input, &tokens);
+
+    let Some(cst) = cst else {
+        panic!("Parsing errors: {:?}", parse_errors);
+    };
+
+    let mut lines = Vec::new();
+
+    for stmt in cst.value.iter() {
+        lines.extend(stmt_to_lines(stmt));
+    }
+
+    let processed_layout = LayoutCalculator::new(&config).do_layout(lines.clone());
+
+    let mut output_generator = LayoutWriter::new(&config);
+    let result = output_generator.write(&processed_layout);
+
+    if result.trim() != expected.trim() {
+        println!("Input:\n{:#?}", lines);
+        println!("Output:\n{:#?}", processed_layout);
+        assert_eq!(result.trim(), expected.trim());
     }
 }
 
@@ -106,7 +134,7 @@ fn test_match_expression() {
 
 #[test]
 fn test_complex_expression() {
-    let input = "result = func(a, b).method()[index]";
+    let input = "result = func(a, b)\n .method()[index]";
     let expected = "result = func(a, b).method()[index]";
     assert_compare_formatting(input, expected);
 }

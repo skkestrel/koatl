@@ -1,7 +1,7 @@
 use anyhow::Result;
-use koatl_parser::cst::*;
 use koatl_parser::lexer::{tokenize, SToken, Trivium, TriviumType};
 use koatl_parser::parse_tokens;
+use koatl_parser::{cst::*, Token};
 
 use crate::config::Config;
 
@@ -36,7 +36,7 @@ impl Formatter {
         let processed_layout = LayoutCalculator::new(&self.config).do_layout(lines);
 
         let mut output_generator = LayoutWriter::new(&self.config);
-        Ok(output_generator.generate_output(processed_layout))
+        Ok(output_generator.write(&processed_layout))
     }
 }
 
@@ -53,7 +53,6 @@ pub struct Element {
 #[derive(Debug, Clone)]
 pub enum ElementData {
     Atom(String),
-    Range(String),
     LineComment(String),
 
     Listing {
@@ -65,6 +64,7 @@ pub enum ElementData {
         begin: Elements,
         elements: Line,
         end: Elements,
+        inline: bool,
     },
 
     Block {
@@ -95,7 +95,7 @@ trait IntoElements {
     fn to_elements(self) -> Vec<Element>;
 }
 
-fn stmt_to_lines(stmt: &SStmt) -> Vec<Line> {
+pub fn stmt_to_lines(stmt: &SStmt) -> Vec<Line> {
     let tokens = match &stmt.value {
         Stmt::Expr { expr } => line!(expr),
         Stmt::PatternAssign {
@@ -259,17 +259,17 @@ impl Element {
 
     pub fn attached_before(content: String) -> Self {
         Element {
-            attach_before: false,
-            attach_after: true,
+            attach_before: true,
+            attach_after: false,
             data: ElementData::Atom(content),
         }
     }
 
     pub fn range(content: String) -> Self {
         Element {
-            attach_before: false,
-            attach_after: false,
-            data: ElementData::Range(content),
+            attach_before: true,
+            attach_after: true,
+            data: ElementData::Atom(content),
         }
     }
 
@@ -282,15 +282,20 @@ impl Element {
     }
 
     pub fn listing(begin: Line, lines: Vec<Line>, end: Line, inline: bool, attached: bool) -> Self {
-        Element::group(
-            begin,
-            vec![Element {
-                attach_before: attached,
-                attach_after: false,
-                data: ElementData::Listing { lines, inline },
-            }],
-            end,
-        )
+        Element {
+            attach_before: attached,
+            attach_after: false,
+            data: ElementData::Group {
+                begin,
+                elements: vec![Element {
+                    attach_before: false,
+                    attach_after: false,
+                    data: ElementData::Listing { lines, inline },
+                }],
+                end,
+                inline: false,
+            },
+        }
     }
 
     pub fn group(begin: Elements, elements: Vec<Element>, end: Elements) -> Self {
@@ -301,6 +306,7 @@ impl Element {
                 begin,
                 elements,
                 end,
+                inline: true,
             },
         }
     }
@@ -386,13 +392,50 @@ impl ToElements for SExpr<'_, '_> {
                     attached_listing(args)
                 )
             }
+            Expr::RawAttribute {
+                expr,
+                question,
+                double_colon,
+                attr,
+            } => {
+                line!(
+                    expr,
+                    question.map(attached_token),
+                    attached_token(double_colon),
+                    attached_token(attr)
+                )
+            }
+            Expr::ScopedAttribute {
+                expr,
+                question,
+                dot,
+                lparen,
+                rhs,
+                rparen,
+            } => {
+                line!(
+                    expr,
+                    question.map(attached_token),
+                    attached_token(dot),
+                    Element::group(
+                        lparen.to_elements(),
+                        rhs.to_elements(),
+                        rparen.to_elements()
+                    )
+                )
+            }
             Expr::Attribute {
                 expr,
                 dot,
-                attr,
                 question,
+                attr,
             } => {
-                line!(expr, question, dot, attr)
+                line!(
+                    expr,
+                    question.map(attached_token),
+                    attached_token(dot),
+                    attached_token(attr)
+                )
             }
             Expr::Subscript {
                 expr,
@@ -434,9 +477,9 @@ impl ToElements for SExpr<'_, '_> {
             } => {
                 line!(
                     start,
-                    special_token_to_elements(dots, TokenContext::Range),
+                    special_token_to_elements(dots, TokenContext::DoublyAttached),
                     stop,
-                    step_dots.map(|x| special_token_to_elements(x, TokenContext::Range)),
+                    step_dots.map(|x| special_token_to_elements(x, TokenContext::DoublyAttached)),
                     step
                 )
             }
@@ -462,7 +505,14 @@ impl ToElements for SExpr<'_, '_> {
                 cases,
                 dedent,
             } => {
-                line!(scrutinee, match_kw, colon, indent, cases, dedent)
+                line!(
+                    scrutinee,
+                    match_kw,
+                    attached_token(colon),
+                    indent,
+                    Element::block(cases.iter().map(|case| line!(case)).collect(), false),
+                    dedent
+                )
             }
             Expr::ClassicMatch {
                 match_kw,
@@ -472,7 +522,14 @@ impl ToElements for SExpr<'_, '_> {
                 cases,
                 dedent,
             } => {
-                line!(match_kw, scrutinee, colon, indent, cases, dedent)
+                line!(
+                    match_kw,
+                    scrutinee,
+                    attached_token(colon),
+                    indent,
+                    Element::block(cases.iter().map(|case| line!(case)).collect(), false),
+                    dedent
+                )
             }
             Expr::ClassicIf {
                 if_kw,
@@ -545,24 +602,6 @@ impl ToElements for SExpr<'_, '_> {
                 }
                 tokens
             }
-            Expr::RawAttribute {
-                expr,
-                question,
-                double_colon,
-                attr,
-            } => {
-                line!(expr, question, double_colon, attr)
-            }
-            Expr::ScopedAttribute {
-                expr,
-                question,
-                dot,
-                lparen,
-                rhs,
-                rparen,
-            } => {
-                line!(expr, question, dot, lparen, rhs, rparen)
-            }
             Expr::Checked {
                 check_kw,
                 expr,
@@ -581,17 +620,18 @@ impl ToElements for SExpr<'_, '_> {
             Expr::Fstr {
                 begin,
                 head,
-                parts,
+                parts: _,
                 end,
             } => {
-                todo!()
+                // Simplified f-string formatting for now
+                line!(begin, head, end)
             }
             Expr::Tuple { kind } => match kind {
                 TupleKind::Unit(lparen, rparen) => {
-                    todo!()
+                    line!(lparen, rparen)
                 }
                 TupleKind::Listing(items) => {
-                    todo!()
+                    line!(items)
                 }
             },
             Expr::ParenthesizedBlock {
@@ -601,7 +641,7 @@ impl ToElements for SExpr<'_, '_> {
                 dedent,
                 rparen,
             } => {
-                todo!()
+                line!(lparen, indent, body, dedent, rparen)
             }
         }
     }
@@ -623,7 +663,7 @@ impl ToElements for ArgDefItem<STree<'_, '_>> {
                 line!(
                     pattern,
                     default.as_ref().map(|(eq, expr)| line!(
-                        special_token_to_elements(eq, TokenContext::Range),
+                        special_token_to_elements(eq, TokenContext::DoublyAttached),
                         expr
                     ))
                 )
@@ -649,7 +689,7 @@ impl ToElements for SCallItem<'_, '_> {
             CallItem::Arg { expr } => line!(expr),
             CallItem::Kwarg { name, expr, eq } => line!(
                 name,
-                special_token_to_elements(eq, TokenContext::Range),
+                special_token_to_elements(eq, TokenContext::DoublyAttached),
                 expr
             ),
             CallItem::ArgSpread { expr, star } => line!(unary_op_token(star), expr),
@@ -687,7 +727,7 @@ impl ToElements for PatternClassItem<STree<'_, '_>> {
             PatternClassItem::Item { pattern } => line!(pattern),
             PatternClassItem::Kw { name, eq, pattern } => line!(
                 name,
-                special_token_to_elements(eq, TokenContext::Range),
+                special_token_to_elements(eq, TokenContext::Attached),
                 pattern
             ),
         }
@@ -704,7 +744,11 @@ impl ToElements for PatternMappingKey<STree<'_, '_>> {
                 lparen,
                 key,
                 rparen,
-            } => line!(lparen, key, rparen),
+            } => line!(Element::group(
+                lparen.to_elements(),
+                key.to_elements(),
+                rparen.to_elements()
+            )),
         }
     }
 }
@@ -712,9 +756,13 @@ impl ToElements for PatternMappingKey<STree<'_, '_>> {
 impl ToElements for SMappingItem<'_, '_> {
     fn to_elements(&self) -> Vec<Element> {
         match self {
-            MappingItem::Item { key, colon, value } => line!(key, colon, value),
+            MappingItem::Item { key, colon, value } => line!(
+                key,
+                special_token_to_elements(colon, TokenContext::Attached),
+                value
+            ),
             MappingItem::Ident { ident } => line!(ident),
-            MappingItem::Spread { stars, expr } => line!(stars, expr),
+            MappingItem::Spread { stars, expr } => line!(unary_op_token(stars), expr),
         }
     }
 }
@@ -724,17 +772,32 @@ impl ToElements for MappingKey<STree<'_, '_>> {
         match self {
             MappingKey::Ident { token } => line!(token),
             MappingKey::Literal { token } => line!(token),
-            MappingKey::Expr { key, .. } => todo!(),
+            MappingKey::Expr {
+                lparen,
+                key,
+                rparen,
+            } => line!(Element::group(
+                lparen.to_elements(),
+                key.to_elements(),
+                rparen.to_elements()
+            )),
             MappingKey::Fstr {
                 begin,
                 head,
-                parts,
+                parts: _,
                 end,
             } => {
-                todo!()
+                // Simplified f-string formatting for now
+                line!(begin, head, end)
             }
             MappingKey::Unit { lparen, rparen } => todo!(),
-            MappingKey::ParenthesizedBlock { lparen, .. } => {
+            MappingKey::ParenthesizedBlock {
+                lparen,
+                indent,
+                body,
+                dedent,
+                rparen,
+            } => {
                 todo!()
             }
         }
@@ -812,7 +875,7 @@ enum TokenContext {
     Normal,
     UnaryOperator,
     Attached,
-    Range,
+    DoublyAttached,
 }
 
 impl IntoElements for &SToken<'_> {
@@ -850,20 +913,43 @@ impl ToElements for Vec<Trivium<'_>> {
     }
 }
 
+impl<'src, 'tok> ToElements for SStmt<'src, 'tok> {
+    fn to_elements(&self) -> Vec<Element> {
+        // For now, just format as a placeholder
+        // This should be expanded based on the actual statement structure
+        vec![Element::atom("stmt".to_string())]
+    }
+}
+
 fn special_token_to_elements(token: &SToken, context: TokenContext) -> Vec<Element> {
     let mut elements = Vec::new();
 
     elements.extend(token.leading_trivia.to_elements());
 
-    let token_text = token_to_text(token);
+    if !matches!(token.token, Token::Indent | Token::Dedent | Token::Eol) {
+        let token_text = token_to_text(token);
 
-    let element = match context {
-        TokenContext::UnaryOperator => Element::attached_after(token_text),
-        TokenContext::Normal => Element::atom(token_text),
-        TokenContext::Attached => Element::attached_before(token_text),
-        TokenContext::Range => Element::range(token_text),
-    };
-    elements.push(element);
+        let element = match context {
+            TokenContext::UnaryOperator => Element::attached_after(token_text),
+            TokenContext::Attached => Element::attached_before(token_text),
+            TokenContext::DoublyAttached => Element::range(token_text),
+            TokenContext::Normal => {
+                if token.trailing_trivia.is_empty()
+                    && matches!(token.token, Token::Symbol(s) if s == "[" || s == "(" || s == "{")
+                {
+                    Element::attached_after(token_text)
+                } else if token.leading_trivia.is_empty()
+                    && matches!(token.token, Token::Symbol(s) if s == "]" || s == ")" || s == "}")
+                {
+                    Element::attached_before(token_text)
+                } else {
+                    Element::atom(token_text)
+                }
+            }
+        };
+
+        elements.push(element);
+    }
 
     elements.extend(token.trailing_trivia.to_elements());
 
@@ -871,8 +957,6 @@ fn special_token_to_elements(token: &SToken, context: TokenContext) -> Vec<Eleme
 }
 
 fn token_to_text(token: &SToken) -> String {
-    use koatl_parser::lexer::Token;
-
     match &token.token {
         Token::Ident(s) => s.to_string(),
         Token::None => "None".to_string(),
@@ -916,16 +1000,10 @@ impl ToElements for SPattern<'_, '_> {
             Pattern::Sequence { listing } => line!(listing),
             Pattern::TupleSequence { kind } => match kind {
                 PatternTupleSequenceKind::Unit(lparen, rparen) => {
-                    todo!()
+                    line!(lparen, rparen)
                 }
                 PatternTupleSequenceKind::Listing(items) => {
-                    let mut tokens = Vec::new();
-                    tokens.push(Element::atom("(".to_string()));
-                    for item in items {
-                        tokens.extend(item.to_elements());
-                    }
-                    tokens.push(Element::atom(")".to_string()));
-                    tokens
+                    line!(items)
                 }
             },
             Pattern::Mapping { listing } => line!(listing),
@@ -934,9 +1012,11 @@ impl ToElements for SPattern<'_, '_> {
                 lparen,
                 pattern,
                 rparen,
-            } => {
-                line![lparen, &*pattern, rparen]
-            }
+            } => line!(Element::group(
+                lparen.to_elements(),
+                pattern.to_elements(),
+                rparen.to_elements(),
+            )),
         }
     }
 }
@@ -981,144 +1061,126 @@ impl ToElements for SInducedBlock<'_, '_> {
     }
 }
 
-struct LayoutCalculator<'a> {
+pub struct LayoutCalculator<'a> {
     config: &'a Config,
 }
 
 impl LayoutCalculator<'_> {
-    fn new(config: &Config) -> LayoutCalculator {
+    pub fn new(config: &Config) -> LayoutCalculator {
         LayoutCalculator { config }
     }
 
-    fn do_layout(&self, elements: Vec<Line>) -> Vec<Line> {
+    pub fn do_layout(&self, elements: Vec<Line>) -> Vec<Line> {
         elements
     }
 }
 
-struct LayoutWriter<'a> {
+pub struct LayoutWriter<'a> {
     config: &'a Config,
 
     output: String,
     indent_level: usize,
+    attach_next: bool,
 }
 
 impl<'a> LayoutWriter<'a> {
-    fn new(config: &'a Config) -> Self {
+    pub fn new(config: &'a Config) -> Self {
         Self {
             config,
             output: String::new(),
             indent_level: 0,
+            attach_next: true,
         }
     }
 
-    fn generate_output(&mut self, layout: Vec<Line>) -> String {
+    fn line_break(&mut self) {
+        self.output.push('\n');
+        for _ in 0..(self.indent_level * self.config.indent_width) {
+            self.output.push(' ');
+        }
+        self.attach_next = true;
+    }
+
+    pub fn write(&mut self, layout: &Vec<Line>) -> String {
         for element in layout {
-            self.render_line(&element);
+            self.write_elements(&element);
+            self.line_break();
         }
         self.output.to_string()
     }
 
-    fn render_line(&mut self, elements: &Line) {
-        let mut current_line = Vec::new();
-
-        for element in elements {
-            current_line.push(element.clone());
-        }
-
-        if !current_line.is_empty() {
-            self.render_layout_elements(&current_line);
+    fn write_elements(&mut self, elements: &[Element]) {
+        for e in elements {
+            self.write_element(e)
         }
     }
 
-    fn render_layout_elements(&mut self, elements: &[Element]) {
-        // Render tokens with intelligent spacing
-        for (i, token) in elements.iter().enumerate() {
-            if i > 0 {
-                let prev_token = &elements[i - 1];
-                if self.needs_space_between(prev_token, token) {
+    fn write_element(&mut self, element: &Element) {
+        self.attach_next |= element.attach_before;
+
+        match &element.data {
+            ElementData::Atom(content) => {
+                if !self.attach_next {
                     self.output.push(' ');
                 }
-            }
-            self.render_token(token);
-        }
-    }
-
-    /// Determine if a space is needed between two consecutive tokens
-    fn needs_space_between(&self, prev: &Element, current: &Element) -> bool {
-        match (prev, current) {
-            // No space if current token is attached before
-            (_, el) if el.attach_before => false,
-            // No space if previous token is attached after
-            (el, _) if el.attach_after => false,
-            // No space around range operators
-            (
-                _,
-                Element {
-                    data: ElementData::Range(_),
-                    ..
-                },
-            ) => false,
-            (
-                Element {
-                    data: ElementData::Range(_),
-                    ..
-                },
-                _,
-            ) => false,
-            // Otherwise, atomic tokens and other types need spaces
-            _ => true,
-        }
-    }
-
-    fn add_indentation(&mut self) {
-        for _ in 0..(self.indent_level * self.config.indent_width) {
-            self.output.push(' ');
-        }
-    }
-
-    fn render_token(&mut self, token: &Element) {
-        match &token.data {
-            ElementData::Atom(content) => {
                 self.output.push_str(content);
             }
-            ElementData::Range(content) => {
+            ElementData::LineComment(content) => {
+                if !self.attach_next {
+                    self.output.push(' ');
+                }
                 self.output.push_str(content);
+            }
+            ElementData::Listing { lines, inline } => {
+                if *inline {
+                    for (i, line) in lines.iter().enumerate() {
+                        self.write_elements(line);
+                        if i < lines.len() - 1 {
+                            self.output.push_str(", ");
+                            self.attach_next = true;
+                        }
+                    }
+                } else {
+                    self.indent_level += 1;
+                    for line in lines {
+                        self.line_break();
+                        self.write_elements(line);
+                    }
+                    self.indent_level -= 1;
+                }
             }
             ElementData::Group {
                 begin,
                 elements,
                 end,
+                inline,
             } => {
-                self.render_layout_elements(begin);
-                self.render_layout_elements(elements);
-                self.render_layout_elements(end);
+                self.write_elements(begin);
+                if !inline {
+                    self.write_elements(elements);
+                }
+                self.write_elements(end);
             }
             ElementData::Block { lines, inline } => {
                 if *inline {
                     for (i, line) in lines.iter().enumerate() {
-                        if i > 0 {
-                            self.output.push(' ');
+                        self.write_elements(line);
+                        if i < lines.len() - 1 {
+                            self.output.push_str("; ");
+                            self.attach_next = true;
                         }
-                        self.render_line(line);
                     }
                 } else {
+                    self.indent_level += 1;
                     for line in lines {
-                        self.output.push('\n');
-                        self.render_line(line);
+                        self.line_break();
+                        self.write_elements(line);
                     }
+                    self.indent_level -= 1;
                 }
             }
-            ElementData::LineComment(content) => {
-                self.output.push_str(content);
-            }
-            ElementData::Listing { lines, inline } => todo!(),
         }
-    }
 
-    fn render_block_body(&mut self, body: &[Line]) {
-        for line in body {
-            self.output.push('\n');
-            self.render_line(line);
-        }
+        self.attach_next = element.attach_after;
     }
 }
