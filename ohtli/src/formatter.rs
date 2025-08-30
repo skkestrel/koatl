@@ -620,11 +620,15 @@ impl ToElements for SExpr<'_, '_> {
             Expr::Fstr {
                 begin,
                 head,
-                parts: _,
+                parts,
                 end,
             } => {
-                // Simplified f-string formatting for now
-                line!(begin, head, end)
+                line!(
+                    begin,
+                    head,
+                    parts.iter().map(|(a, b)| line!(a, b)).collect::<Vec<_>>(),
+                    end
+                )
             }
             Expr::Tuple { kind } => match kind {
                 TupleKind::Unit(lparen, rparen) => {
@@ -738,7 +742,7 @@ impl ToElements for PatternMappingKey<STree<'_, '_>> {
     fn to_elements(&self) -> Vec<Element> {
         match self {
             PatternMappingKey::Ident { token } => line!(token),
-            PatternMappingKey::Unit { lparen, rparen } => todo!(),
+            PatternMappingKey::Unit { .. } => todo!(),
             PatternMappingKey::Literal { token } => line!(token),
             PatternMappingKey::Expr {
                 lparen,
@@ -767,6 +771,25 @@ impl ToElements for SMappingItem<'_, '_> {
     }
 }
 
+impl ToElements for FmtExpr<STree<'_, '_>> {
+    fn to_elements(&self) -> Vec<Element> {
+        line!(self.indent, self.stmts, self.dedent, self.fmt)
+    }
+}
+
+impl ToElements for FmtSpec<STree<'_, '_>> {
+    fn to_elements(&self) -> Vec<Element> {
+        line!(
+            special_token_to_elements(self.excl, TokenContext::DoublyAttached),
+            self.head,
+            self.parts
+                .iter()
+                .map(|(expr, cont)| line!(expr, cont))
+                .collect::<Vec<_>>()
+        )
+    }
+}
+
 impl ToElements for MappingKey<STree<'_, '_>> {
     fn to_elements(&self) -> Vec<Element> {
         match self {
@@ -784,20 +807,18 @@ impl ToElements for MappingKey<STree<'_, '_>> {
             MappingKey::Fstr {
                 begin,
                 head,
-                parts: _,
+                parts,
                 end,
             } => {
-                // Simplified f-string formatting for now
-                line!(begin, head, end)
+                let parts = parts
+                    .iter()
+                    .map(|(fmtexpr, cont)| line!(fmtexpr, cont))
+                    .collect::<Vec<_>>();
+
+                line!(begin, head, parts, end)
             }
-            MappingKey::Unit { lparen, rparen } => todo!(),
-            MappingKey::ParenthesizedBlock {
-                lparen,
-                indent,
-                body,
-                dedent,
-                rparen,
-            } => {
+            MappingKey::Unit { .. } => todo!(),
+            MappingKey::ParenthesizedBlock { .. } => {
                 todo!()
             }
         }
@@ -863,7 +884,7 @@ where
                 line!(begin, indent),
                 items.iter().map(|item| item.to_elements()).collect(),
                 line!(dedent, newline, end),
-                true,
+                false,
                 attached
             ))
         }
@@ -1147,6 +1168,7 @@ impl<'a> LayoutWriter<'a> {
                         self.write_elements(line);
                     }
                     self.indent_level -= 1;
+                    self.line_break();
                 }
             }
             ElementData::Group {
@@ -1177,6 +1199,7 @@ impl<'a> LayoutWriter<'a> {
                         self.write_elements(line);
                     }
                     self.indent_level -= 1;
+                    self.line_break();
                 }
             }
         }

@@ -963,63 +963,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             return Err(self.set_error(start, ErrMsg::Expected("f-string begin".into())));
         };
 
-        let mut parts = Vec::new();
+        let (head, parts) = self.fstr_inner()?;
 
-        // First, get the head (initial FstrInner content)
-        let head = 'block: {
-            let next = self.next_token();
-            if let Some(token) = next {
-                if let Token::FstrInner(..) = token.token {
-                    break 'block token;
-                }
-            }
-            return Err(self.set_error(start, ErrMsg::Expected("f-string head content".into())));
-        };
-
-        loop {
-            // Check for expression block
-            let Some((indent, stmts, dedent)) = optional!(self, |ctx| {
-                let indent = ctx.token(&Token::Indent)?;
-                let stmts = ctx.stmts()?;
-                let dedent = ctx.token(&Token::Dedent)?;
-                Ok((indent, stmts, dedent))
-            })?
-            else {
-                break;
-            };
-
-            // Optional format specification after !
-            let fmt = optional!(self, |ctx: &mut Self| {
-                let excl = ctx.symbol("!")?;
-                let fmt_expr = ctx.expr()?.boxed();
-                Ok((excl, fmt_expr))
-            })?;
-
-            let fmt_expr = FmtExpr {
-                indent,
-                stmts,
-                dedent,
-                fmt,
-            };
-
-            // Get the following FstrInner content
-            let inner_content = 'block: {
-                let next = self.next_token();
-                if let Some(token) = next {
-                    if let Token::FstrInner(..) = token.token {
-                        break 'block token;
-                    }
-                }
-                return Err(self.set_error(
-                    start,
-                    ErrMsg::Expected("f-string content after expression".into()),
-                ));
-            };
-
-            parts.push((fmt_expr, inner_content));
-        }
-
-        // Expect closing FstrEnd or VerbatimFstrEnd
         let end = 'block: {
             let next = self.next_token();
             if let Some(token) = next {
@@ -1032,6 +977,71 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         };
 
         Ok((begin, head, parts, end))
+    }
+
+    fn fstr_inner(
+        &mut self,
+    ) -> ParseResult<(
+        &'tok SToken<'src>,
+        Vec<(SFmtExpr<'src, 'tok>, &'tok SToken<'src>)>,
+    )> {
+        // First, get the head (initial FstrInner content)
+        let head = 'block: {
+            let next = self.next_token();
+            if let Some(token) = next {
+                if let Token::FstrInner(..) = token.token {
+                    break 'block token;
+                }
+            }
+            return Err(self.set_error(
+                self.cursor,
+                ErrMsg::Expected("f-string head content".into()),
+            ));
+        };
+
+        let mut parts = Vec::new();
+
+        loop {
+            let Some((indent, stmts, dedent)) = optional!(self, |ctx| {
+                let indent = ctx.token(&Token::Indent)?;
+                let stmts = ctx.stmts()?;
+                let dedent = ctx.token(&Token::Dedent)?;
+                Ok((indent, stmts, dedent))
+            })?
+            else {
+                break;
+            };
+
+            let fmt = optional!(self, |ctx: &mut Self| {
+                let excl = ctx.symbol("!")?;
+                let (head, parts) = ctx.fstr_inner()?;
+                Ok(FmtSpec { excl, head, parts })
+            })?;
+
+            let fmt_expr = FmtExpr {
+                indent,
+                stmts,
+                dedent,
+                fmt,
+            };
+
+            let inner_content = 'block: {
+                let next = self.next_token();
+                if let Some(token) = next {
+                    if let Token::FstrInner(..) = token.token {
+                        break 'block token;
+                    }
+                }
+                return Err(self.set_error(
+                    self.cursor,
+                    ErrMsg::Expected("f-string content after expression".into()),
+                ));
+            };
+
+            parts.push((fmt_expr, inner_content));
+        }
+
+        Ok((head, parts))
     }
 
     fn fstr_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {

@@ -4,13 +4,21 @@ use crate::ast;
 use crate::ast::{Indirect, IntoIndirect};
 use koatl_parser::cst::{Spannable, Spanned};
 use koatl_parser::lexer::SToken;
-use koatl_parser::{Token, cst};
+use koatl_parser::{Span, Token, cst};
 
 trait STokenExt<'src> {
     fn lift_as_ident(&self) -> Spanned<ast::Ident<'src>>;
     fn lift_as_literal(&self) -> Spanned<ast::Literal<'src>>;
     fn lift_as_decl_modifier(&self) -> ast::DeclType;
     fn lift_as_capture(&self) -> Option<Spanned<ast::Ident<'src>>>;
+}
+
+fn lift_fstr_fmt<'src, 'tok>(
+    fmt: &cst::FmtSpec<cst::STree<'src, 'tok>>,
+) -> Indirect<ast::SExpr<'src>> {
+    lift_fstr(&fmt.head, &fmt.parts)
+        .spanned(Span::new(fmt.head.span.start..fmt.head.span.end))
+        .indirect()
 }
 
 fn lift_fstr<'src, 'tok>(
@@ -34,7 +42,7 @@ fn lift_fstr<'src, 'tok>(
                     return (
                         ast::FmtExpr {
                             expr: expr.lift(),
-                            fmt: fmt_expr.fmt.as_ref().map(|(_, fmt)| fmt.lift()),
+                            fmt: fmt_expr.fmt.as_ref().map(lift_fstr_fmt),
                         },
                         cont_str.spanned(cont.span),
                     );
@@ -44,7 +52,7 @@ fn lift_fstr<'src, 'tok>(
             (
                 ast::FmtExpr {
                     expr: fmt_expr.stmts.lift(),
-                    fmt: fmt_expr.fmt.as_ref().map(|(_, fmt)| fmt.lift()),
+                    fmt: fmt_expr.fmt.as_ref().map(lift_fstr_fmt),
                 },
                 cont_str.spanned(cont.span),
             )

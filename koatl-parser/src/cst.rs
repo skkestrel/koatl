@@ -125,11 +125,18 @@ pub enum Stmt<TTree: Tree> {
 }
 
 #[derive(Debug, Clone)]
+pub struct FmtSpec<TTree: Tree> {
+    pub excl: TTree::Token,
+    pub head: TTree::Token,
+    pub parts: Vec<(FmtExpr<TTree>, TTree::Token)>,
+}
+
+#[derive(Debug, Clone)]
 pub struct FmtExpr<TTree: Tree> {
     pub indent: TTree::Token,
     pub stmts: Spanned<Vec<TTree::Stmt>>,
     pub dedent: TTree::Token,
-    pub fmt: Option<(TTree::Token, TTree::Expr)>,
+    pub fmt: Option<FmtSpec<TTree>>,
 }
 
 #[derive(Debug, Clone)]
