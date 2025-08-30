@@ -586,25 +586,14 @@ impl<'src, 'tok> SimpleFmt for SStmts<'src, 'tok> {
     }
 }
 
-impl<'src, 'tok> SimpleFmt for ArrowBlock<STree<'src, 'tok>> {
+impl<'src, 'tok> SimpleFmt for InducedBlock<STree<'src, 'tok>> {
     fn simple_fmt(&self) -> String {
         let stmts = match &self {
-            ArrowBlock::Block { body, .. } => body,
-            ArrowBlock::Inline { stmt, .. } => &vec![stmt.clone()].spanned(stmt.span),
+            InducedBlock::Block { body, .. } => body,
+            InducedBlock::Inline { stmt, .. } => &vec![stmt.clone()].spanned(stmt.span),
         };
 
-        format!("=> Block({})", stmts.simple_fmt())
-    }
-}
-
-impl<'src, 'tok> SimpleFmt for ColonBlock<STree<'src, 'tok>> {
-    fn simple_fmt(&self) -> String {
-        let stmts = match &self {
-            ColonBlock::Block { body, .. } => body,
-            ColonBlock::Inline { stmt, .. } => &vec![stmt.clone()].spanned(stmt.span),
-        };
-
-        format!(": Block({})", stmts.simple_fmt())
+        format!("Block({})", stmts.simple_fmt())
     }
 }
 
@@ -643,7 +632,14 @@ impl<'src, 'tok> SimpleFmt for Pattern<STree<'src, 'tok>> {
             }
             Pattern::Literal { token } => token.simple_fmt(),
             Pattern::Sequence { listing } => listing.simple_fmt(),
-            Pattern::TupleSequence { listing } => listing.simple_fmt(),
+            Pattern::TupleSequence { kind } => match kind {
+                PatternTupleSequenceKind::Unit(_, _) => "()".to_string(),
+                PatternTupleSequenceKind::Listing(items) => items
+                    .iter()
+                    .map(|item| item.item.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            },
             Pattern::Mapping { listing } => listing.simple_fmt(),
             Pattern::Class { expr, items, .. } => {
                 format!("{}({})", expr.simple_fmt(), items.simple_fmt())
@@ -703,7 +699,6 @@ impl<'src, 'tok, T> SListing<'src, 'tok, T> {
             | SListing::Inline {
                 begin, items, end, ..
             } => (begin.simple_fmt(), items, end.simple_fmt()),
-            SListing::Open { items } => ("(".to_string(), items, ")".to_string()),
         };
 
         format!(

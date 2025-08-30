@@ -27,876 +27,979 @@ impl Formatter {
             anyhow::bail!("Parsing errors: {:?}", parse_errors);
         };
 
-        let mut layout_calculator = LayoutCalculator::new(&self.config);
-        let layout = layout_calculator.calculate_layout(&cst, &tokens.0);
+        let mut lines = Vec::new();
+
+        for stmt in cst.value.iter() {
+            lines.extend(stmt_to_lines(stmt));
+        }
+
+        let processed_layout = LayoutCalculator::new(&self.config).do_layout(lines);
 
         let mut output_generator = LayoutWriter::new(&self.config);
-        Ok(output_generator.generate_output(layout))
+        Ok(output_generator.generate_output(processed_layout))
     }
 }
 
-/// Core layout structure that mirrors Koatl's syntax patterns
+pub type Elements = Vec<Element>;
+pub type Line = Elements;
+
 #[derive(Debug, Clone)]
-pub struct Layout {
-    pub elements: Vec<LayoutElement>,
+pub struct Element {
+    pub attach_before: bool,
+    pub attach_after: bool,
+    pub data: ElementData,
 }
 
 #[derive(Debug, Clone)]
-pub enum LayoutElement {
-    /// A single line of tokens separated by spaces
-    Line(Line),
-    /// Block structure with colon
-    ColonBlock {
-        colon_line: Line,
-        body: Vec<Line>,
-        is_inline: bool,
-    },
-    /// Block structure with arrow
-    ArrowBlock {
-        arrow_line: Line,
-        body: Vec<Line>,
-        is_inline: bool,
-    },
-    /// Plain text content
-    Text {
-        content: String,
-        preserve_whitespace: bool,
-    },
-    /// Newlines
-    Newline { count: usize },
-    /// Comments
-    Comment {
-        content: String,
-        is_line_comment: bool,
-    },
-}
+pub enum ElementData {
+    Atom(String),
+    Range(String),
+    LineComment(String),
 
-/// A line consists of tokens that should be separated by spaces
-#[derive(Debug, Clone)]
-pub struct Line {
-    pub tokens: Vec<Token>,
-    pub indent_level: usize,
-}
-
-/// Individual tokens in a line
-#[derive(Debug, Clone)]
-pub enum Token {
-    /// Atomic token (literals, identifiers, keywords, operators) - always has space before/after
-    Atomic(String),
-    /// Token that attaches to the previous token without space (like punctuation)
-    Attached(String),
-    /// Line break with optional count
-    LineBreak { count: usize },
-    /// A sequence of lines that can be rendered inline or as a block
     Listing {
         lines: Vec<Line>,
-        layout_mode: ListingMode,
+        inline: bool,
     },
-    /// Postfix operation (method call, attribute access, subscript) - attaches without space
-    Postfix {
-        base: Box<Token>,
-        operation: PostfixOp,
-    },
-    /// Grouped tokens (parentheses, brackets, braces)
-    Grouped {
-        open: String,
-        inner: Vec<Line>,
-        close: String,
-        separator: Option<String>, // e.g., "," for lists
-    },
-    /// Inline comment attached to a token
-    WithComment { token: Box<Token>, comment: String },
-}
 
-/// Types of postfix operations
-#[derive(Debug, Clone)]
-pub enum PostfixOp {
-    /// Method call: `.method(args)`
-    MethodCall {
-        dot: String,
-        method: String,
-        args: Option<Vec<Line>>,
+    Group {
+        begin: Elements,
+        elements: Line,
+        end: Elements,
     },
-    /// Attribute access: `.attr`
-    Attribute { dot: String, name: String },
-    /// Subscript: `[index]`
-    Subscript {
-        open: String,
-        index: Vec<Line>,
-        close: String,
-    },
-    /// Function call: `(args)`
-    Call {
-        open: String,
-        args: Vec<Line>,
-        close: String,
+
+    Block {
+        lines: Vec<Line>,
+        inline: bool,
     },
 }
 
-/// How a listing should be laid out
-#[derive(Debug, Clone)]
-pub enum ListingMode {
-    Inline,
-    Block,
-    Auto,
+macro_rules! line {
+    ($($v:expr),+) => {
+        {
+            let mut v: Vec<Element> = vec![];
+
+            $(
+                v.extend($v.to_elements());
+            )+
+
+            v
+        }
+    };
+}
+
+trait ToElements {
+    fn to_elements(&self) -> Vec<Element>;
+}
+
+trait IntoElements {
+    fn to_elements(self) -> Vec<Element>;
+}
+
+fn stmt_to_lines(stmt: &SStmt) -> Vec<Line> {
+    let tokens = match &stmt.value {
+        Stmt::Expr { expr } => line!(expr),
+        Stmt::PatternAssign {
+            modifier,
+            lhs,
+            eq,
+            rhs,
+        } => {
+            line!(modifier, lhs, eq, rhs)
+        }
+        Stmt::Assign {
+            lhs,
+            eq,
+            rhs,
+            op: _,
+        } => {
+            line!(lhs, eq, rhs)
+        }
+        Stmt::Decl { modifier, names } => {
+            line!(
+                modifier,
+                names
+                    .iter()
+                    .flat_map(|(x, comma)| line!(x, comma.map(attached_token)))
+                    .collect::<Vec<_>>()
+            )
+        }
+        Stmt::While {
+            while_kw,
+            cond,
+            body,
+        } => {
+            line!(while_kw, cond, body)
+        }
+        Stmt::For {
+            for_kw,
+            pattern,
+            in_kw,
+            iter,
+            body,
+        } => {
+            line!(for_kw, pattern, in_kw, iter, body)
+        }
+        Stmt::Import {
+            export,
+            import,
+            tree,
+        } => {
+            line!(export, import, tree)
+        }
+        Stmt::Break { break_kw } => {
+            line!(break_kw)
+        }
+        Stmt::Continue { continue_kw } => {
+            line!(continue_kw)
+        }
+        Stmt::Return { return_kw, expr } => {
+            line!(return_kw, expr)
+        }
+        Stmt::Raise { raise_kw, expr } => {
+            line!(raise_kw, expr)
+        }
+        Stmt::Error { raw } => vec![Element::atom(raw.to_string())],
+    };
+
+    vec![tokens]
+}
+
+impl<T> IntoElements for Option<T>
+where
+    T: IntoElements,
+{
+    fn to_elements(self) -> Vec<Element> {
+        if let Some(value) = self {
+            value.to_elements()
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+impl<T> ToElements for Option<T>
+where
+    T: ToElements,
+{
+    fn to_elements(&self) -> Vec<Element> {
+        if let Some(value) = self {
+            value.to_elements()
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+impl<T> ToElements for Box<T>
+where
+    T: ToElements,
+{
+    fn to_elements(&self) -> Vec<Element> {
+        self.as_ref().to_elements()
+    }
+}
+
+impl<T> ToElements for Vec<T>
+where
+    T: ToElements,
+{
+    fn to_elements(&self) -> Vec<Element> {
+        let mut elements = Vec::new();
+        for item in self {
+            elements.extend(item.to_elements());
+        }
+        elements
+    }
+}
+
+impl<T> IntoElements for Vec<T>
+where
+    T: IntoElements,
+{
+    fn to_elements(self) -> Vec<Element> {
+        let mut elements = Vec::new();
+        for item in self {
+            elements.extend(item.to_elements());
+        }
+        elements
+    }
+}
+
+impl IntoElements for Element {
+    fn to_elements(self) -> Vec<Element> {
+        vec![self]
+    }
+}
+
+impl<T> ToElements for Spanned<T>
+where
+    T: ToElements,
+{
+    fn to_elements(&self) -> Vec<Element> {
+        self.value.to_elements()
+    }
+}
+
+impl Element {
+    pub fn atom(content: String) -> Self {
+        Element {
+            attach_before: false,
+            attach_after: false,
+            data: ElementData::Atom(content),
+        }
+    }
+
+    pub fn attached_after(content: String) -> Self {
+        Element {
+            attach_before: false,
+            attach_after: true,
+            data: ElementData::Atom(content),
+        }
+    }
+
+    pub fn attached_before(content: String) -> Self {
+        Element {
+            attach_before: false,
+            attach_after: true,
+            data: ElementData::Atom(content),
+        }
+    }
+
+    pub fn range(content: String) -> Self {
+        Element {
+            attach_before: false,
+            attach_after: false,
+            data: ElementData::Range(content),
+        }
+    }
+
+    pub fn line_comment(content: String) -> Self {
+        Element {
+            attach_before: false,
+            attach_after: false,
+            data: ElementData::LineComment(content),
+        }
+    }
+
+    pub fn listing(begin: Line, lines: Vec<Line>, end: Line, inline: bool, attached: bool) -> Self {
+        Element::group(
+            begin,
+            vec![Element {
+                attach_before: attached,
+                attach_after: false,
+                data: ElementData::Listing { lines, inline },
+            }],
+            end,
+        )
+    }
+
+    pub fn group(begin: Elements, elements: Vec<Element>, end: Elements) -> Self {
+        Element {
+            attach_before: false,
+            attach_after: false,
+            data: ElementData::Group {
+                begin,
+                elements,
+                end,
+            },
+        }
+    }
+
+    pub fn block(lines: Vec<Line>, inline: bool) -> Self {
+        Element {
+            attach_before: false,
+            attach_after: false,
+            data: ElementData::Block { lines, inline },
+        }
+    }
+}
+
+impl ToElements for ImportTree<STree<'_, '_>> {
+    fn to_elements(&self) -> Vec<Element> {
+        line!(
+            self.dots
+                .value
+                .iter()
+                .flat_map(|(dot, _count)| attached_token(dot))
+                .collect::<Vec<_>>(),
+            self.trunk
+                .iter()
+                .flat_map(|(ident, dot)| { line!(attached_token(ident), attached_token(dot)) })
+                .collect::<Vec<_>>(),
+            self.leaf
+        )
+    }
+}
+
+impl ToElements for ImportLeaf<STree<'_, '_>> {
+    fn to_elements(&self) -> Vec<Element> {
+        match self {
+            ImportLeaf::Multi(listing) => {
+                line!(listing)
+            }
+            ImportLeaf::Single { name, alias } => {
+                line!(name, alias.map(|(x, y)| line!(x, y)))
+            }
+            ImportLeaf::This { dot, alias } => {
+                line!(dot, alias.map(|(x, y)| line!(x, y)))
+            }
+            ImportLeaf::Star { star } => line!(star),
+        }
+    }
+}
+
+impl ToElements for SExpr<'_, '_> {
+    fn to_elements(&self) -> Vec<Element> {
+        match &self.value {
+            Expr::Literal { token } => token.to_elements(),
+            Expr::Ident { token } => token.to_elements(),
+            Expr::Binary {
+                lhs,
+                not,
+                op,
+                rhs,
+                op_kind: _,
+            } => {
+                line!(lhs, not, op, rhs)
+            }
+            Expr::Unary {
+                op,
+                expr,
+                op_kind: _,
+            } => {
+                line!(unary_op_token(op), expr)
+            }
+            Expr::List { listing } => line!(listing),
+            Expr::Mapping { listing } => line!(listing),
+            Expr::MethodCall {
+                expr,
+                question,
+                dot,
+                method,
+                args,
+            } => {
+                line!(
+                    expr,
+                    question.map(attached_token),
+                    attached_token(dot),
+                    attached_token(method),
+                    attached_listing(args)
+                )
+            }
+            Expr::Attribute {
+                expr,
+                dot,
+                attr,
+                question,
+            } => {
+                line!(expr, question, dot, attr)
+            }
+            Expr::Subscript {
+                expr,
+                question,
+                indices,
+            } => {
+                line!(
+                    expr,
+                    question.map(attached_token),
+                    attached_listing(indices)
+                )
+            }
+            Expr::Call {
+                expr,
+                question,
+                args,
+            } => {
+                line!(expr, question.map(attached_token), attached_listing(args))
+            }
+            Expr::If {
+                cond,
+                then_kw,
+                body,
+                else_clause,
+            } => line!(
+                cond,
+                then_kw,
+                body,
+                else_clause.as_ref().map(|(x, y)| line!(x, y))
+            ),
+            Expr::Fn { arg, body } => line!(arg, body),
+            Expr::ParenthesizedFn { args, body } => line!(args, body),
+            Expr::Slice {
+                start,
+                dots,
+                stop,
+                step_dots,
+                step,
+            } => {
+                line!(
+                    start,
+                    special_token_to_elements(dots, TokenContext::Range),
+                    stop,
+                    step_dots.map(|x| special_token_to_elements(x, TokenContext::Range)),
+                    step
+                )
+            }
+            Expr::Await { await_kw, expr, .. } => line![await_kw, expr],
+            Expr::Memo {
+                async_kw,
+                memo_kw,
+                body,
+            } => {
+                line!(async_kw, memo_kw, body)
+            }
+            Expr::Placeholder { token } => line!(token),
+            Expr::Parenthesized {
+                lparen,
+                expr,
+                rparen,
+            } => line!(lparen, expr, rparen),
+            Expr::Match {
+                scrutinee,
+                match_kw,
+                colon,
+                indent,
+                cases,
+                dedent,
+            } => {
+                line!(scrutinee, match_kw, colon, indent, cases, dedent)
+            }
+            Expr::ClassicMatch {
+                match_kw,
+                scrutinee,
+                colon,
+                indent,
+                cases,
+                dedent,
+            } => {
+                line!(match_kw, scrutinee, colon, indent, cases, dedent)
+            }
+            Expr::ClassicIf {
+                if_kw,
+                cond,
+                body,
+                else_clause,
+            } => {
+                if let Some((else_kw, else_body)) = else_clause {
+                    line![if_kw, cond, body.clone(), else_kw, else_body.clone()]
+                } else {
+                    line![if_kw, cond, body.clone()]
+                }
+            }
+            Expr::Yield {
+                yield_kw,
+                from_kw,
+                expr,
+            } => {
+                if let Some(from_kw) = from_kw {
+                    line![yield_kw, from_kw, expr]
+                } else {
+                    line![yield_kw, expr]
+                }
+            }
+            Expr::Matches {
+                lhs,
+                not_kw,
+                matches_kw,
+                pattern,
+            } => {
+                line!(lhs, not_kw, matches_kw, pattern)
+            }
+            Expr::Class {
+                class_kw,
+                args,
+                body,
+            } => {
+                line!(class_kw, args, body)
+            }
+            Expr::With {
+                with_kw,
+                pattern,
+                eq,
+                value,
+                body,
+            } => {
+                line!(with_kw, pattern, eq, value, body)
+            }
+            Expr::Try {
+                try_kw,
+                body,
+                cases,
+                finally,
+            } => {
+                let mut tokens = Vec::new();
+                tokens.extend(try_kw.to_elements());
+                tokens.extend(body.clone().to_elements());
+                for case in cases {
+                    tokens.extend(case.except.to_elements());
+                    tokens.extend(case.pattern.clone().to_elements());
+                    if let Some((if_kw, guard_expr)) = &case.guard {
+                        tokens.extend(if_kw.to_elements());
+                        tokens.extend(guard_expr.to_elements());
+                    }
+                    tokens.extend(case.body.clone().to_elements());
+                }
+                if let Some((finally_kw, finally_body)) = finally {
+                    tokens.extend(finally_kw.to_elements());
+                    tokens.extend(finally_body.clone().to_elements());
+                }
+                tokens
+            }
+            Expr::RawAttribute {
+                expr,
+                question,
+                double_colon,
+                attr,
+            } => {
+                line!(expr, question, double_colon, attr)
+            }
+            Expr::ScopedAttribute {
+                expr,
+                question,
+                dot,
+                lparen,
+                rhs,
+                rparen,
+            } => {
+                line!(expr, question, dot, lparen, rhs, rparen)
+            }
+            Expr::Checked {
+                check_kw,
+                expr,
+                except_kw,
+                pattern,
+            } => {
+                line!(check_kw, expr, except_kw, pattern)
+            }
+            Expr::Decorated {
+                expr,
+                ampersand,
+                decorator,
+            } => {
+                line!(expr, ampersand, decorator)
+            }
+            Expr::Fstr {
+                begin,
+                head,
+                parts,
+                end,
+            } => {
+                todo!()
+            }
+            Expr::Tuple { kind } => match kind {
+                TupleKind::Unit(lparen, rparen) => {
+                    todo!()
+                }
+                TupleKind::Listing(items) => {
+                    todo!()
+                }
+            },
+            Expr::ParenthesizedBlock {
+                lparen,
+                indent,
+                body,
+                dedent,
+                rparen,
+            } => {
+                todo!()
+            }
+        }
+    }
+}
+
+impl<T> ToElements for ListingItem<T, STree<'_, '_>>
+where
+    T: ToElements,
+{
+    fn to_elements(&self) -> Vec<Element> {
+        self.item.to_elements()
+    }
+}
+
+impl ToElements for ArgDefItem<STree<'_, '_>> {
+    fn to_elements(&self) -> Vec<Element> {
+        match self {
+            ArgDefItem::Arg { pattern, default } => {
+                line!(
+                    pattern,
+                    default.as_ref().map(|(eq, expr)| line!(
+                        special_token_to_elements(eq, TokenContext::Range),
+                        expr
+                    ))
+                )
+            }
+            ArgDefItem::ArgSpread { star, name } => line!(unary_op_token(star), name),
+            ArgDefItem::KwargSpread { stars, name } => line!(unary_op_token(stars), name),
+        }
+    }
+}
+
+impl ToElements for SListItem<'_, '_> {
+    fn to_elements(&self) -> Vec<Element> {
+        match self {
+            ListItem::Item { expr } => line!(expr),
+            ListItem::Spread { star, expr } => line!(unary_op_token(star), expr),
+        }
+    }
+}
+
+impl ToElements for SCallItem<'_, '_> {
+    fn to_elements(&self) -> Vec<Element> {
+        match self {
+            CallItem::Arg { expr } => line!(expr),
+            CallItem::Kwarg { name, expr, eq } => line!(
+                name,
+                special_token_to_elements(eq, TokenContext::Range),
+                expr
+            ),
+            CallItem::ArgSpread { expr, star } => line!(unary_op_token(star), expr),
+            CallItem::KwargSpread { expr, stars } => line!(unary_op_token(stars), expr),
+        }
+    }
+}
+
+impl ToElements for PatternSequenceItem<STree<'_, '_>> {
+    fn to_elements(&self) -> Vec<Element> {
+        match self {
+            PatternSequenceItem::Item { pattern } => line!(pattern),
+            PatternSequenceItem::Spread { star, name } => line!(unary_op_token(star), name),
+        }
+    }
+}
+
+impl ToElements for PatternMappingItem<STree<'_, '_>> {
+    fn to_elements(&self) -> Vec<Element> {
+        match self {
+            PatternMappingItem::Item {
+                key,
+                colon,
+                pattern,
+            } => line!(key, colon, pattern),
+            PatternMappingItem::Ident { name } => line!(name),
+            PatternMappingItem::Spread { stars, name } => line!(unary_op_token(stars), name),
+        }
+    }
+}
+
+impl ToElements for PatternClassItem<STree<'_, '_>> {
+    fn to_elements(&self) -> Vec<Element> {
+        match self {
+            PatternClassItem::Item { pattern } => line!(pattern),
+            PatternClassItem::Kw { name, eq, pattern } => line!(
+                name,
+                special_token_to_elements(eq, TokenContext::Range),
+                pattern
+            ),
+        }
+    }
+}
+
+impl ToElements for PatternMappingKey<STree<'_, '_>> {
+    fn to_elements(&self) -> Vec<Element> {
+        match self {
+            PatternMappingKey::Ident { token } => line!(token),
+            PatternMappingKey::Unit { lparen, rparen } => todo!(),
+            PatternMappingKey::Literal { token } => line!(token),
+            PatternMappingKey::Expr {
+                lparen,
+                key,
+                rparen,
+            } => line!(lparen, key, rparen),
+        }
+    }
+}
+
+impl ToElements for SMappingItem<'_, '_> {
+    fn to_elements(&self) -> Vec<Element> {
+        match self {
+            MappingItem::Item { key, colon, value } => line!(key, colon, value),
+            MappingItem::Ident { ident } => line!(ident),
+            MappingItem::Spread { stars, expr } => line!(stars, expr),
+        }
+    }
+}
+
+impl ToElements for MappingKey<STree<'_, '_>> {
+    fn to_elements(&self) -> Vec<Element> {
+        match self {
+            MappingKey::Ident { token } => line!(token),
+            MappingKey::Literal { token } => line!(token),
+            MappingKey::Expr { key, .. } => todo!(),
+            MappingKey::Fstr {
+                begin,
+                head,
+                parts,
+                end,
+            } => {
+                todo!()
+            }
+            MappingKey::Unit { lparen, rparen } => todo!(),
+            MappingKey::ParenthesizedBlock { lparen, .. } => {
+                todo!()
+            }
+        }
+    }
+}
+
+impl ToElements for SMatchCase<'_, '_> {
+    fn to_elements(&self) -> Vec<Element> {
+        line!(
+            self.pattern,
+            self.guard
+                .as_ref()
+                .map(|(if_kw, guard_expr)| line!(if_kw, guard_expr)),
+            self.body
+        )
+    }
+}
+
+fn attached_listing<T>(listing: &SListing<'_, '_, T>) -> Vec<Element>
+where
+    T: ToElements,
+{
+    listing_to_elements(listing, true)
+}
+
+impl<T> ToElements for SListing<'_, '_, T>
+where
+    T: ToElements,
+{
+    fn to_elements(&self) -> Vec<Element> {
+        listing_to_elements(self, false)
+    }
+}
+
+fn listing_to_elements<T>(listing: &SListing<'_, '_, T>, attached: bool) -> Vec<Element>
+where
+    T: ToElements,
+{
+    match listing {
+        Listing::Inline {
+            begin,
+            items,
+            end,
+            newline: _,
+        } => {
+            line!(Element::listing(
+                begin.to_elements(),
+                items.iter().map(|item| item.to_elements()).collect(),
+                end.to_elements(),
+                true,
+                attached
+            ))
+        }
+        Listing::Block {
+            begin,
+            indent,
+            items,
+            dedent,
+            newline,
+            end,
+        } => {
+            line!(Element::listing(
+                line!(begin, indent),
+                items.iter().map(|item| item.to_elements()).collect(),
+                line!(dedent, newline, end),
+                true,
+                attached
+            ))
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TokenContext {
+    Normal,
+    UnaryOperator,
+    Attached,
+    Range,
+}
+
+impl IntoElements for &SToken<'_> {
+    fn to_elements(self) -> Vec<Element> {
+        special_token_to_elements(self, TokenContext::Normal)
+    }
+}
+
+fn attached_token(token: &SToken) -> Vec<Element> {
+    special_token_to_elements(token, TokenContext::Attached)
+}
+
+fn unary_op_token(token: &SToken) -> Vec<Element> {
+    special_token_to_elements(token, TokenContext::UnaryOperator)
+}
+
+impl ToElements for Vec<Trivium<'_>> {
+    fn to_elements(&self) -> Vec<Element> {
+        let mut elements = Vec::new();
+        for trivium in self {
+            match trivium.typ {
+                TriviumType::LineComment => {
+                    elements.push(Element::line_comment(trivium.value.to_string()));
+                }
+                TriviumType::BlockComment => {
+                    elements.push(Element::atom(trivium.value.to_string()));
+                }
+                TriviumType::Newline => {
+                    // elements.push(Element::line_break());
+                }
+                TriviumType::Whitespace => {}
+            }
+        }
+        elements
+    }
+}
+
+fn special_token_to_elements(token: &SToken, context: TokenContext) -> Vec<Element> {
+    let mut elements = Vec::new();
+
+    elements.extend(token.leading_trivia.to_elements());
+
+    let token_text = token_to_text(token);
+
+    let element = match context {
+        TokenContext::UnaryOperator => Element::attached_after(token_text),
+        TokenContext::Normal => Element::atom(token_text),
+        TokenContext::Attached => Element::attached_before(token_text),
+        TokenContext::Range => Element::range(token_text),
+    };
+    elements.push(element);
+
+    elements.extend(token.trailing_trivia.to_elements());
+
+    elements
+}
+
+fn token_to_text(token: &SToken) -> String {
+    use koatl_parser::lexer::Token;
+
+    match &token.token {
+        Token::Ident(s) => s.to_string(),
+        Token::None => "None".to_string(),
+        Token::Bool(b) => b.to_string(),
+        Token::Int(s) => s.to_string(),
+        Token::IntBin(s) => s.to_string(),
+        Token::IntOct(s) => s.to_string(),
+        Token::IntHex(s) => s.to_string(),
+        Token::Float(s) => s.to_string(),
+        Token::Kw(s) => s.to_string(),
+        Token::Symbol(s) => s.to_string(),
+        Token::Str(s, _) => s.to_string(),
+        Token::FstrInner(s, _) => s.to_string(),
+        Token::FstrBegin(s) => s.to_string(),
+        Token::FstrEnd(s) => s.to_string(),
+        Token::VerbatimFstrBegin(s) => s.to_string(),
+        Token::VerbatimFstrEnd(s) => s.to_string(),
+        Token::Indent | Token::Dedent | Token::Eol => panic!(),
+    }
+}
+
+impl ToElements for SPattern<'_, '_> {
+    fn to_elements(&self) -> Vec<Element> {
+        match &self.value {
+            Pattern::Capture { name } => line!(name),
+            Pattern::Literal { token } => line!(token),
+            Pattern::Value { dot, expr } => line!(dot, expr),
+            Pattern::As {
+                pattern,
+                as_kw,
+                name,
+            } => line!(pattern, as_kw, name),
+            Pattern::Or { head, rest } => {
+                line!(
+                    head,
+                    rest.iter()
+                        .flat_map(|(pipe, pattern)| line!(pipe, pattern))
+                        .collect::<Vec<_>>()
+                )
+            }
+            Pattern::Sequence { listing } => line!(listing),
+            Pattern::TupleSequence { kind } => match kind {
+                PatternTupleSequenceKind::Unit(lparen, rparen) => {
+                    todo!()
+                }
+                PatternTupleSequenceKind::Listing(items) => {
+                    let mut tokens = Vec::new();
+                    tokens.push(Element::atom("(".to_string()));
+                    for item in items {
+                        tokens.extend(item.to_elements());
+                    }
+                    tokens.push(Element::atom(")".to_string()));
+                    tokens
+                }
+            },
+            Pattern::Mapping { listing } => line!(listing),
+            Pattern::Class { expr, items } => line!(expr, items),
+            Pattern::Parenthesized {
+                lparen,
+                pattern,
+                rparen,
+            } => {
+                line![lparen, &*pattern, rparen]
+            }
+        }
+    }
+}
+
+impl ToElements for SInducedBlock<'_, '_> {
+    fn to_elements(&self) -> Vec<Element> {
+        match self {
+            InducedBlock::Inline { inducer, stmt } => {
+                let inducer = inducer.map(|inducer| {
+                    if token_to_text(inducer) == ":" {
+                        attached_token(inducer)
+                    } else {
+                        inducer.to_elements()
+                    }
+                });
+
+                line!(inducer, Element::block(stmt_to_lines(stmt), true))
+            }
+            InducedBlock::Block {
+                inducer,
+                indent,
+                body,
+                dedent,
+            } => {
+                let inducer = if token_to_text(inducer) == ":" {
+                    attached_token(inducer)
+                } else {
+                    inducer.to_elements()
+                };
+
+                let lines = body
+                    .value
+                    .iter()
+                    .flat_map(|x| stmt_to_lines(x))
+                    .collect::<Vec<_>>();
+
+                let block = Element::block(lines, false);
+
+                line!(inducer, indent, block, dedent)
+            }
+        }
+    }
 }
 
 struct LayoutCalculator<'a> {
     config: &'a Config,
 }
 
-impl<'a> LayoutCalculator<'a> {
-    fn new(config: &'a Config) -> Self {
-        Self { config }
+impl LayoutCalculator<'_> {
+    fn new(config: &Config) -> LayoutCalculator {
+        LayoutCalculator { config }
     }
 
-    fn calculate_layout(&mut self, stmts: &SStmts, tokens: &[SToken]) -> Layout {
-        let mut elements = Vec::new();
-
-        // Add leading trivia from the first token
-        if let Some(first_token) = tokens.first() {
-            for trivium in &first_token.leading_trivia {
-                elements.extend(self.trivium_to_layout_elements(trivium));
-            }
-        }
-
-        for (i, stmt) in stmts.value.iter().enumerate() {
-            if i > 0 {
-                elements.push(LayoutElement::Newline { count: 1 });
-            }
-            elements.extend(self.layout_statement(stmt, tokens));
-        }
-
-        Layout { elements }
-    }
-
-    fn layout_statement(&mut self, stmt: &SStmt, tokens: &[SToken]) -> Vec<LayoutElement> {
-        let mut elements = Vec::new();
-
-        // Use the new token-based approach
-        let statement_tokens = self.statement_to_tokens(stmt);
-        if !statement_tokens.is_empty() {
-            elements.push(LayoutElement::Line(Line {
-                tokens: statement_tokens,
-                indent_level: 0,
-            }));
-        }
-
-        // Look for trailing trivia in tokens that belong to this statement
-        // For now, we'll use a simple heuristic to find relevant tokens
-        self.add_trailing_trivia_for_statement(stmt, tokens, &mut elements);
-
+    fn do_layout(&self, elements: Vec<Line>) -> Vec<Line> {
         elements
-    }
-
-    fn add_trailing_trivia_for_statement(
-        &self,
-        _stmt: &SStmt,
-        tokens: &[SToken],
-        elements: &mut Vec<LayoutElement>,
-    ) {
-        // Find tokens that might be associated with this statement
-        // This is a simplified approach - in a real formatter you'd want more precise mapping
-        for token in tokens {
-            if !token.trailing_trivia.is_empty() {
-                for trivium in &token.trailing_trivia {
-                    // Only add line comments, not automatic newlines
-                    match trivium.typ {
-                        TriviumType::LineComment => {
-                            elements.extend(self.trivium_to_layout_elements(trivium));
-                        }
-                        TriviumType::BlockComment => {
-                            elements.extend(self.trivium_to_layout_elements(trivium));
-                        }
-                        // Skip automatic newlines and whitespace - we'll handle spacing ourselves
-                        TriviumType::Newline | TriviumType::Whitespace => {}
-                    }
-                }
-            }
-        }
-    }
-
-    fn trivium_to_layout_elements(&self, trivium: &Trivium) -> Vec<LayoutElement> {
-        match trivium.typ {
-            TriviumType::LineComment => {
-                vec![LayoutElement::Comment {
-                    content: trivium.value.to_string(),
-                    is_line_comment: true,
-                }]
-            }
-            TriviumType::BlockComment => {
-                vec![LayoutElement::Comment {
-                    content: trivium.value.to_string(),
-                    is_line_comment: false,
-                }]
-            }
-            TriviumType::Newline => {
-                vec![LayoutElement::Newline { count: 1 }]
-            }
-            TriviumType::Whitespace => {
-                // For now, we'll handle whitespace implicitly through our formatting
-                vec![]
-            }
-        }
-    }
-
-    fn statement_to_text(&self, stmt: &SStmt) -> String {
-        // Deprecated: Use statement_to_tokens instead
-        let tokens = self.statement_to_tokens(stmt);
-        tokens
-            .into_iter()
-            .map(|token| match token {
-                Token::Atomic(text) => text,
-                _ => "/* complex token */".to_string(),
-            })
-            .collect()
-    }
-
-    fn statement_to_tokens(&self, stmt: &SStmt) -> Vec<Token> {
-        match &stmt.value {
-            Stmt::Expr { expr } => self.expr_to_tokens(expr),
-            Stmt::PatternAssign {
-                modifier, lhs, rhs, ..
-            } => {
-                let mut tokens = Vec::new();
-                if let Some(modifier) = modifier {
-                    tokens.push(Token::Atomic(self.token_to_text(modifier)));
-                    tokens.push(Token::Atomic(" ".to_string()));
-                }
-                tokens.extend(self.pattern_to_tokens(lhs));
-                tokens.push(Token::Atomic(" = ".to_string()));
-                tokens.extend(self.expr_to_tokens(rhs));
-                tokens
-            }
-            Stmt::Assign { lhs, rhs, .. } => {
-                let mut tokens = Vec::new();
-                tokens.extend(self.expr_to_tokens(lhs));
-                tokens.push(Token::Atomic(" = ".to_string()));
-                tokens.extend(self.expr_to_tokens(rhs));
-                tokens
-            }
-            _ => vec![Token::Atomic("/* statement */".to_string())],
-        }
-    }
-
-    fn expr_to_text(&self, expr: &SExpr) -> String {
-        match &expr.value {
-            Expr::Literal { token } => self.token_to_text(token),
-            Expr::Ident { token } => self.token_to_text(token),
-            Expr::Binary { lhs, rhs, op, .. } => {
-                format!(
-                    "{} {} {}",
-                    self.expr_to_text(lhs),
-                    op.token,
-                    self.expr_to_text(rhs)
-                )
-            }
-            Expr::List { listing } => {
-                let item_strings: Vec<String> = match listing {
-                    Listing::Inline { items, .. }
-                    | Listing::Block { items, .. }
-                    | Listing::Open { items } => items
-                        .iter()
-                        .map(|item| match &item.item {
-                            ListItem::Item { expr } => self.expr_to_text(expr),
-                            ListItem::Spread { expr, .. } => {
-                                format!("...{}", self.expr_to_text(expr))
-                            }
-                        })
-                        .collect(),
-                };
-                format!("[{}]", item_strings.join(", "))
-            }
-            Expr::Mapping { listing } => {
-                let item_strings: Vec<String> = match listing {
-                    Listing::Inline { items, .. }
-                    | Listing::Block { items, .. }
-                    | Listing::Open { items } => items
-                        .iter()
-                        .map(|item| match &item.item {
-                            MappingItem::Item { key, value, .. } => {
-                                let key_text = match &key.value {
-                                    MappingKey::Ident { token } => self.token_to_text(token),
-                                    MappingKey::Literal { token } => self.token_to_text(token),
-                                    MappingKey::Expr { key, .. } => self.expr_to_text(key),
-                                    _ => "/* key */".to_string(),
-                                };
-                                format!("{}: {}", key_text, self.expr_to_text(value))
-                            }
-                            MappingItem::Ident { ident } => self.token_to_text(ident),
-                            MappingItem::Spread { expr, .. } => {
-                                format!("...{}", self.expr_to_text(expr))
-                            }
-                        })
-                        .collect(),
-                };
-                format!("{{{}}}", item_strings.join(", "))
-            }
-            Expr::MethodCall {
-                expr, method, args, ..
-            } => {
-                let base_text = self.expr_to_text(expr);
-                let method_name = self.token_to_text(method);
-                let arg_strings: Vec<String> = match args {
-                    Listing::Inline { items, .. }
-                    | Listing::Block { items, .. }
-                    | Listing::Open { items } => items
-                        .iter()
-                        .map(|item| match &item.item {
-                            CallItem::Arg { expr } => self.expr_to_text(expr),
-                            CallItem::ArgSpread { expr, .. } => {
-                                format!("*{}", self.expr_to_text(expr))
-                            }
-                            CallItem::Kwarg { name, expr, .. } => {
-                                format!("{}={}", self.token_to_text(name), self.expr_to_text(expr))
-                            }
-                            CallItem::KwargSpread { expr, .. } => {
-                                format!("**{}", self.expr_to_text(expr))
-                            }
-                        })
-                        .collect(),
-                };
-                format!("{}.{}({})", base_text, method_name, arg_strings.join(", "))
-            }
-            Expr::Attribute { expr, attr, .. } => {
-                format!("{}.{}", self.expr_to_text(expr), self.token_to_text(attr))
-            }
-            Expr::Subscript { expr, indices, .. } => {
-                let base_text = self.expr_to_text(expr);
-                let index_strings: Vec<String> = match indices {
-                    Listing::Inline { items, .. }
-                    | Listing::Block { items, .. }
-                    | Listing::Open { items } => items
-                        .iter()
-                        .map(|item| match &item.item {
-                            ListItem::Item { expr } => self.expr_to_text(expr),
-                            ListItem::Spread { expr, .. } => {
-                                format!("...{}", self.expr_to_text(expr))
-                            }
-                        })
-                        .collect(),
-                };
-                format!("{}[{}]", base_text, index_strings.join(", "))
-            }
-            Expr::Call { expr, args, .. } => {
-                let base_text = self.expr_to_text(expr);
-                let arg_strings: Vec<String> = match args {
-                    Listing::Inline { items, .. }
-                    | Listing::Block { items, .. }
-                    | Listing::Open { items } => items
-                        .iter()
-                        .map(|item| match &item.item {
-                            CallItem::Arg { expr } => self.expr_to_text(expr),
-                            CallItem::ArgSpread { expr, .. } => {
-                                format!("*{}", self.expr_to_text(expr))
-                            }
-                            CallItem::Kwarg { name, expr, .. } => {
-                                format!("{}={}", self.token_to_text(name), self.expr_to_text(expr))
-                            }
-                            CallItem::KwargSpread { expr, .. } => {
-                                format!("**{}", self.expr_to_text(expr))
-                            }
-                        })
-                        .collect(),
-                };
-                format!("{}({})", base_text, arg_strings.join(", "))
-            }
-            Expr::If {
-                cond,
-                body,
-                else_clause,
-                ..
-            } => {
-                let condition_text = self.expr_to_text(cond);
-                let then_text = self.colon_block_to_text(body);
-                let else_text = if let Some((_, else_body)) = else_clause {
-                    format!(" else {}", self.colon_block_to_text(else_body))
-                } else {
-                    String::new()
-                };
-                format!("{} then {}{}", condition_text, then_text, else_text)
-            }
-            Expr::Fn { arg, body } => {
-                let param_text = self.pattern_to_text(arg);
-                let body_text = self.arrow_block_to_text(body);
-                format!("{} => {}", param_text, body_text)
-            }
-            Expr::ParenthesizedFn { args, body } => {
-                let param_strings: Vec<String> = match args {
-                    Listing::Inline { items, .. }
-                    | Listing::Block { items, .. }
-                    | Listing::Open { items } => items
-                        .iter()
-                        .map(|item| match &item.item {
-                            ArgDefItem::Arg { pattern, .. } => self.pattern_to_text(pattern),
-                            _ => "/* arg */".to_string(),
-                        })
-                        .collect(),
-                };
-                let param_text = if param_strings.len() == 1 {
-                    param_strings[0].clone()
-                } else {
-                    format!("({})", param_strings.join(", "))
-                };
-                let body_text = self.arrow_block_to_text(body);
-                format!("{} => {}", param_text, body_text)
-            }
-            Expr::Slice { start, stop, .. } => {
-                let start_text = if let Some(start) = start {
-                    self.expr_to_text(start)
-                } else {
-                    String::new()
-                };
-                let stop_text = if let Some(stop) = stop {
-                    self.expr_to_text(stop)
-                } else {
-                    String::new()
-                };
-                format!("{}..{}", start_text, stop_text)
-            }
-            Expr::Unary { op, expr, .. } => {
-                format!("{}{}", op.token, self.expr_to_text(expr))
-            }
-            Expr::Await { expr, .. } => {
-                format!("@{}", self.expr_to_text(expr))
-            }
-            Expr::Memo { body, .. } => {
-                format!("memo {}", self.colon_block_to_text(body))
-            }
-            Expr::Placeholder { token } => self.token_to_text(token),
-            Expr::Parenthesized { expr, .. } => {
-                format!("({})", self.expr_to_text(expr))
-            }
-            Expr::Match {
-                scrutinee, cases, ..
-            } => {
-                let scrutinee_text = self.expr_to_text(scrutinee);
-                let cases_text: Vec<String> = cases
-                    .iter()
-                    .map(|case| {
-                        let pattern_text = self.pattern_to_text(&case.pattern);
-                        let body_text = self.arrow_block_to_text(&case.body);
-                        format!("    {} => {}", pattern_text, body_text)
-                    })
-                    .collect();
-                format!("{} match:\n{}", scrutinee_text, cases_text.join("\n"))
-            }
-            _ => format!("/* expr */"),
-        }
-    }
-
-    fn expr_to_tokens(&self, expr: &SExpr) -> Vec<Token> {
-        match &expr.value {
-            Expr::Literal { token } => vec![Token::Atomic(self.token_to_text(token))],
-            Expr::Ident { token } => vec![Token::Atomic(self.token_to_text(token))],
-            Expr::Binary { lhs, rhs, op, .. } => {
-                let mut tokens = Vec::new();
-                tokens.extend(self.expr_to_tokens(lhs));
-                tokens.push(Token::Atomic(format!(" {} ", op.token)));
-                tokens.extend(self.expr_to_tokens(rhs));
-                tokens
-            }
-            Expr::Unary { op, expr, .. } => {
-                let mut tokens = vec![Token::Atomic(op.token.to_string())];
-                tokens.extend(self.expr_to_tokens(expr));
-                tokens
-            }
-            Expr::List { listing } => {
-                let mut tokens = vec![Token::Atomic("[".to_string())];
-                let item_tokens: Vec<Token> = match listing {
-                    Listing::Inline { items, .. }
-                    | Listing::Block { items, .. }
-                    | Listing::Open { items } => items
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(i, item)| {
-                            let mut item_tokens = match &item.item {
-                                ListItem::Item { expr } => self.expr_to_tokens(expr),
-                                ListItem::Spread { expr, .. } => {
-                                    let mut spread_tokens = vec![Token::Atomic("...".to_string())];
-                                    spread_tokens.extend(self.expr_to_tokens(expr));
-                                    spread_tokens
-                                }
-                            };
-                            if i > 0 {
-                                item_tokens.insert(0, Token::Atomic(", ".to_string()));
-                            }
-                            item_tokens
-                        })
-                        .collect(),
-                };
-                tokens.extend(item_tokens);
-                tokens.push(Token::Atomic("]".to_string()));
-                tokens
-            }
-            Expr::Mapping { listing } => {
-                let mut tokens = vec![Token::Atomic("{".to_string())];
-                let item_tokens: Vec<Token> = match listing {
-                    Listing::Inline { items, .. }
-                    | Listing::Block { items, .. }
-                    | Listing::Open { items } => items
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(i, item)| {
-                            let mut item_tokens = match &item.item {
-                                MappingItem::Item { key, value, .. } => {
-                                    let mut key_tokens = match &key.value {
-                                        MappingKey::Ident { token } => {
-                                            vec![Token::Atomic(self.token_to_text(token))]
-                                        }
-                                        MappingKey::Literal { token } => {
-                                            vec![Token::Atomic(self.token_to_text(token))]
-                                        }
-                                        MappingKey::Expr { key, .. } => self.expr_to_tokens(key),
-                                        _ => vec![Token::Atomic("/* key */".to_string())],
-                                    };
-                                    key_tokens.push(Token::Atomic(": ".to_string()));
-                                    key_tokens.extend(self.expr_to_tokens(value));
-                                    key_tokens
-                                }
-                                MappingItem::Ident { ident } => {
-                                    vec![Token::Atomic(self.token_to_text(ident))]
-                                }
-                                MappingItem::Spread { expr, .. } => {
-                                    let mut spread_tokens = vec![Token::Atomic("...".to_string())];
-                                    spread_tokens.extend(self.expr_to_tokens(expr));
-                                    spread_tokens
-                                }
-                            };
-                            if i > 0 {
-                                item_tokens.insert(0, Token::Atomic(", ".to_string()));
-                            }
-                            item_tokens
-                        })
-                        .collect(),
-                };
-                tokens.extend(item_tokens);
-                tokens.push(Token::Atomic("}".to_string()));
-                tokens
-            }
-            Expr::MethodCall {
-                expr, method, args, ..
-            } => {
-                let mut tokens = Vec::new();
-                tokens.extend(self.expr_to_tokens(expr));
-                tokens.push(Token::Atomic(".".to_string()));
-                tokens.push(Token::Atomic(self.token_to_text(method)));
-                tokens.push(Token::Atomic("(".to_string()));
-
-                let arg_tokens: Vec<Token> = match args {
-                    Listing::Inline { items, .. }
-                    | Listing::Block { items, .. }
-                    | Listing::Open { items } => items
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(i, item)| {
-                            let mut item_tokens = match &item.item {
-                                CallItem::Arg { expr } => self.expr_to_tokens(expr),
-                                CallItem::ArgSpread { expr, .. } => {
-                                    let mut spread_tokens = vec![Token::Atomic("*".to_string())];
-                                    spread_tokens.extend(self.expr_to_tokens(expr));
-                                    spread_tokens
-                                }
-                                CallItem::Kwarg { name, expr, .. } => {
-                                    let mut kwarg_tokens =
-                                        vec![Token::Atomic(self.token_to_text(name))];
-                                    kwarg_tokens.push(Token::Atomic("=".to_string()));
-                                    kwarg_tokens.extend(self.expr_to_tokens(expr));
-                                    kwarg_tokens
-                                }
-                                CallItem::KwargSpread { expr, .. } => {
-                                    let mut spread_tokens = vec![Token::Atomic("**".to_string())];
-                                    spread_tokens.extend(self.expr_to_tokens(expr));
-                                    spread_tokens
-                                }
-                            };
-                            if i > 0 {
-                                item_tokens.insert(0, Token::Atomic(", ".to_string()));
-                            }
-                            item_tokens
-                        })
-                        .collect(),
-                };
-                tokens.extend(arg_tokens);
-                tokens.push(Token::Atomic(")".to_string()));
-                tokens
-            }
-            Expr::Attribute { expr, attr, .. } => {
-                let mut tokens = Vec::new();
-                tokens.extend(self.expr_to_tokens(expr));
-                tokens.push(Token::Atomic(".".to_string()));
-                tokens.push(Token::Atomic(self.token_to_text(attr)));
-                tokens
-            }
-            Expr::Subscript { expr, indices, .. } => {
-                let mut tokens = Vec::new();
-                tokens.extend(self.expr_to_tokens(expr));
-                tokens.push(Token::Atomic("[".to_string()));
-
-                let index_tokens: Vec<Token> = match indices {
-                    Listing::Inline { items, .. }
-                    | Listing::Block { items, .. }
-                    | Listing::Open { items } => items
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(i, item)| {
-                            let mut item_tokens = match &item.item {
-                                ListItem::Item { expr } => self.expr_to_tokens(expr),
-                                ListItem::Spread { expr, .. } => {
-                                    let mut spread_tokens = vec![Token::Atomic("...".to_string())];
-                                    spread_tokens.extend(self.expr_to_tokens(expr));
-                                    spread_tokens
-                                }
-                            };
-                            if i > 0 {
-                                item_tokens.insert(0, Token::Atomic(", ".to_string()));
-                            }
-                            item_tokens
-                        })
-                        .collect(),
-                };
-                tokens.extend(index_tokens);
-                tokens.push(Token::Atomic("]".to_string()));
-                tokens
-            }
-            Expr::Call { expr, args, .. } => {
-                let mut tokens = Vec::new();
-                tokens.extend(self.expr_to_tokens(expr));
-                tokens.push(Token::Atomic("(".to_string()));
-
-                let arg_tokens: Vec<Token> = match args {
-                    Listing::Inline { items, .. }
-                    | Listing::Block { items, .. }
-                    | Listing::Open { items } => items
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(i, item)| {
-                            let mut item_tokens = match &item.item {
-                                CallItem::Arg { expr } => self.expr_to_tokens(expr),
-                                CallItem::ArgSpread { expr, .. } => {
-                                    let mut spread_tokens = vec![Token::Atomic("*".to_string())];
-                                    spread_tokens.extend(self.expr_to_tokens(expr));
-                                    spread_tokens
-                                }
-                                CallItem::Kwarg { name, expr, .. } => {
-                                    let mut kwarg_tokens =
-                                        vec![Token::Atomic(self.token_to_text(name))];
-                                    kwarg_tokens.push(Token::Atomic("=".to_string()));
-                                    kwarg_tokens.extend(self.expr_to_tokens(expr));
-                                    kwarg_tokens
-                                }
-                                CallItem::KwargSpread { expr, .. } => {
-                                    let mut spread_tokens = vec![Token::Atomic("**".to_string())];
-                                    spread_tokens.extend(self.expr_to_tokens(expr));
-                                    spread_tokens
-                                }
-                            };
-                            if i > 0 {
-                                item_tokens.insert(0, Token::Atomic(", ".to_string()));
-                            }
-                            item_tokens
-                        })
-                        .collect(),
-                };
-                tokens.extend(arg_tokens);
-                tokens.push(Token::Atomic(")".to_string()));
-                tokens
-            }
-            Expr::If {
-                cond,
-                body,
-                else_clause,
-                ..
-            } => {
-                let mut tokens = Vec::new();
-                tokens.extend(self.expr_to_tokens(cond));
-                tokens.push(Token::Atomic(" then ".to_string()));
-                tokens.push(Token::Atomic(self.colon_block_to_text(body)));
-                if let Some((_, else_body)) = else_clause {
-                    tokens.push(Token::Atomic(" else ".to_string()));
-                    tokens.push(Token::Atomic(self.colon_block_to_text(else_body)));
-                }
-                tokens
-            }
-            Expr::Fn { arg, body } => {
-                let mut tokens = Vec::new();
-                tokens.extend(self.pattern_to_tokens(arg));
-                tokens.push(Token::Atomic(" => ".to_string()));
-                tokens.push(Token::Atomic(self.arrow_block_to_text(body)));
-                tokens
-            }
-            Expr::ParenthesizedFn { args, body } => {
-                let mut tokens = Vec::new();
-                let param_tokens: Vec<Token> = match args {
-                    Listing::Inline { items, .. }
-                    | Listing::Block { items, .. }
-                    | Listing::Open { items } => items
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(i, item)| {
-                            let mut item_tokens = match &item.item {
-                                ArgDefItem::Arg { pattern, .. } => self.pattern_to_tokens(pattern),
-                                _ => vec![Token::Atomic("/* arg */".to_string())],
-                            };
-                            if i > 0 {
-                                item_tokens.insert(0, Token::Atomic(", ".to_string()));
-                            }
-                            item_tokens
-                        })
-                        .collect(),
-                };
-                if param_tokens.len() <= 1 {
-                    tokens.extend(param_tokens);
-                } else {
-                    tokens.push(Token::Atomic("(".to_string()));
-                    tokens.extend(param_tokens);
-                    tokens.push(Token::Atomic(")".to_string()));
-                }
-                tokens.push(Token::Atomic(" => ".to_string()));
-                tokens.push(Token::Atomic(self.arrow_block_to_text(body)));
-                tokens
-            }
-            Expr::Slice { start, stop, .. } => {
-                let mut tokens = Vec::new();
-                if let Some(start) = start {
-                    tokens.extend(self.expr_to_tokens(start));
-                }
-                tokens.push(Token::Atomic("..".to_string()));
-                if let Some(stop) = stop {
-                    tokens.extend(self.expr_to_tokens(stop));
-                }
-                tokens
-            }
-            Expr::Await { expr, .. } => {
-                let mut tokens = vec![Token::Atomic("@".to_string())];
-                tokens.extend(self.expr_to_tokens(expr));
-                tokens
-            }
-            Expr::Memo { body, .. } => {
-                let mut tokens = vec![Token::Atomic("memo ".to_string())];
-                tokens.push(Token::Atomic(self.colon_block_to_text(body)));
-                tokens
-            }
-            Expr::Placeholder { token } => vec![Token::Atomic(self.token_to_text(token))],
-            Expr::Parenthesized { expr, .. } => {
-                let mut tokens = vec![Token::Atomic("(".to_string())];
-                tokens.extend(self.expr_to_tokens(expr));
-                tokens.push(Token::Atomic(")".to_string()));
-                tokens
-            }
-            Expr::Match {
-                scrutinee, cases, ..
-            } => {
-                let mut tokens = Vec::new();
-                tokens.extend(self.expr_to_tokens(scrutinee));
-                tokens.push(Token::Atomic(" match:".to_string()));
-                tokens.push(Token::LineBreak { count: 1 });
-                for case in cases {
-                    tokens.push(Token::Atomic("    ".to_string()));
-                    tokens.extend(self.pattern_to_tokens(&case.pattern));
-                    tokens.push(Token::Atomic(" => ".to_string()));
-                    tokens.push(Token::Atomic(self.arrow_block_to_text(&case.body)));
-                    tokens.push(Token::LineBreak { count: 1 });
-                }
-                tokens
-            }
-            _ => vec![Token::Atomic("/* expr */".to_string())],
-        }
-    }
-
-    fn pattern_to_tokens(&self, pattern: &SPattern) -> Vec<Token> {
-        match &pattern.value {
-            Pattern::Capture { name } => vec![Token::Atomic(self.token_to_text(name))],
-            Pattern::Literal { token } => vec![Token::Atomic(self.token_to_text(token))],
-            _ => vec![Token::Atomic("/* pattern */".to_string())],
-        }
-    }
-
-    fn pattern_to_text(&self, pattern: &SPattern) -> String {
-        // Deprecated: Use pattern_to_tokens instead
-        let tokens = self.pattern_to_tokens(pattern);
-        tokens
-            .into_iter()
-            .map(|token| match token {
-                Token::Atomic(text) => text,
-                _ => "/* complex token */".to_string(),
-            })
-            .collect()
-    }
-
-    fn token_to_text(&self, token: &koatl_parser::lexer::SToken) -> String {
-        use koatl_parser::lexer::Token;
-
-        match &token.token {
-            Token::Ident(s) => s.to_string(),
-            Token::None => "None".to_string(),
-            Token::Bool(b) => b.to_string(),
-            Token::Int(s) => s.to_string(),
-            Token::IntBin(s) => s.to_string(),
-            Token::IntOct(s) => s.to_string(),
-            Token::IntHex(s) => s.to_string(),
-            Token::Float(s) => s.to_string(),
-            Token::Kw(s) => s.to_string(),
-            Token::Symbol(s) => s.to_string(),
-            Token::Str(s, _) => s.to_string(),
-            Token::FstrInner(s, _) => s.to_string(),
-            Token::FstrBegin(s) => s.to_string(),
-            Token::FstrEnd(s) => s.to_string(),
-            Token::VerbatimFstrBegin(s) => s.to_string(),
-            Token::VerbatimFstrEnd(s) => s.to_string(),
-            Token::Indent | Token::Dedent | Token::Eol => panic!(),
-        }
-    }
-
-    fn colon_block_to_text(&self, block: &ColonBlock<STree>) -> String {
-        match block {
-            ColonBlock::Inline { stmt, .. } => {
-                // For inline blocks, extract the statement
-                match &stmt.value {
-                    Stmt::Expr { expr } => self.expr_to_text(expr),
-                    _ => self.statement_to_text(stmt),
-                }
-            }
-            ColonBlock::Block { body, .. } => {
-                // For block statements, if it's a single expression, inline it
-                if body.value.len() == 1 {
-                    if let Stmt::Expr { expr } = &body.value[0].value {
-                        return self.expr_to_text(expr);
-                    }
-                }
-                format!("/* block */")
-            }
-        }
-    }
-
-    fn arrow_block_to_text(&self, block: &ArrowBlock<STree>) -> String {
-        match block {
-            ArrowBlock::Inline { stmt, .. } => {
-                // For inline blocks, extract the statement
-                match &stmt.value {
-                    Stmt::Expr { expr } => self.expr_to_text(expr),
-                    _ => self.statement_to_text(stmt),
-                }
-            }
-            ArrowBlock::Block { body, .. } => {
-                // For block statements, if it's a single expression, inline it
-                if body.value.len() == 1 {
-                    if let Stmt::Expr { expr } = &body.value[0].value {
-                        return self.expr_to_text(expr);
-                    }
-                }
-                format!("/* block */")
-            }
-        }
     }
 }
 
-/// Phase 2: Generate output from layout decisions
-/// The LayoutWriter doesn't concern itself with line length decisions -
-/// that's already been handled by the layout calculation phase.
 struct LayoutWriter<'a> {
     config: &'a Config,
+
     output: String,
+    indent_level: usize,
 }
 
 impl<'a> LayoutWriter<'a> {
@@ -904,88 +1007,34 @@ impl<'a> LayoutWriter<'a> {
         Self {
             config,
             output: String::new(),
+            indent_level: 0,
         }
     }
 
-    fn generate_output(&mut self, layout: Layout) -> String {
-        for element in layout.elements {
-            self.render_element(&element);
+    fn generate_output(&mut self, layout: Vec<Line>) -> String {
+        for element in layout {
+            self.render_line(&element);
         }
-
-        // Clean up trailing whitespace and normalize newlines
-        self.output.trim_end().to_string()
+        self.output.to_string()
     }
 
-    fn render_element(&mut self, element: &LayoutElement) {
-        match element {
-            LayoutElement::Text { content, .. } => {
-                self.output.push_str(content);
-            }
-            LayoutElement::Newline { count } => {
-                for _ in 0..*count {
-                    self.output.push('\n');
-                }
-            }
-            LayoutElement::Comment {
-                content,
-                is_line_comment,
-            } => {
-                // Add space before comment if needed
-                if !self.output.ends_with(' ') && !self.output.ends_with('\n') {
-                    self.output.push(' ');
-                }
+    fn render_line(&mut self, elements: &Line) {
+        let mut current_line = Vec::new();
 
-                self.output.push_str(content);
+        for element in elements {
+            current_line.push(element.clone());
+        }
 
-                // Add newline after line comment if needed
-                if *is_line_comment && !content.ends_with('\n') {
-                    self.output.push('\n');
-                }
-            }
-            LayoutElement::Line(line) => {
-                self.render_line(line);
-            }
-            LayoutElement::ColonBlock {
-                colon_line,
-                body,
-                is_inline,
-            } => {
-                self.render_line(colon_line);
-                if *is_inline {
-                    if !body.is_empty() {
-                        self.output.push(' ');
-                        self.render_line(&body[0]);
-                    }
-                } else {
-                    self.render_block_body(body);
-                }
-            }
-            LayoutElement::ArrowBlock {
-                arrow_line,
-                body,
-                is_inline,
-            } => {
-                self.render_line(arrow_line);
-                if *is_inline {
-                    if !body.is_empty() {
-                        self.output.push(' ');
-                        self.render_line(&body[0]);
-                    }
-                } else {
-                    self.render_block_body(body);
-                }
-            }
+        if !current_line.is_empty() {
+            self.render_layout_elements(&current_line);
         }
     }
 
-    fn render_line(&mut self, line: &Line) {
-        // Add indentation based on line's indent level
-        self.add_indentation(line.indent_level);
-
+    fn render_layout_elements(&mut self, elements: &[Element]) {
         // Render tokens with intelligent spacing
-        for (i, token) in line.tokens.iter().enumerate() {
+        for (i, token) in elements.iter().enumerate() {
             if i > 0 {
-                let prev_token = &line.tokens[i - 1];
+                let prev_token = &elements[i - 1];
                 if self.needs_space_between(prev_token, token) {
                     self.output.push(' ');
                 }
@@ -995,150 +1044,74 @@ impl<'a> LayoutWriter<'a> {
     }
 
     /// Determine if a space is needed between two consecutive tokens
-    fn needs_space_between(&self, prev: &Token, current: &Token) -> bool {
+    fn needs_space_between(&self, prev: &Element, current: &Element) -> bool {
         match (prev, current) {
-            // No space if current token is attached
-            (_, Token::Attached(_)) => false,
-            // No space for postfix operations
-            (_, Token::Postfix { .. }) => false,
-            // Line breaks don't need spaces
-            (Token::LineBreak { .. }, _) | (_, Token::LineBreak { .. }) => false,
+            // No space if current token is attached before
+            (_, el) if el.attach_before => false,
+            // No space if previous token is attached after
+            (el, _) if el.attach_after => false,
+            // No space around range operators
+            (
+                _,
+                Element {
+                    data: ElementData::Range(_),
+                    ..
+                },
+            ) => false,
+            (
+                Element {
+                    data: ElementData::Range(_),
+                    ..
+                },
+                _,
+            ) => false,
             // Otherwise, atomic tokens and other types need spaces
             _ => true,
         }
     }
-    fn add_indentation(&mut self, level: usize) {
-        // Only add indentation if we're at the start of a line
-        if self.output.ends_with('\n') || self.output.is_empty() {
-            for _ in 0..(level * self.config.indent_width) {
-                self.output.push(' ');
-            }
+
+    fn add_indentation(&mut self) {
+        for _ in 0..(self.indent_level * self.config.indent_width) {
+            self.output.push(' ');
         }
     }
 
-    fn render_token(&mut self, token: &Token) {
-        match token {
-            Token::Atomic(content) => {
+    fn render_token(&mut self, token: &Element) {
+        match &token.data {
+            ElementData::Atom(content) => {
                 self.output.push_str(content);
             }
-            Token::Attached(content) => {
+            ElementData::Range(content) => {
                 self.output.push_str(content);
             }
-            Token::LineBreak { count } => {
-                for _ in 0..*count {
-                    self.output.push('\n');
-                }
-            }
-            Token::Listing { lines, layout_mode } => {
-                self.render_listing(lines, layout_mode);
-            }
-            Token::Postfix { base, operation } => {
-                self.render_token(base);
-                self.render_postfix_op(operation);
-            }
-            Token::Grouped {
-                open,
-                inner,
-                close,
-                separator,
+            ElementData::Group {
+                begin,
+                elements,
+                end,
             } => {
-                self.output.push_str(open);
-
-                for (i, line) in inner.iter().enumerate() {
-                    if i > 0 {
-                        if let Some(sep) = separator {
-                            self.output.push_str(sep);
-                        }
-                        self.output.push(' ');
-                    }
-                    self.render_line(line);
-                }
-
-                self.output.push_str(close);
+                self.render_layout_elements(begin);
+                self.render_layout_elements(elements);
+                self.render_layout_elements(end);
             }
-            Token::WithComment { token, comment } => {
-                self.render_token(token);
-                self.output.push(' ');
-                self.output.push_str(comment);
-            }
-        }
-    }
-
-    fn render_postfix_op(&mut self, op: &PostfixOp) {
-        match op {
-            PostfixOp::MethodCall { dot, method, args } => {
-                self.output.push_str(dot);
-                self.output.push_str(method);
-
-                if let Some(args) = args {
-                    self.output.push('(');
-
-                    for (i, arg_line) in args.iter().enumerate() {
+            ElementData::Block { lines, inline } => {
+                if *inline {
+                    for (i, line) in lines.iter().enumerate() {
                         if i > 0 {
-                            self.output.push_str(", ");
+                            self.output.push(' ');
                         }
-                        self.render_line(arg_line);
+                        self.render_line(line);
                     }
-
-                    self.output.push(')');
-                }
-            }
-            PostfixOp::Attribute { dot, name } => {
-                self.output.push_str(dot);
-                self.output.push_str(name);
-            }
-            PostfixOp::Subscript { open, index, close } => {
-                self.output.push_str(open);
-
-                for (i, index_line) in index.iter().enumerate() {
-                    if i > 0 {
-                        self.output.push_str(", ");
-                    }
-                    self.render_line(index_line);
-                }
-
-                self.output.push_str(close);
-            }
-            PostfixOp::Call { open, args, close } => {
-                self.output.push_str(open);
-
-                for (i, arg_line) in args.iter().enumerate() {
-                    if i > 0 {
-                        self.output.push_str(", ");
-                    }
-                    self.render_line(arg_line);
-                }
-
-                self.output.push_str(close);
-            }
-        }
-    }
-
-    fn render_listing(&mut self, lines: &[Line], layout_mode: &ListingMode) {
-        match layout_mode {
-            ListingMode::Inline => {
-                for (i, line) in lines.iter().enumerate() {
-                    if i > 0 {
-                        self.output.push(' ');
-                    }
-                    self.render_line(line);
-                }
-            }
-            ListingMode::Block => {
-                for line in lines {
-                    self.output.push('\n');
-                    self.render_line(line);
-                }
-            }
-            ListingMode::Auto => {
-                // This should have been resolved during layout calculation
-                // For safety, fall back to inline for single lines, block for multiple
-                if lines.len() <= 1 {
-                    self.render_listing(lines, &ListingMode::Inline);
                 } else {
-                    self.render_listing(lines, &ListingMode::Block);
+                    for line in lines {
+                        self.output.push('\n');
+                        self.render_line(line);
+                    }
                 }
             }
+            ElementData::LineComment(content) => {
+                self.output.push_str(content);
+            }
+            ElementData::Listing { lines, inline } => todo!(),
         }
     }
 

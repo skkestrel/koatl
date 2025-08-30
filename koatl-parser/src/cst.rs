@@ -5,6 +5,7 @@ pub trait Tree {
     type Pattern: std::fmt::Debug + Clone;
     type Stmt: std::fmt::Debug + Clone;
     type Token: std::fmt::Debug + Clone;
+    type Str: std::fmt::Debug + Clone;
 }
 
 #[derive(Debug, Clone)]
@@ -30,10 +31,6 @@ pub enum Listing<T, TTree: Tree> {
         items: Vec<ListingItem<T, TTree>>,
         newline: Option<TTree::Token>,
         end: TTree::Token,
-    },
-
-    Open {
-        items: Vec<ListingItem<T, TTree>>,
     },
 }
 
@@ -87,7 +84,7 @@ pub enum Stmt<TTree: Tree> {
     While {
         while_kw: TTree::Token,
         cond: TTree::Expr,
-        body: ColonBlock<TTree>,
+        body: InducedBlock<TTree>,
     },
 
     For {
@@ -95,7 +92,7 @@ pub enum Stmt<TTree: Tree> {
         pattern: TTree::Pattern,
         in_kw: TTree::Token,
         iter: TTree::Expr,
-        body: ColonBlock<TTree>,
+        body: InducedBlock<TTree>,
     },
 
     Import {
@@ -122,7 +119,9 @@ pub enum Stmt<TTree: Tree> {
         expr: TTree::Expr,
     },
 
-    Error,
+    Error {
+        raw: TTree::Str,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -232,7 +231,7 @@ pub enum ArgDefItem<TTree: Tree> {
 pub struct MatchCase<TTree: Tree> {
     pub pattern: TTree::Pattern,
     pub guard: Option<(TTree::Token, TTree::Expr)>,
-    pub body: ArrowBlock<TTree>,
+    pub body: InducedBlock<TTree>,
 }
 
 #[derive(Debug, Clone)]
@@ -240,7 +239,7 @@ pub struct ExceptCase<TTree: Tree> {
     pub except: TTree::Token,
     pub pattern: TTree::Pattern,
     pub guard: Option<(TTree::Token, TTree::Expr)>,
-    pub body: ArrowBlock<TTree>,
+    pub body: InducedBlock<TTree>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -295,31 +294,16 @@ pub enum TupleKind<TTree: Tree> {
 }
 
 #[derive(Debug, Clone)]
-pub enum ColonBlock<TTree: Tree> {
+pub enum InducedBlock<TTree: Tree> {
     Block {
-        colon: TTree::Token,
+        inducer: TTree::Token,
         indent: TTree::Token,
         body: Spanned<Vec<TTree::Stmt>>,
         dedent: TTree::Token,
     },
 
     Inline {
-        colon: Option<TTree::Token>,
-        stmt: TTree::Stmt,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub enum ArrowBlock<TTree: Tree> {
-    Block {
-        arrow: TTree::Token,
-        indent: TTree::Token,
-        body: Spanned<Vec<TTree::Stmt>>,
-        dedent: TTree::Token,
-    },
-
-    Inline {
-        arrow: TTree::Token,
+        inducer: Option<TTree::Token>,
         stmt: TTree::Stmt,
     },
 }
@@ -383,21 +367,21 @@ pub enum Expr<TTree: Tree> {
     Memo {
         async_kw: Option<TTree::Token>,
         memo_kw: TTree::Token,
-        body: ColonBlock<TTree>,
+        body: InducedBlock<TTree>,
     },
 
     ClassicIf {
         if_kw: TTree::Token,
         cond: TTree::Expr,
-        body: ColonBlock<TTree>,
-        else_clause: Option<(TTree::Token, ColonBlock<TTree>)>,
+        body: InducedBlock<TTree>,
+        else_clause: Option<(TTree::Token, InducedBlock<TTree>)>,
     },
 
     If {
         cond: TTree::Expr,
         then_kw: TTree::Token,
-        body: ColonBlock<TTree>,
-        else_clause: Option<(TTree::Token, ColonBlock<TTree>)>,
+        body: InducedBlock<TTree>,
+        else_clause: Option<(TTree::Token, InducedBlock<TTree>)>,
     },
 
     ClassicMatch {
@@ -427,7 +411,7 @@ pub enum Expr<TTree: Tree> {
     Class {
         class_kw: TTree::Token,
         args: Option<Listing<CallItem<TTree>, TTree>>,
-        body: ColonBlock<TTree>,
+        body: InducedBlock<TTree>,
     },
 
     With {
@@ -435,14 +419,14 @@ pub enum Expr<TTree: Tree> {
         pattern: TTree::Pattern,
         eq: TTree::Token,
         value: TTree::Expr,
-        body: ColonBlock<TTree>,
+        body: InducedBlock<TTree>,
     },
 
     Try {
         try_kw: TTree::Token,
-        body: ColonBlock<TTree>,
+        body: InducedBlock<TTree>,
         cases: Vec<ExceptCase<TTree>>,
-        finally: Option<(TTree::Token, ColonBlock<TTree>)>,
+        finally: Option<(TTree::Token, InducedBlock<TTree>)>,
     },
 
     Call {
@@ -492,12 +476,12 @@ pub enum Expr<TTree: Tree> {
 
     Fn {
         arg: TTree::Pattern,
-        body: ArrowBlock<TTree>,
+        body: InducedBlock<TTree>,
     },
 
     ParenthesizedFn {
         args: Listing<ArgDefItem<TTree>, TTree>,
-        body: ArrowBlock<TTree>,
+        body: InducedBlock<TTree>,
     },
 
     Fstr {
@@ -585,6 +569,12 @@ pub enum PatternClassItem<TTree: Tree> {
 }
 
 #[derive(Debug, Clone)]
+pub enum PatternTupleSequenceKind<TTree: Tree> {
+    Unit(TTree::Token, TTree::Token),
+    Listing(Vec<ListingItem<PatternSequenceItem<TTree>, TTree>>),
+}
+
+#[derive(Debug, Clone)]
 pub enum Pattern<TTree: Tree> {
     Capture {
         name: TTree::Token,
@@ -609,7 +599,7 @@ pub enum Pattern<TTree: Tree> {
         listing: Listing<PatternSequenceItem<TTree>, TTree>,
     },
     TupleSequence {
-        listing: Listing<PatternSequenceItem<TTree>, TTree>,
+        kind: PatternTupleSequenceKind<TTree>,
     },
     Mapping {
         listing: Listing<PatternMappingItem<TTree>, TTree>,
@@ -656,6 +646,7 @@ impl<'src: 'tok, 'tok> Tree for STree<'src, 'tok> {
     type Pattern = Box<SPattern<'src, 'tok>>;
     type Stmt = Box<SStmt<'src, 'tok>>;
     type Token = &'tok SToken<'src>;
+    type Str = &'src str;
 }
 
 pub type SPatternInner<'src, 'tok> = Pattern<STree<'src, 'tok>>;
@@ -712,7 +703,7 @@ pub struct SStmt<'src, 'tok> {
     pub span: Span,
 }
 
-pub type SColonBlock<'src, 'tok> = ColonBlock<STree<'src, 'tok>>;
+pub type SInducedBlock<'src, 'tok> = InducedBlock<STree<'src, 'tok>>;
 pub type SListing<'src, 'tok, T> = Listing<T, STree<'src, 'tok>>;
 pub type SListItem<'src, 'tok> = ListItem<STree<'src, 'tok>>;
 pub type SMappingItem<'src, 'tok> = MappingItem<STree<'src, 'tok>>;

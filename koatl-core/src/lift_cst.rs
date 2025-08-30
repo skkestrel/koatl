@@ -114,9 +114,9 @@ where
 {
     fn lift(&self) -> Vec<U> {
         match self {
-            cst::Listing::Block { items, .. }
-            | cst::Listing::Inline { items, .. }
-            | cst::Listing::Open { items } => items.iter().map(|item| item.item.lift()).collect(),
+            cst::Listing::Block { items, .. } | cst::Listing::Inline { items, .. } => {
+                items.iter().map(|item| item.item.lift()).collect()
+            }
         }
     }
 }
@@ -273,9 +273,6 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                     cst::Listing::Block { items, .. } | cst::Listing::Inline { items, .. } => {
                         items.iter().map(|item| item.item.lift()).collect()
                     }
-                    cst::Listing::Open { items } => {
-                        items.iter().map(|item| item.item.lift()).collect()
-                    }
                 };
                 ast::Expr::Fn(args_list, body.lift())
             }
@@ -408,18 +405,13 @@ impl<'src, 'tok> Lift<Indirect<ast::SPattern<'src>>> for cst::SPattern<'src, 'to
                     cst::Listing::Block { items, .. } | cst::Listing::Inline { items, .. } => {
                         items.iter().map(|item| item.item.lift()).collect()
                     }
-                    cst::Listing::Open { items } => {
-                        items.iter().map(|item| item.item.lift()).collect()
-                    }
                 };
                 ast::Pattern::Sequence(items)
             }
-            cst::Pattern::TupleSequence { listing } => {
-                let items = match listing {
-                    cst::Listing::Block { items, .. } | cst::Listing::Inline { items, .. } => {
-                        items.iter().map(|item| item.item.lift()).collect()
-                    }
-                    cst::Listing::Open { items } => {
+            cst::Pattern::TupleSequence { kind } => {
+                let items = match kind {
+                    cst::PatternTupleSequenceKind::Unit { .. } => vec![],
+                    cst::PatternTupleSequenceKind::Listing(items) => {
                         items.iter().map(|item| item.item.lift()).collect()
                     }
                 };
@@ -430,18 +422,12 @@ impl<'src, 'tok> Lift<Indirect<ast::SPattern<'src>>> for cst::SPattern<'src, 'to
                     cst::Listing::Block { items, .. } | cst::Listing::Inline { items, .. } => {
                         items.iter().map(|item| item.item.lift()).collect()
                     }
-                    cst::Listing::Open { items } => {
-                        items.iter().map(|item| item.item.lift()).collect()
-                    }
                 };
                 ast::Pattern::Mapping(items)
             }
             cst::Pattern::Class { expr, items, .. } => {
                 let class_items = match items {
                     cst::Listing::Block { items, .. } | cst::Listing::Inline { items, .. } => {
-                        items.iter().map(|item| item.item.lift()).collect()
-                    }
-                    cst::Listing::Open { items } => {
                         items.iter().map(|item| item.item.lift()).collect()
                     }
                 };
@@ -484,7 +470,7 @@ impl<'src, 'tok> Lift<Indirect<ast::SStmt<'src>>> for cst::SStmt<'src, 'tok> {
             cst::Stmt::Import { tree, export, .. } => {
                 ast::Stmt::Import(tree.lift(), export.is_some())
             }
-            cst::Stmt::Error => panic!("Cannot lift error stmt"),
+            cst::Stmt::Error { .. } => panic!("Cannot lift error stmt"),
         };
         stmt.spanned(self.span).indirect()
     }
@@ -522,20 +508,11 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SStmt<'src, 'tok> {
     }
 }
 
-impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::ArrowBlock<cst::STree<'src, 'tok>> {
+impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::InducedBlock<cst::STree<'src, 'tok>> {
     fn lift(&self) -> Indirect<ast::SExpr<'src>> {
         match self {
-            cst::ArrowBlock::Block { body, .. } => body.lift(),
-            cst::ArrowBlock::Inline { stmt, .. } => stmt.lift(),
-        }
-    }
-}
-
-impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::ColonBlock<cst::STree<'src, 'tok>> {
-    fn lift(&self) -> Indirect<ast::SExpr<'src>> {
-        match self {
-            cst::ColonBlock::Block { body, .. } => body.lift(),
-            cst::ColonBlock::Inline { stmt, .. } => stmt.lift(),
+            cst::InducedBlock::Block { body, .. } => body.lift(),
+            cst::InducedBlock::Inline { stmt, .. } => stmt.lift(),
         }
     }
 }

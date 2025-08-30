@@ -443,8 +443,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             }
         }
 
-        Ok(Pattern::Sequence {
-            listing: Listing::Open { items: acc },
+        Ok(Pattern::TupleSequence {
+            kind: PatternTupleSequenceKind::Listing(acc),
         }
         .spanned(self.span_from(before_star)))
     }
@@ -481,7 +481,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             |ctx| ctx.value_pattern(),
             |ctx| ctx.parenthesized_pattern(),
             |ctx| ctx.sequence_pattern(),
-            |ctx| ctx.tuple_sequence_pattern(),
             |ctx| ctx.mapping_pattern()
         )
     }
@@ -508,13 +507,30 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     fn parenthesized_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
         let start = self.cursor;
         let lparen = self.symbol("(")?;
-        let pattern = self.open_pattern()?.boxed();
-        let rparen = self.symbol(")")?;
-        Ok(Pattern::Parenthesized {
-            lparen,
-            pattern,
-            rparen,
-        }
+
+        let empty_unit = |ctx: &mut Self| {
+            let rparen = ctx.symbol(")")?;
+            Ok(Pattern::TupleSequence {
+                kind: PatternTupleSequenceKind::Unit(lparen, rparen),
+            })
+        };
+
+        let parenthesized_pattern = |ctx: &mut Self| {
+            let pattern = ctx.open_pattern()?.boxed();
+            let rparen = ctx.symbol(")")?;
+            Ok(Pattern::Parenthesized {
+                lparen,
+                pattern,
+                rparen,
+            })
+        };
+
+        Ok(first_of!(
+            self,
+            "parenthesized pattern",
+            empty_unit,
+            parenthesized_pattern
+        )?
         .spanned(self.span_from(start)))
     }
 
@@ -524,14 +540,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             ctx.pattern_sequence_item()
         })?;
         Ok(Pattern::Sequence { listing }.spanned(self.span_from(start)))
-    }
-
-    fn tuple_sequence_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
-        let start = self.cursor;
-        let listing = self.listing("(", ")", Token::Symbol(","), |ctx| {
-            ctx.pattern_sequence_item()
-        })?;
-        Ok(Pattern::TupleSequence { listing }.spanned(self.span_from(start)))
     }
 
     fn mapping_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
@@ -1731,7 +1739,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         Ok(cases)
     }
 
-    fn colon_block(&mut self) -> ParseResult<ColonBlock<STree<'src, 'tok>>> {
+    fn colon_block(&mut self) -> ParseResult<InducedBlock<STree<'src, 'tok>>> {
         let block = |ctx: &mut Self| {
             let colon = ctx.symbol(":")?;
 
@@ -1739,8 +1747,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             let body = ctx.stmts()?;
             let dedent = ctx.token(&Token::Dedent)?;
 
-            Ok(ColonBlock::Block {
-                colon,
+            Ok(InducedBlock::Block {
+                inducer: colon,
                 indent,
                 body,
                 dedent,
@@ -1752,8 +1760,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
             let stmt = ctx.stmt(true)?;
 
-            Ok(ColonBlock::Inline {
-                colon,
+            Ok(InducedBlock::Inline {
+                inducer: colon,
                 stmt: Box::new(stmt),
             })
         };
@@ -1764,7 +1772,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     fn arrow_block(
         &mut self,
         parse_inline_stmt_on_inline_block: bool,
-    ) -> ParseResult<ArrowBlock<STree<'src, 'tok>>> {
+    ) -> ParseResult<InducedBlock<STree<'src, 'tok>>> {
         let arrow = self.symbol("=>")?;
 
         let block = |ctx: &mut Self| {
@@ -1772,8 +1780,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             let body = ctx.stmts()?;
             let dedent = ctx.token(&Token::Dedent)?;
 
-            Ok(ArrowBlock::Block {
-                arrow,
+            Ok(InducedBlock::Block {
+                inducer: arrow,
                 indent,
                 body,
                 dedent,
@@ -1783,8 +1791,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let inline_stmt = |ctx: &mut Self| {
             let stmt = ctx.stmt(parse_inline_stmt_on_inline_block)?;
 
-            Ok(ArrowBlock::Inline {
-                arrow,
+            Ok(InducedBlock::Inline {
+                inducer: Some(arrow),
                 stmt: Box::new(stmt),
             })
         };
@@ -2371,12 +2379,19 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
                 let mut indent_level = 0;
                 loop {
+                    let span = self.span_from(self.cursor);
+
+                    let err_stmt = Box::new(
+                        Stmt::Error {
+                            raw: &self.src[span.start..span.end],
+                        }
+                        .spanned(span),
+                    );
+
                     match self.peek_token() {
                         Some(tok) if tok.token == Token::Eol => {
                             if indent_level == 0 {
-                                stmts.push(Box::new(
-                                    Stmt::Error.spanned(self.span_from(self.cursor)),
-                                ));
+                                stmts.push(err_stmt);
                                 self.next();
                                 break;
                             }
@@ -2384,9 +2399,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         Some(tok) if tok.token == Token::Dedent => {
                             indent_level -= 1;
                             if indent_level < 0 {
-                                stmts.push(Box::new(
-                                    Stmt::Error.spanned(self.span_from(self.cursor)),
-                                ));
+                                stmts.push(err_stmt);
                                 break 'outer;
                             }
                         }
@@ -2394,7 +2407,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                             indent_level += 1;
                         }
                         None => {
-                            stmts.push(Box::new(Stmt::Error.spanned(self.span_from(self.cursor))));
+                            stmts.push(err_stmt);
                             break 'outer;
                         }
                         _ => {}
