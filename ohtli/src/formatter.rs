@@ -623,11 +623,15 @@ impl ToElements for SExpr<'_, '_> {
                 parts,
                 end,
             } => {
+                // TODO re-glue the parts
                 line!(
-                    begin,
-                    head,
-                    parts.iter().map(|(a, b)| line!(a, b)).collect::<Vec<_>>(),
-                    end
+                    unary_op_token(begin),
+                    unary_op_token(head),
+                    parts
+                        .iter()
+                        .map(|(a, b)| line!(a, attached_token(b)))
+                        .collect::<Vec<_>>(),
+                    attached_token(end)
                 )
             }
             Expr::Tuple { kind } => match kind {

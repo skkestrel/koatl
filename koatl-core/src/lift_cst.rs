@@ -16,6 +16,7 @@ trait STokenExt<'src> {
 fn lift_fstr_fmt<'src, 'tok>(
     fmt: &cst::FmtSpec<cst::STree<'src, 'tok>>,
 ) -> Indirect<ast::SExpr<'src>> {
+    // TODO the span here is wrong
     lift_fstr(&fmt.head, &fmt.parts)
         .spanned(Span::new(fmt.head.span.start..fmt.head.span.end))
         .indirect()

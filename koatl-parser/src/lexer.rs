@@ -1029,8 +1029,6 @@ impl<'src> TokenizeCtx<'src> {
                     format_tokens.extend(self.parse_fstr_inner('}', 1, verbatim)?);
                 }
 
-                self.parse_seq("}")?;
-
                 tokens.push(SToken::new(
                     Token::Indent,
                     Span {
@@ -1051,6 +1049,7 @@ impl<'src> TokenizeCtx<'src> {
                 tokens.extend(format_tokens);
 
                 marker = self.cursor();
+                self.parse_seq("}")?;
             } else {
                 let next_char = if verbatim {
                     self.next().ok_or_else(|| {
