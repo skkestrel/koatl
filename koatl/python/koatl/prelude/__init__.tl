@@ -17,15 +17,15 @@ export mod = RootModulesProxy()
 
 Extension.trait(Iterable)
 
-Extension.property(list, "len")& List.len.fget
+Extension.property(list, "len")! List.len.fget
 
-Extension.property(object, "result")& self => Result(self)
+Extension.property(object, "result")! self => Result(self)
 
-Extension.method(str, "match")& (regex, str) => Pattern(regex).match(str)
+Extension.method(str, "match")! (regex, str) => Pattern(regex).match(str)
 
 # Note: the below methods have arguments in reverse order to Python's re module.
-Extension.method(str, "matches")& (str, regex) => Pattern(regex).match(str)
-Extension.method(str, "search")& (str, regex) => Pattern(regex).search(str)
+Extension.method(str, "matches")! (str, regex) => Pattern(regex).match(str)
+Extension.method(str, "search")! (str, regex) => Pattern(regex).search(str)
 
 __tl__.do = koatl.std.alg.do.do
 

@@ -6,7 +6,7 @@ import koatl.std.trait.Trait
 import .alg.(Traversable, Ok, Err, Memo, Async, AsyncMemo, Result)
 
 export Iterable = class(Traversable, Trait):
-    iter = Trait.abstract& self => None
+    iter = Trait.abstract! self => None
 
     skip = (self, n) =>
         let it = self.iter

@@ -3,7 +3,7 @@ import time
 
 counts = 0
 
-fib = Memo.fn& x =>
+fib = Memo.fn! x =>
     if x < 2:
         return @Memo.pure(1)
 
@@ -72,7 +72,7 @@ assert_eq(time.time() - now < 0.12, True)
 
 # AsyncMemo.fn
 
-f = AsyncMemo.fn& () =>
+f = AsyncMemo.fn! () =>
     @Async.sleep(0.1)
     123
 

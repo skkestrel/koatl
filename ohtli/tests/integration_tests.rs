@@ -1,7 +1,7 @@
 use koatl_parser::{parse_tokens, tokenize};
 use ohtli::{
     formatter::{stmt_to_lines, LayoutCalculator, LayoutWriter},
-    Config, Formatter,
+    Config,
 };
 
 fn assert_compare_formatting(input: &str, expected: &str) {

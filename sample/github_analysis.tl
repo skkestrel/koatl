@@ -20,11 +20,11 @@ create_repo = data =>
         size_kb: data["size"]
 
         # Computed properties
-        age_days: Record.method& self =>
+        age_days: Record.method! self =>
             let created = datetime.fromisoformat(self.created_at.replace("Z", "+00:00"))
             (datetime.now(created.tzinfo) - created).days
 
-        activity_score: Record.method& self =>
+        activity_score: Record.method! self =>
             # Simple activity heuristic
             let days_old = self.age_days() + 1
             let recent_factor = days_old <= 30 then 1. else 365. / days_old

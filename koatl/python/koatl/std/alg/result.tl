@@ -35,7 +35,7 @@ export Result = class(MonadOnce):
     __init__ = (self, *args, **kwargs) =>
         raise ValueError("Result should not be instantiated directly, use Ok or Err")
 
-    checked = staticmethod& f =>
+    checked = staticmethod! f =>
         """
         Runs the function in a try block and returns a Result.
         If the function raises an exception, it will be wrapped in an Err.
@@ -66,7 +66,7 @@ export Result = class(MonadOnce):
         except StopIteration(value=value) =>
             return Result(value)
 
-    pure = staticmethod& x => Ok(x)
+    pure = staticmethod! x => Ok(x)
 
     apply = (self, f) =>
         if not self.ok:

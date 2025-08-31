@@ -12,14 +12,14 @@ Objects satisfying the trait requirements (marked with `Abstract`) get access to
 Example:
 
 ```koatl
-export SomeTrait = Extension.trait& class(Trait):
-    required_method = Trait.abstract& self => ()
+export SomeTrait = Extension.trait! class(Trait):
+    required_method = Trait.abstract! self => ()
 
     derived_method = self => self.required_method()
-    derived_property = Trait.property& self => self.required_method()
+    derived_property = Trait.property! self => self.required_method()
 
-Extension.method(object, "some_global_attr")& self => ()
-Extension.property(object, "some_global_prop")& self => ()
+Extension.method(object, "some_global_attr")! self => ()
+Extension.property(object, "some_global_prop")! self => ()
 
 None.some_global_attr() == ()
 None.some_global_prop == ()

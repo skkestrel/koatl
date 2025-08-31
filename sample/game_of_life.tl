@@ -9,7 +9,7 @@ create_cell = (x, y, alive=False) => {
     x: x, y: y, alive: alive
 
     # Extension method for neighbor calculation
-    neighbors: Record.method& (self, grid_size) =>
+    neighbors: Record.method! (self, grid_size) =>
         [
             (self.x - 1, self.y - 1), (self.x, self.y - 1), (self.x + 1, self.y - 1)
             (self.x - 1, self.y),                           (self.x + 1, self.y)
@@ -17,7 +17,7 @@ create_cell = (x, y, alive=False) => {
         ]
             .filter([x, y] => x >= 0 and y >= 0 and x < grid_size and y < grid_size)
 
-    next_state: Record.method& (self, alive_neighbors) =>
+    next_state: Record.method! (self, alive_neighbors) =>
         # Conway's Game of Life rules using pattern matching
         (self.alive, alive_neighbors) match:
             (True, 2) | (True, 3) => True      # Survival
@@ -116,14 +116,14 @@ analyze_patterns = (grid, size) =>
 track_statistics = () => {
     generations: []
 
-    add_generation: Record.method& (self, analysis) =>
+    add_generation: Record.method! (self, analysis) =>
         self.generations.append(analysis)
 
         # Keep only last 10 generations for analysis
         if self.generations.len > 10:
             self.generations = self.generations[-10..]
 
-    get_trends: Record.method& self =>
+    get_trends: Record.method! self =>
         self.generations.len >= 3 then:
             let recent = self.generations[-3..]
             let densities = recent.map($.density).list()
@@ -194,7 +194,7 @@ run_simulation = (size=20, max_generations=100, delay=0.5) =>
 create_pattern_editor = size => {
     grid: create_grid(size).map([pos, cell] => (pos, create_cell(cell.x, cell.y, False))).dict()
 
-    toggle_cell: Record.method& (self, x, y) =>
+    toggle_cell: Record.method! (self, x, y) =>
         (x >= 0 and y >= 0 and x < size and y < size) then:
             let pos = (x, y)
             let cell = self.grid[pos]
@@ -203,12 +203,12 @@ create_pattern_editor = size => {
         else:
             False
 
-    load_pattern: Record.method& (self, pattern, offset_x=0, offset_y=0) =>
+    load_pattern: Record.method! (self, pattern, offset_x=0, offset_y=0) =>
         pattern.for_each([x, y] =>
             self.toggle_cell(x + offset_x, y + offset_y)
         )
 
-    get_grid: Record.method& self => self.grid
+    get_grid: Record.method! self => self.grid
 }
 
 # Predefined interesting patterns

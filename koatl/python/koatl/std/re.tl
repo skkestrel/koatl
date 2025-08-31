@@ -29,7 +29,7 @@ export Pattern = class:
         self.pattern.search(string).result.map(Regex.Match)
 
 
-    Match = collections.abc.Sequence.register& class:
+    Match = collections.abc.Sequence.register! class:
         __slots__ = ("_match",)
         __match_args__ = ("match",)
 
@@ -43,6 +43,6 @@ export Pattern = class:
         __len__ = self => len(self._match.groups())
         __getitem__ = (self, index) => self._match[index]
 
-        match = property& self => self._match.group(0)
+        match = property! self => self._match.group(0)
 
         __repr__ = self => f"Match({self._match})"

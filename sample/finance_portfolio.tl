@@ -14,12 +14,12 @@ create_stock = (symbol, price, shares, purchase_date) => {
     purchase_price: price
 
     # Extension methods using Record.method
-    current_value: Record.method& self => self.price * self.shares
+    current_value: Record.method! self => self.price * self.shares
 
-    days_held: Record.method& (self, date) =>
+    days_held: Record.method! (self, date) =>
         (date - self.purchase_date).days
 
-    annualized_return: Record.method& (self, date) =>
+    annualized_return: Record.method! (self, date) =>
         let days = self.days_held(date)
         days > 0 then (self.price / self.purchase_price - 1) * (365.0 / days) else 0.0
 }

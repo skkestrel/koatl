@@ -18,20 +18,20 @@ export Env = class(MonadOnce):
 
     run = (self, ctx) => self.f(ctx)
 
-    pure = staticmethod& value => Env(ctx => value)
+    pure = staticmethod! value => Env(ctx => value)
 
     get = None # to be populated later
 
-    item = staticmethod& name => Env(ctx => ctx[name])
+    item = staticmethod! name => Env(ctx => ctx[name])
 
-    bind_once = (self, f) => Env& ctx =>
+    bind_once = (self, f) => Env! ctx =>
         let v = f(self.f(ctx))
         if v not matches Env():
             raise ValueError(f"Expected the binder to return an Env, but got {type(v)}")
 
         v.f(ctx)
 
-    bind_gen = (self, gen) => Env& ctx =>
+    bind_gen = (self, gen) => Env! ctx =>
         try:
             while True:
                 self = gen.send(self.f(ctx))

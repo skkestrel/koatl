@@ -1,5 +1,7 @@
 #![allow(unused_variables, dead_code)]
 
+const FMT_DELIMITER: &str = "%";
+
 #[derive(Debug, Clone, Copy)]
 pub struct Span {
     pub start: usize,
@@ -420,7 +422,7 @@ impl<'src> TokenizeCtx<'src> {
     fn parse_symbol(&mut self) -> TResult<'src, (Token<'src>, Span)> {
         const POLYGRAMS: &[&str] = &[
             "+=", "-=", "*=", "/=", "|=", "??=", "===", "<=>", "=>", "..", "==", "<>", "<=", ">=",
-            "//", "**", "??", ".=", "::", "||", "&&", "^^", ">>", "<<",
+            "//", "%%", "@@", "**", "??", ".=", "::", "||", "&&", "^^", ">>", "<<",
         ];
         const MONOGRAMS: &str = "[](){}<>.,;:!?@$%^&*+-=|\\/`~";
 
@@ -1020,9 +1022,11 @@ impl<'src> TokenizeCtx<'src> {
 
                 marker = self.cursor();
                 let mut format_tokens = vec![];
-                if self.try_parse(|x| x.parse_seq("!")).is_ok() {
+
+                // TODO wrong tokenization
+                if self.try_parse(|x| x.parse_seq(FMT_DELIMITER)).is_ok() {
                     format_tokens.push(SToken::new(
-                        Token::Symbol("!"),
+                        Token::Symbol(FMT_DELIMITER),
                         self.span_since(&marker),
                         Vec::new(),
                     ));
@@ -1422,7 +1426,7 @@ impl<'src> TokenizeCtx<'src> {
                         break;
                     }
 
-                    if let Token::Symbol("!") = &tok.token {
+                    if let Token::Symbol(FMT_DELIMITER) = &tok.token {
                         // Format specifier delimiter; end block.
                         self.rewind(saved);
                         break 'lines ParseBlockEndType::Delimiter;

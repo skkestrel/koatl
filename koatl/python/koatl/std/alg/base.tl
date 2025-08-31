@@ -10,9 +10,9 @@ export Monad = class(Trait):
     """
     __slots__ = ()
 
-    bind = Trait.abstract& (self, f) => None
+    bind = Trait.abstract! (self, f) => None
 
-    pure = staticmethod& Trait.abstract& value => None
+    pure = staticmethod! Trait.abstract! value => None
 
     # Automatically generated implementations.
     map = (self, f) => self.bind(x => self.pure(f(x)))
@@ -35,7 +35,7 @@ export MonadOnce = class(Monad, Trait):
     __slots__ = ()
 
     # The default implementation required for `@` syntax that should be overridden by subclasses.
-    bind_once = Trait.abstract& (self, f) => None
+    bind_once = Trait.abstract! (self, f) => None
 
     # An optional, optimized implementation of `bind` that skips deep recursion.
     # TODO: can this be automatically generated from bind_once?
@@ -61,7 +61,7 @@ export Identity = class(MonadOnce):
 
     bind_once = (self, f) => self matches Identity(value) then f(value) else f(self)
 
-    pure = staticmethod& x => x
+    pure = staticmethod! x => x
 
 
 export Traversable = class(Trait):
@@ -71,4 +71,4 @@ export Traversable = class(Trait):
     """
     __slots__ = ()
 
-    traverse = Trait.abstract& (self, f) => None
+    traverse = Trait.abstract! (self, f) => None

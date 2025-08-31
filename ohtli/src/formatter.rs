@@ -54,17 +54,23 @@ pub struct Element {
 pub enum ElementData {
     Atom(String),
     LineComment(String),
+    LineBreak,
 
     Listing {
         lines: Vec<Line>,
         inline: bool,
     },
 
-    Group {
+    Parens {
         begin: Elements,
-        elements: Line,
+        elements: Elements,
         end: Elements,
         inline: bool,
+    },
+
+    Group {
+        elements: Elements,
+        power: u8,
     },
 
     Block {
@@ -241,11 +247,31 @@ where
 }
 
 impl Element {
+    pub fn is_multiline(&self) -> bool {
+        match &self.data {
+            ElementData::LineBreak => false,
+            ElementData::Group { .. } => false,
+            ElementData::Atom(_) => true,
+            ElementData::LineComment(_) => true,
+            ElementData::Listing { inline, .. } => !*inline,
+            ElementData::Parens { inline, .. } => !*inline,
+            ElementData::Block { inline, .. } => !*inline,
+        }
+    }
+
     pub fn atom(content: String) -> Self {
         Element {
             attach_before: false,
             attach_after: false,
             data: ElementData::Atom(content),
+        }
+    }
+
+    pub fn line_break() -> Self {
+        Element {
+            attach_before: false,
+            attach_after: false,
+            data: ElementData::LineBreak,
         }
     }
 
@@ -285,7 +311,7 @@ impl Element {
         Element {
             attach_before: attached,
             attach_after: false,
-            data: ElementData::Group {
+            data: ElementData::Parens {
                 begin,
                 elements: vec![Element {
                     attach_before: false,
@@ -302,7 +328,7 @@ impl Element {
         Element {
             attach_before: false,
             attach_after: false,
-            data: ElementData::Group {
+            data: ElementData::Parens {
                 begin,
                 elements,
                 end,
@@ -612,7 +638,7 @@ impl ToElements for SExpr<'_, '_> {
             }
             Expr::Decorated {
                 expr,
-                ampersand,
+                op: ampersand,
                 decorator,
             } => {
                 line!(expr, ampersand, decorator)
@@ -784,7 +810,7 @@ impl ToElements for FmtExpr<STree<'_, '_>> {
 impl ToElements for FmtSpec<STree<'_, '_>> {
     fn to_elements(&self) -> Vec<Element> {
         line!(
-            special_token_to_elements(self.excl, TokenContext::DoublyAttached),
+            special_token_to_elements(self.sep, TokenContext::DoublyAttached),
             self.head,
             self.parts
                 .iter()
@@ -929,7 +955,7 @@ impl ToElements for Vec<Trivium<'_>> {
                     elements.push(Element::atom(trivium.value.to_string()));
                 }
                 TriviumType::Newline => {
-                    // elements.push(Element::line_break());
+                    elements.push(Element::line_break());
                 }
                 TriviumType::Whitespace => {}
             }
@@ -1144,6 +1170,12 @@ impl<'a> LayoutWriter<'a> {
         self.attach_next |= element.attach_before;
 
         match &element.data {
+            ElementData::Group { elements, .. } => {
+                self.write_elements(elements);
+            }
+            ElementData::LineBreak => {
+                self.line_break();
+            }
             ElementData::Atom(content) => {
                 if !self.attach_next {
                     self.output.push(' ');
@@ -1175,7 +1207,7 @@ impl<'a> LayoutWriter<'a> {
                     self.line_break();
                 }
             }
-            ElementData::Group {
+            ElementData::Parens {
                 begin,
                 elements,
                 end,

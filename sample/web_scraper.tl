@@ -74,28 +74,28 @@ create_page = (url, html_content) => {
     # Lazy parsing - only parse when needed
     _soup: None
 
-    soup: Record.method& self =>
+    soup: Record.method! self =>
         self._soup ?? (
             self._soup = BeautifulSoup(self.html, "html.parser")
             self._soup
         )
 
     # Content extraction methods
-    get_text: Record.method& self => extract_content(self.soup(), "text")
-    get_links: Record.method& self => extract_content(self.soup(), "links")
-    get_images: Record.method& self => extract_content(self.soup(), "images")
-    get_headings: Record.method& self => extract_content(self.soup(), "headings")
-    get_metadata: Record.method& self => extract_content(self.soup(), "metadata")
+    get_text: Record.method! self => extract_content(self.soup(), "text")
+    get_links: Record.method! self => extract_content(self.soup(), "links")
+    get_images: Record.method! self => extract_content(self.soup(), "images")
+    get_headings: Record.method! self => extract_content(self.soup(), "headings")
+    get_metadata: Record.method! self => extract_content(self.soup(), "metadata")
 
     # Text analysis
-    word_count: Record.method& self => self.get_text().split().len
+    word_count: Record.method! self => self.get_text().split().len
 
-    reading_time: Record.method& self =>
+    reading_time: Record.method! self =>
         # Estimate reading time (average 200 words per minute)
         let words = self.word_count()
         math.ceil(words / 200)
 
-    extract_keywords: Record.method& (self, top_n=10) =>
+    extract_keywords: Record.method! (self, top_n=10) =>
         let text = self.get_text().lower()
         let words = re.findall("\\b[a-z]{3,}\\b", text)
 
@@ -114,14 +114,14 @@ create_page = (url, html_content) => {
             .map($[0])  # Get just the words
 
     # Link analysis
-    internal_links: Record.method& self =>
+    internal_links: Record.method! self =>
         let base_domain = urlparse(self.url).netloc
         self.get_links().filter(link =>
             let link_domain = urlparse(urljoin(self.url, link.url)).netloc
             link_domain == base_domain or link_domain == ""
         )
 
-    external_links: Record.method& self =>
+    external_links: Record.method! self =>
         let base_domain = urlparse(self.url).netloc
         self.get_links().filter(link =>
             let link_domain = urlparse(urljoin(self.url, link.url)).netloc
@@ -144,7 +144,7 @@ create_scraper = (delay=1.0, max_retries=3, timeout=10) => {
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
     ]
 
-    fetch_page: Record.method& (self, url) =>
+    fetch_page: Record.method! (self, url) =>
         Async.from_sync(() =>
             validate_url(url) then None else:
                 return Err(ValueError(f"Invalid URL: {url}"))
@@ -194,7 +194,7 @@ create_scraper = (delay=1.0, max_retries=3, timeout=10) => {
         )
 
     # Crawl multiple pages with depth control
-    crawl_site: Record.method& (self, start_url, max_depth=2, max_pages=10) =>
+    crawl_site: Record.method! (self, start_url, max_depth=2, max_pages=10) =>
         let visited = set([start_url])
         let results = {}
         let queue = [(start_url, 0)]  # (url, depth)
@@ -426,7 +426,7 @@ run_crawling_demo = () =>
 
 # Main demo selector
 if __name__ == "__main__":
-    print("🕸️  Web Scraper & Content Analyzer")
+    print("🕸️  Web Scraper ! Content Analyzer")
     print("Choose demo:")
     print("1. Single Page Analysis")
     print("2. Website Crawling")

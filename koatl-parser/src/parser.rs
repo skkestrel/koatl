@@ -1013,9 +1013,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             };
 
             let fmt = optional!(self, |ctx: &mut Self| {
-                let excl = ctx.symbol("!")?;
+                let sep = ctx.symbol("%")?;
                 let (head, parts) = ctx.fstr_inner()?;
-                Ok(FmtSpec { excl, head, parts })
+                Ok(FmtSpec { sep, head, parts })
             })?;
 
             let fmt_expr = FmtExpr {
@@ -1149,8 +1149,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     ("*", BinaryOp::Mul),
                     ("/", BinaryOp::Div),
                     ("//", BinaryOp::FloorDiv),
-                    ("%", BinaryOp::Mod),
-                    ("@", BinaryOp::MatMul),
+                    ("%%", BinaryOp::Mod),
+                    ("@@", BinaryOp::MatMul),
                 ])
                 .map(|(tok, kind)| (None, tok, kind)),
             0 => {
@@ -1277,7 +1277,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 attr: &'tok SToken<'src>,
             },
             Decorator {
-                ampersand: &'tok SToken<'src>,
+                op: &'tok SToken<'src>,
                 decorator: SExpr<'src, 'tok>,
             },
         }
@@ -1320,12 +1320,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             };
 
             let decorator = |ctx: &mut Self| {
-                let ampersand = ctx.symbol("&")?;
+                let op = ctx.symbol("!")?;
                 let decorator = ctx.expr()?;
-                Ok(Postfix::Decorator {
-                    ampersand,
-                    decorator,
-                })
+                Ok(Postfix::Decorator { op, decorator })
             };
 
             let dot_attribute = |ctx: &mut Self| {
@@ -1410,10 +1407,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         dot,
                         attr,
                     },
-                    Postfix::Decorator {
-                        ampersand,
-                        decorator,
-                    } => {
+                    Postfix::Decorator { op, decorator } => {
                         if question.is_some() {
                             return Err(self.set_error(
                                 start,
@@ -1422,7 +1416,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         }
                         Expr::Decorated {
                             expr: expr.boxed(),
-                            ampersand,
+                            op,
                             decorator: decorator.boxed(),
                         }
                     }

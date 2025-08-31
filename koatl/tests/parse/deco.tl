@@ -1,2 +1,2 @@
-wraps(f)& x => x
-y = wraps(f)& x => x
+wraps(f)! x => x
+y = wraps(f)! x => x

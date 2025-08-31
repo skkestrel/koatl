@@ -6,12 +6,12 @@ import json
 import random
 
 # Define a conversational trait for objects that can respond
-export ConversationalTrait = Extension.trait& class(Trait):
-    respond_to = Trait.abstract& self => ()
-    context = Trait.abstract& self => ()
+export ConversationalTrait = Extension.trait! class(Trait):
+    respond_to = Trait.abstract! self => ()
+    context = Trait.abstract! self => ()
 
     # Derived methods available to all implementations
-    chat_with = Trait.property& self => user_input =>
+    chat_with = Trait.property! self => user_input =>
         self.respond_to(user_input, self.context)
 
 is_question = text =>
@@ -19,7 +19,7 @@ is_question = text =>
         text.lower().startswith(("what", "how", "why", "when", "where", "who", "can", "do", "is", "are"))
 
 # Message processing pipeline using extension methods
-Extension.method(str, "extract_entities")& self =>
+Extension.method(str, "extract_entities")! self =>
     # Simple entity extraction
     {
         numbers: re.findall("\\d+", self)
@@ -29,7 +29,7 @@ Extension.method(str, "extract_entities")& self =>
         urls: re.findall("http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\\\(\\\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+", self)
     }
 
-Extension.method(str, "sentiment_score")& self =>
+Extension.method(str, "sentiment_score")! self =>
     # Simplified sentiment analysis
     let positive_words = ["good", "great", "awesome", "excellent", "fantastic", "love", "like", "happy", "amazing"]
     let negative_words = ["bad", "terrible", "awful", "hate", "dislike", "sad", "angry", "frustrated", "annoying"]
@@ -40,7 +40,7 @@ Extension.method(str, "sentiment_score")& self =>
 
     positive_count - negative_count
 
-Extension.method(str, "classify_intent")& self =>
+Extension.method(str, "classify_intent")! self =>
     self.lower() match:
         text if "weather" in text => "weather_query"
         text if ("time" in text or "clock" in text) => "time_query"
@@ -60,7 +60,7 @@ create_weather_bot = () => {
         conversation_history: []
     }
 
-    respond_to: Record.method& (self, message, context) =>
+    respond_to: Record.method! (self, message, context) =>
         let entities = message.extract_entities()
         let intent = message.classify_intent()
         let sentiment = message.sentiment_score()
@@ -121,7 +121,7 @@ create_news_bot = () => {
         last_articles: []
     }
 
-    respond_to: Record.method& (self, message, context) =>
+    respond_to: Record.method! (self, message, context) =>
         let intent = message.classify_intent()
         let entities = message.extract_entities()
 
@@ -144,7 +144,7 @@ create_conversation_manager = bots => {
     active_bot: None
     bots: bots
 
-    route_message: Record.method& (self, message) =>
+    route_message: Record.method! (self, message) =>
         # Smart routing based on message content
         message.lower() match:
             text if "weather" in text =>

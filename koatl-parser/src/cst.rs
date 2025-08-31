@@ -126,7 +126,7 @@ pub enum Stmt<TTree: Tree> {
 
 #[derive(Debug, Clone)]
 pub struct FmtSpec<TTree: Tree> {
-    pub excl: TTree::Token,
+    pub sep: TTree::Token,
     pub head: TTree::Token,
     pub parts: Vec<(FmtExpr<TTree>, TTree::Token)>,
 }
@@ -501,7 +501,7 @@ pub enum Expr<TTree: Tree> {
     // these are removed during desugaring
     Decorated {
         expr: TTree::Expr,
-        ampersand: TTree::Token,
+        op: TTree::Token,
         decorator: TTree::Expr,
     },
     Placeholder {

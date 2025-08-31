@@ -168,7 +168,7 @@ As a synonym for calling a one-argument function, the `&` operator can be used t
 
 ```koatl
 Foo = class:
-    do_something = staticmethod& () => ...
+    do_something = staticmethod! () => ...
 ```
 
 `a& b` is equivalent to `a(b)`.

@@ -47,7 +47,7 @@ export Memo = class(MonadOnce):
 
     __repr__ = self => f"Memo(...)"
 
-    value = staticmethod& (id, deps, f) =>
+    value = staticmethod! (id, deps, f) =>
         """
         Create a memoized value with the given id and dependencies.
         f should be a function taking no arguments that returns the value to be memoized.
@@ -73,7 +73,7 @@ export Memo = class(MonadOnce):
             ctx.update(id, tuple(deps), inner)
         )
 
-    fn = staticmethod& f => wraps(f)& (*args, **kwargs) =>
+    fn = staticmethod! f => wraps(f)! (*args, **kwargs) =>
         let id = f"{f.__module__}.{f.__qualname__}"
         let deps = (tuple(args), tuple(kwargs.items()))
         Memo.value(id, deps, () => f(*args, **kwargs))
@@ -83,7 +83,7 @@ export Memo = class(MonadOnce):
             ctx = Memo.Cache()
         self.f(ctx)
 
-    pure = staticmethod& value => Memo(ctx => value)
+    pure = staticmethod! value => Memo(ctx => value)
 
     bind_once = (self, f) => Memo(ctx =>
         let value = f(self.f(ctx))
@@ -119,7 +119,7 @@ export AsyncMemo = class(MonadOnce):
 
     __repr__ = self => f"AsyncMemo(...)"
 
-    value = staticmethod& (id, deps, f) =>
+    value = staticmethod! (id, deps, f) =>
         """
         Like Memo.value, but we need to cache the result of the Async.
         """
@@ -146,7 +146,7 @@ export AsyncMemo = class(MonadOnce):
             ctx.update(id, tuple(deps), inner)
         )
 
-    fn = staticmethod& f => wraps(f)& (*args, **kwargs) =>
+    fn = staticmethod! f => wraps(f)! (*args, **kwargs) =>
         let id = f"{f.__module__}.{f.__qualname__}"
         let deps = (tuple(args), tuple(kwargs.items()))
         AsyncMemo.value(id, deps, () => f(*args, **kwargs))
@@ -158,7 +158,7 @@ export AsyncMemo = class(MonadOnce):
 
     with_ctx = (self, ctx) => self.f(ctx)
 
-    pure = staticmethod& value => AsyncMemo(ctx => Async.pure(value))
+    pure = staticmethod! value => AsyncMemo(ctx => Async.pure(value))
 
     bind_once = (self, f) => AsyncMemo(ctx =>
         let value = f(@self.f(ctx))

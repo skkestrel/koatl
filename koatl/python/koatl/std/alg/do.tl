@@ -1,7 +1,7 @@
 import functools.wraps
 
 
-export do = f => wraps(f)& (*args, **kwargs) =>
+export do = f => wraps(f)! (*args, **kwargs) =>
     let gen = f(*args, **kwargs)
 
     let m

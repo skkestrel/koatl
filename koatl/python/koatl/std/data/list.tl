@@ -17,6 +17,6 @@ export List = class(Monad):
 
     bind = (self, f) => List(self.flat_map(f))
 
-    pure = staticmethod& x => [x]
+    pure = staticmethod! x => [x]
 
-    len = property& self => len(self)
+    len = property! self => len(self)
