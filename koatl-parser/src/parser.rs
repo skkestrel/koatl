@@ -1670,7 +1670,10 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let atom = |ctx: &mut Self| ctx.atom();
         let postfix = |ctx: &mut Self| ctx.postfix_expr(&atom);
         let unary = |ctx: &mut Self| ctx.unary_expr(&postfix);
-        let control = |ctx: &mut Self| ctx.control_expr(&unary);
+        let control = |ctx: &mut Self| {
+            ctx.set_error(ctx.cursor, ErrMsg::Expected("expression".into()));
+            ctx.control_expr(&unary)
+        };
         let binary0 = |ctx: &mut Self| ctx.binary_expr(0, &control);
         let binary1 = |ctx: &mut Self| ctx.binary_expr(1, &binary0);
         let binary2 = |ctx: &mut Self| ctx.binary_expr(2, &binary1);

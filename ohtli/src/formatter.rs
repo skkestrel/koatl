@@ -25,8 +25,6 @@ impl Formatter {
 
         let (cst, parse_errors) = parse_tokens(source, &tokens);
 
-        println!("{:#?}", cst);
-
         let Some(cst) = cst else {
             anyhow::bail!("Parsing errors: {:?}", parse_errors);
         };
@@ -418,6 +416,14 @@ impl Element {
         }
     }
 
+    pub fn group(elements: Elements, power: u8) -> Self {
+        Element {
+            attach_before: false,
+            attach_after: false,
+            data: ElementData::Group { elements, power },
+        }
+    }
+
     pub fn listing(begin: Line, lines: Vec<Line>, end: Line, inline: bool, attached: bool) -> Self {
         Element {
             attach_before: attached,
@@ -461,11 +467,16 @@ impl ToElements for ImportTree<STree<'_, '_>> {
             self.dots
                 .value
                 .iter()
-                .flat_map(|(dot, _count)| attached_token(dot))
+                .flat_map(|(dot, _count)| unary_op_token(dot))
                 .collect::<Vec<_>>(),
             self.trunk
                 .iter()
-                .flat_map(|(ident, dot)| { line!(attached_token(ident), attached_token(dot)) })
+                .flat_map(|(ident, dot)| {
+                    line!(
+                        ident,
+                        special_token_to_elements(dot, TokenContext::DoublyAttached)
+                    )
+                })
                 .collect::<Vec<_>>(),
             self.leaf
         )
@@ -702,7 +713,7 @@ impl ToElements for SExpr<'_, '_> {
                 args,
                 body,
             } => {
-                line!(class_kw, args, body)
+                line!(class_kw, args.as_ref().map(|x| attached_listing(x)), body)
             }
             Expr::With {
                 with_kw,
@@ -747,10 +758,10 @@ impl ToElements for SExpr<'_, '_> {
             }
             Expr::Decorated {
                 expr,
-                op: ampersand,
+                op,
                 decorator,
             } => {
-                line!(expr, ampersand, decorator)
+                line!(expr, attached_token(op), decorator)
             }
             Expr::Fstr {
                 begin,
@@ -759,18 +770,22 @@ impl ToElements for SExpr<'_, '_> {
                 end,
             } => {
                 // TODO re-glue the parts
-                line!(
-                    unary_op_token(begin),
-                    unary_op_token(head),
-                    parts
-                        .iter()
-                        .map(|(a, b)| line!(
-                            a,
-                            special_token_to_elements(b, TokenContext::DoublyAttached)
-                        ))
-                        .collect::<Vec<_>>(),
-                    attached_token(end)
+                Element::group(
+                    line!(
+                        unary_op_token(begin),
+                        unary_op_token(head),
+                        parts
+                            .iter()
+                            .map(|(a, b)| line!(
+                                a,
+                                special_token_to_elements(b, TokenContext::DoublyAttached)
+                            ))
+                            .collect::<Vec<_>>(),
+                        attached_token(end)
+                    ),
+                    0,
                 )
+                .to_elements()
             }
             Expr::Tuple { kind } => match kind {
                 TupleKind::Unit(lparen, rparen) => {
@@ -873,7 +888,7 @@ impl ToElements for PatternClassItem<STree<'_, '_>> {
             PatternClassItem::Item { pattern } => line!(pattern),
             PatternClassItem::Kw { name, eq, pattern } => line!(
                 name,
-                special_token_to_elements(eq, TokenContext::Attached),
+                special_token_to_elements(eq, TokenContext::DoublyAttached),
                 pattern
             ),
         }
@@ -960,7 +975,7 @@ impl ToElements for MappingKey<STree<'_, '_>> {
                 head,
                 parts,
                 end,
-            } => {
+            } => Element::group(
                 line!(
                     unary_op_token(begin),
                     unary_op_token(head),
@@ -972,8 +987,10 @@ impl ToElements for MappingKey<STree<'_, '_>> {
                         ))
                         .collect::<Vec<_>>(),
                     attached_token(end)
-                )
-            }
+                ),
+                0,
+            )
+            .to_elements(),
             MappingKey::Unit { .. } => todo!(),
             MappingKey::ParenthesizedBlock { .. } => {
                 todo!()

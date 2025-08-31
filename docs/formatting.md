@@ -162,10 +162,10 @@ f"Hello, my name is {
 }"
 ```
 
-For reasons, format specifiers should be separated using `!` instead of `:`:
+For reasons, format specifiers should be separated using `%` instead of `:`:
 
 ```koatl
-f"{123!.2f}"
+f"{123%.2f}"
 ```
 
 ### Verbatim fstrings

@@ -1023,7 +1023,6 @@ impl<'src> TokenizeCtx<'src> {
                 marker = self.cursor();
                 let mut format_tokens = vec![];
 
-                // TODO wrong tokenization
                 if self.try_parse(|x| x.parse_seq(FMT_DELIMITER)).is_ok() {
                     format_tokens.push(SToken::new(
                         Token::Symbol(FMT_DELIMITER),
