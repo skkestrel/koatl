@@ -56,7 +56,7 @@ pub enum Token<'src> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TriviumType {
+pub enum TrivialTokenType {
     Newline,
     Whitespace,
     LineComment,
@@ -64,9 +64,9 @@ pub enum TriviumType {
 }
 
 #[derive(Debug, Clone)]
-pub struct Trivium<'src> {
+pub struct TrivialToken<'src> {
     pub span: Span,
-    pub typ: TriviumType,
+    pub typ: TrivialTokenType,
     pub value: &'src str,
 }
 
@@ -74,12 +74,12 @@ pub struct Trivium<'src> {
 pub struct SToken<'src> {
     pub span: Span,
     pub token: Token<'src>,
-    pub leading_trivia: Vec<Trivium<'src>>,
-    pub trailing_trivia: Vec<Trivium<'src>>,
+    pub leading_trivia: Vec<TrivialToken<'src>>,
+    pub trailing_trivia: Vec<TrivialToken<'src>>,
 }
 
 impl<'src> SToken<'src> {
-    pub fn new(token: Token<'src>, span: Span, leading_trivia: Vec<Trivium<'src>>) -> Self {
+    pub fn new(token: Token<'src>, span: Span, leading_trivia: Vec<TrivialToken<'src>>) -> Self {
         SToken {
             span,
             token,
@@ -245,7 +245,7 @@ struct TokenizeCtx<'src> {
 
     keywords: HashSet<String>,
     keep_trivia: bool,
-    unassigned_trivia: Vec<Trivium<'src>>,
+    unassigned_trivia: Vec<TrivialToken<'src>>,
 }
 
 impl<'src> TokenizeCtx<'src> {
@@ -359,7 +359,7 @@ impl<'src> TokenizeCtx<'src> {
         }
     }
 
-    fn parse_indentation(&mut self) -> TResult<'src, (usize, Span, Vec<Trivium<'src>>)> {
+    fn parse_indentation(&mut self) -> TResult<'src, (usize, Span, Vec<TrivialToken<'src>>)> {
         let start = self.cursor();
         let mut indent_level: usize = 0;
 
@@ -708,7 +708,7 @@ impl<'src> TokenizeCtx<'src> {
         Ok((Token::Float(num_str), span, true))
     }
 
-    fn parse_newline(&mut self) -> TResult<'src, Trivium<'src>> {
+    fn parse_newline(&mut self) -> TResult<'src, TrivialToken<'src>> {
         let start = self.cursor();
         let mut err = false;
 
@@ -733,15 +733,15 @@ impl<'src> TokenizeCtx<'src> {
                 "expected newline",
             ));
         } else {
-            Ok(Trivium {
+            Ok(TrivialToken {
                 span: self.span_since(&start),
-                typ: TriviumType::Newline,
+                typ: TrivialTokenType::Newline,
                 value: self.slice_since(&start),
             })
         }
     }
 
-    fn parse_newline_or_eof(&mut self) -> TResult<'src, Vec<Trivium<'src>>> {
+    fn parse_newline_or_eof(&mut self) -> TResult<'src, Vec<TrivialToken<'src>>> {
         if self.peek().is_none() {
             return Ok(vec![]);
         }
@@ -759,7 +759,7 @@ impl<'src> TokenizeCtx<'src> {
         ));
     }
 
-    fn parse_whitespace(&mut self) -> TResult<'src, Trivium<'src>> {
+    fn parse_whitespace(&mut self) -> TResult<'src, TrivialToken<'src>> {
         let start = self.cursor();
         let mut found_one = false;
 
@@ -783,14 +783,14 @@ impl<'src> TokenizeCtx<'src> {
             ));
         }
 
-        Ok(Trivium {
+        Ok(TrivialToken {
             span: self.span_since(&start),
-            typ: TriviumType::Whitespace,
+            typ: TrivialTokenType::Whitespace,
             value: self.slice_since(&start),
         })
     }
 
-    fn parse_empty_line(&mut self) -> TResult<'src, Vec<Trivium<'src>>> {
+    fn parse_empty_line(&mut self) -> TResult<'src, Vec<TrivialToken<'src>>> {
         if self.peek().is_none() {
             return Err(LexError::custom(
                 self.span_since(&self.cursor()),
@@ -808,7 +808,7 @@ impl<'src> TokenizeCtx<'src> {
         Ok(trivia)
     }
 
-    fn parse_line_comment(&mut self) -> TResult<'src, Trivium<'src>> {
+    fn parse_line_comment(&mut self) -> TResult<'src, TrivialToken<'src>> {
         let start = self.cursor();
 
         if self.next() != Some('#') {
@@ -822,23 +822,23 @@ impl<'src> TokenizeCtx<'src> {
             self.next();
         }
 
-        Ok(Trivium {
+        Ok(TrivialToken {
             span: self.span_since(&start),
-            typ: TriviumType::LineComment,
+            typ: TrivialTokenType::LineComment,
             value: self.slice_since(&start),
         })
     }
 
-    fn parse_block_comment(&mut self) -> TResult<'src, Trivium<'src>> {
+    fn parse_block_comment(&mut self) -> TResult<'src, TrivialToken<'src>> {
         let start = self.cursor();
 
         self.parse_seq("#-")?;
 
         while let Some(_) = self.peek() {
             if self.try_parse(|ctx| ctx.parse_seq("-#")).is_ok() {
-                return Ok(Trivium {
+                return Ok(TrivialToken {
                     span: self.span_since(&start),
-                    typ: TriviumType::BlockComment,
+                    typ: TrivialTokenType::BlockComment,
                     value: self.slice_since(&start),
                 });
             }
@@ -857,7 +857,7 @@ impl<'src> TokenizeCtx<'src> {
         ));
     }
 
-    fn parse_trivia(&mut self) -> TResult<'src, Vec<Trivium<'src>>> {
+    fn parse_trivia(&mut self) -> TResult<'src, Vec<TrivialToken<'src>>> {
         let mut trivia = Vec::new();
 
         while self.peek().is_some() {
@@ -1272,7 +1272,7 @@ impl<'src> TokenizeCtx<'src> {
         let mut line_tokens = vec![];
 
         let mut block_indent = None;
-        let mut cur_block_unassigned_trivia = std::mem::take(&mut self.unassigned_trivia);
+        let mut cur_block_unassigned_trivia = vec![];
 
         const OPEN_DELIMS: &[char] = &['{', '[', '('];
         const CLOSE_DELIMS: &[char] = &['}', ']', ')'];
@@ -1311,6 +1311,8 @@ impl<'src> TokenizeCtx<'src> {
                 }
             } else {
                 // prune empty lines
+                cur_block_unassigned_trivia.extend(std::mem::take(&mut self.unassigned_trivia));
+
                 while let Ok(empty_line_trivia) =
                     self.try_parse(|ctx| TokenizeCtx::parse_empty_line(ctx))
                 {
@@ -1346,9 +1348,9 @@ impl<'src> TokenizeCtx<'src> {
                             })?;
 
                         if let Some(first_token) = continuation_tokens.0.first_mut() {
-                            first_token
-                                .leading_trivia
-                                .extend(cur_block_unassigned_trivia.drain(..));
+                            let mut t = std::mem::take(&mut cur_block_unassigned_trivia);
+                            t.extend(first_token.leading_trivia.drain(..));
+                            first_token.leading_trivia = t;
 
                             line_tokens.extend(continuation_tokens.0);
                         }
@@ -1534,15 +1536,21 @@ impl<'src> TokenizeCtx<'src> {
         };
 
         let len = tokens.len();
-        if len >= 2 {
-            // we want to avoid putting trivia on an eol token, so put it on the second last one
-            tokens[len - 2]
+        for i in len - 1..=0 {
+            // avoid putting trivia on an eol token
+            if matches!(tokens[i].token, Token::Eol) {
+                continue;
+            }
+
+            tokens[i]
                 .trailing_trivia
                 .extend(cur_block_unassigned_trivia.drain(..));
-        } else {
-            self.unassigned_trivia
-                .extend(cur_block_unassigned_trivia.drain(..));
+
+            break;
         }
+
+        self.unassigned_trivia
+            .extend(cur_block_unassigned_trivia.drain(..));
 
         Ok((TokenList(tokens), break_type, block_span))
     }
@@ -1582,7 +1590,7 @@ pub fn tokenize<'src>(
 mod tests {
     use super::*;
 
-    fn match_trivia(expected: &Vec<Trivium>, actual: &Vec<Trivium>) -> bool {
+    fn match_trivia(expected: &Vec<TrivialToken>, actual: &Vec<TrivialToken>) -> bool {
         if expected.len() != actual.len() {
             return false;
         }
@@ -1599,8 +1607,8 @@ mod tests {
     fn assert_has_token_with_trivia(
         token_list: &TokenList,
         token: Token,
-        leading_trivia: Vec<Trivium>,
-        trailing_trivia: Vec<Trivium>,
+        leading_trivia: Vec<TrivialToken>,
+        trailing_trivia: Vec<TrivialToken>,
     ) {
         let mut cands = vec![];
 
@@ -1642,28 +1650,28 @@ mod tests {
         tokens.unwrap()
     }
 
-    fn simple_trivium(typ: TriviumType, value: &str) -> Trivium {
-        Trivium {
+    fn simple_trivium(typ: TrivialTokenType, value: &str) -> TrivialToken {
+        TrivialToken {
             span: Span { start: 0, end: 0 },
             typ,
             value,
         }
     }
 
-    fn newline_trivium() -> Trivium<'static> {
-        simple_trivium(TriviumType::Newline, "\n")
+    fn newline_trivium() -> TrivialToken<'static> {
+        simple_trivium(TrivialTokenType::Newline, "\n")
     }
 
-    fn whitespace_trivium(value: &str) -> Trivium {
-        simple_trivium(TriviumType::Whitespace, value)
+    fn whitespace_trivium(value: &str) -> TrivialToken {
+        simple_trivium(TrivialTokenType::Whitespace, value)
     }
 
-    fn comment_trivium(value: &str) -> Trivium {
-        simple_trivium(TriviumType::LineComment, value)
+    fn comment_trivium(value: &str) -> TrivialToken {
+        simple_trivium(TrivialTokenType::LineComment, value)
     }
 
-    fn block_comment_trivium(value: &str) -> Trivium {
-        simple_trivium(TriviumType::BlockComment, value)
+    fn block_comment_trivium(value: &str) -> TrivialToken {
+        simple_trivium(TrivialTokenType::BlockComment, value)
     }
 
     #[test]
@@ -1794,7 +1802,7 @@ x = 42  #- Block comment -#"#;
                 block_comment_trivium("#- Start comment -#"),
                 newline_trivium(),
             ],
-            vec![simple_trivium(TriviumType::Whitespace, " ")],
+            vec![simple_trivium(TrivialTokenType::Whitespace, " ")],
         );
     }
 
@@ -1815,14 +1823,14 @@ x = 42  #- Block comment -#"#;
             &token_list,
             Token::Ident("x"),
             vec![],
-            vec![simple_trivium(TriviumType::Whitespace, "  ")],
+            vec![simple_trivium(TrivialTokenType::Whitespace, "  ")],
         );
 
         assert_has_token_with_trivia(
             &token_list,
             Token::Symbol("="),
             vec![],
-            vec![simple_trivium(TriviumType::Whitespace, "  ")],
+            vec![simple_trivium(TrivialTokenType::Whitespace, "  ")],
         );
     }
 

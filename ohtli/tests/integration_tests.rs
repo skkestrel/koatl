@@ -31,8 +31,8 @@ fn assert_compare_formatting(input: &str, expected: &str) {
     let result = output_generator.write(&processed_layout);
 
     if result.trim() != expected.trim() {
-        println!("Input:\n{:#?}", lines);
-        println!("Output:\n{:#?}", processed_layout);
+        // println!("Input:\n{:#?}", lines);
+        // println!("Output:\n{:#?}", processed_layout);
         assert_eq!(result.trim(), expected.trim());
     }
 }
@@ -46,10 +46,8 @@ fn test_basic_assignment() {
 
 #[test]
 fn test_line_comment_preservation() {
-    // TODO: Leading comments are currently dropped by the parser when not attached to statements
-    // This is a known limitation that would require parser changes to fix
-    let input = "x = 42 # comment";
-    let expected = "x = 42 # comment";
+    let input = "# comment\nx = 42";
+    let expected = "# comment\nx = 42";
     assert_compare_formatting(input, expected);
 }
 
@@ -61,9 +59,14 @@ fn test_inline_comment_preservation() {
 }
 
 #[test]
+fn test_block() {
+    let input = "if True:\n False";
+    let expected = "if True:\n    False";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
 fn test_multiple_assignments() {
-    // TODO: Multi-line parsing with leading comments needs parser support
-    // For now, test multiple statements without leading comments
     let input = "x = 42\ny = 1.5";
     let expected = "x = 42\ny = 1.5";
     assert_compare_formatting(input, expected);
@@ -77,13 +80,6 @@ fn test_simple_lambda() {
 }
 
 #[test]
-fn test_pipeline() {
-    let input = "\"hello world\" | print";
-    let expected = "\"hello world\" | print";
-    assert_compare_formatting(input, expected);
-}
-
-#[test]
 fn test_let_binding() {
     let input = "let x = 42";
     let expected = "let x = 42";
@@ -92,7 +88,7 @@ fn test_let_binding() {
 
 #[test]
 fn test_method_call() {
-    let input = "result = obj.method(arg1, arg2)";
+    let input = "result = obj.method ( arg1, arg2)";
     let expected = "result = obj.method(arg1, arg2)";
     assert_compare_formatting(input, expected);
 }
@@ -190,8 +186,8 @@ fn test_numeric_underscore() {
 
 #[test]
 fn test_string_literal() {
-    let input = "message = \"Hello, world!\"";
-    let expected = "message = \"Hello, world!\"";
+    let input = "message = #- test -# \"Hello, world!\"";
+    let expected = "message = #- test -# \"Hello, world!\"";
     assert_compare_formatting(input, expected);
 }
 

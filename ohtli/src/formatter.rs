@@ -1,5 +1,7 @@
+use std::fmt::Display;
+
 use anyhow::Result;
-use koatl_parser::lexer::{tokenize, SToken, Trivium, TriviumType};
+use koatl_parser::lexer::{tokenize, SToken, TrivialToken, TrivialTokenType};
 use koatl_parser::parse_tokens;
 use koatl_parser::{cst::*, Token};
 
@@ -23,6 +25,8 @@ impl Formatter {
 
         let (cst, parse_errors) = parse_tokens(source, &tokens);
 
+        println!("{:#?}", cst);
+
         let Some(cst) = cst else {
             anyhow::bail!("Parsing errors: {:?}", parse_errors);
         };
@@ -33,7 +37,11 @@ impl Formatter {
             lines.extend(stmt_to_lines(stmt));
         }
 
+        println!("Input Layout:\n{}", format_lines(&lines));
+
         let processed_layout = LayoutCalculator::new(&self.config).do_layout(lines);
+
+        println!("Layout:\n{}", format_lines(&processed_layout));
 
         let mut output_generator = LayoutWriter::new(&self.config);
         Ok(output_generator.write(&processed_layout))
@@ -52,8 +60,10 @@ pub struct Element {
 
 #[derive(Debug, Clone)]
 pub enum ElementData {
-    Atom(String),
-    LineComment(String),
+    Atom {
+        content: String,
+        is_comment: bool,
+    },
     LineBreak,
 
     Listing {
@@ -65,7 +75,6 @@ pub enum ElementData {
         begin: Elements,
         elements: Elements,
         end: Elements,
-        inline: bool,
     },
 
     Group {
@@ -77,6 +86,70 @@ pub enum ElementData {
         lines: Vec<Line>,
         inline: bool,
     },
+}
+
+impl Display for ElementData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ElementData::Atom {
+                content,
+                is_comment,
+            } => {
+                if *is_comment {
+                    write!(f, "Comment({})", content)
+                } else {
+                    write!(f, "{}", content)
+                }
+            }
+            ElementData::LineBreak => write!(f, "LineBreak"),
+            ElementData::Listing { lines, inline } => {
+                write!(f, "Listing({}, inline={})", format_lines(lines), inline)
+            }
+            ElementData::Parens {
+                begin,
+                elements,
+                end,
+            } => {
+                write!(
+                    f,
+                    "Parens({}, {}, {})",
+                    format_elements(begin),
+                    format_elements(elements),
+                    format_elements(end)
+                )
+            }
+            ElementData::Group { elements, power } => {
+                write!(f, "Group({}, power={})", format_elements(elements), power)
+            }
+            ElementData::Block { lines, inline } => {
+                write!(f, "Block({}, inline={})", format_lines(lines), inline)
+            }
+        }
+    }
+}
+
+fn format_elements(elements: &[Element]) -> String {
+    let element_strs: Vec<String> = elements
+        .iter()
+        .map(|e| {
+            let content = format!("{}", e.data);
+            if e.attach_before && e.attach_after {
+                format!("+{}+", content)
+            } else if e.attach_before {
+                format!("+{}", content)
+            } else if e.attach_after {
+                format!("{}+", content)
+            } else {
+                content
+            }
+        })
+        .collect();
+    format!("[{}]", element_strs.join(" "))
+}
+
+fn format_lines(lines: &[Line]) -> String {
+    let line_strs: Vec<String> = lines.iter().map(|line| format_elements(line)).collect();
+    format!("{}", line_strs.join("\n"))
 }
 
 macro_rules! line {
@@ -99,6 +172,44 @@ trait ToElements {
 
 trait IntoElements {
     fn to_elements(self) -> Vec<Element>;
+}
+
+pub fn cleanup_lines(tokens: Elements) -> Vec<Line> {
+    let mut saw_semantic_token = false;
+    let mut cur_line = vec![];
+
+    let mut lines = vec![];
+
+    for t in tokens {
+        match &t.data {
+            ElementData::Atom {
+                is_comment: true, ..
+            } => {}
+            ElementData::LineBreak => {
+                if !saw_semantic_token {
+                    cur_line.push(t);
+                    lines.push(std::mem::take(&mut cur_line));
+                    continue;
+                }
+            }
+            ElementData::Block { .. } => {
+                cur_line.push(t);
+                lines.push(std::mem::take(&mut cur_line));
+                continue;
+            }
+            _ => {
+                saw_semantic_token = true;
+            }
+        }
+
+        cur_line.push(t)
+    }
+
+    if !cur_line.is_empty() {
+        lines.push(cur_line);
+    }
+
+    lines
 }
 
 pub fn stmt_to_lines(stmt: &SStmt) -> Vec<Line> {
@@ -167,7 +278,7 @@ pub fn stmt_to_lines(stmt: &SStmt) -> Vec<Line> {
         Stmt::Error { raw } => vec![Element::atom(raw.to_string())],
     };
 
-    vec![tokens]
+    cleanup_lines(tokens)
 }
 
 impl<T> IntoElements for Option<T>
@@ -251,11 +362,10 @@ impl Element {
         match &self.data {
             ElementData::LineBreak => false,
             ElementData::Group { .. } => false,
-            ElementData::Atom(_) => true,
-            ElementData::LineComment(_) => true,
+            ElementData::Atom { .. } => true,
             ElementData::Listing { inline, .. } => !*inline,
-            ElementData::Parens { inline, .. } => !*inline,
-            ElementData::Block { inline, .. } => !*inline,
+            ElementData::Parens { .. } => todo!(),
+            ElementData::Block { .. } => todo!(),
         }
     }
 
@@ -263,7 +373,10 @@ impl Element {
         Element {
             attach_before: false,
             attach_after: false,
-            data: ElementData::Atom(content),
+            data: ElementData::Atom {
+                content,
+                is_comment: false,
+            },
         }
     }
 
@@ -276,34 +389,32 @@ impl Element {
     }
 
     pub fn attached_after(content: String) -> Self {
-        Element {
-            attach_before: false,
-            attach_after: true,
-            data: ElementData::Atom(content),
-        }
+        let mut a = Self::atom(content);
+        a.attach_after = true;
+        a
     }
 
     pub fn attached_before(content: String) -> Self {
-        Element {
-            attach_before: true,
-            attach_after: false,
-            data: ElementData::Atom(content),
-        }
+        let mut a = Self::atom(content);
+        a.attach_before = true;
+        a
     }
 
-    pub fn range(content: String) -> Self {
-        Element {
-            attach_before: true,
-            attach_after: true,
-            data: ElementData::Atom(content),
-        }
+    pub fn attached_both(content: String) -> Self {
+        let mut a = Self::atom(content);
+        a.attach_before = true;
+        a.attach_after = true;
+        a
     }
 
-    pub fn line_comment(content: String) -> Self {
+    pub fn comment(content: String) -> Self {
         Element {
             attach_before: false,
             attach_after: false,
-            data: ElementData::LineComment(content),
+            data: ElementData::Atom {
+                content,
+                is_comment: true,
+            },
         }
     }
 
@@ -319,12 +430,11 @@ impl Element {
                     data: ElementData::Listing { lines, inline },
                 }],
                 end,
-                inline: false,
             },
         }
     }
 
-    pub fn group(begin: Elements, elements: Vec<Element>, end: Elements) -> Self {
+    pub fn parens(begin: Elements, elements: Vec<Element>, end: Elements) -> Self {
         Element {
             attach_before: false,
             attach_after: false,
@@ -332,7 +442,6 @@ impl Element {
                 begin,
                 elements,
                 end,
-                inline: true,
             },
         }
     }
@@ -443,7 +552,7 @@ impl ToElements for SExpr<'_, '_> {
                     expr,
                     question.map(attached_token),
                     attached_token(dot),
-                    Element::group(
+                    Element::parens(
                         lparen.to_elements(),
                         rhs.to_elements(),
                         rparen.to_elements()
@@ -655,7 +764,10 @@ impl ToElements for SExpr<'_, '_> {
                     unary_op_token(head),
                     parts
                         .iter()
-                        .map(|(a, b)| line!(a, attached_token(b)))
+                        .map(|(a, b)| line!(
+                            a,
+                            special_token_to_elements(b, TokenContext::DoublyAttached)
+                        ))
                         .collect::<Vec<_>>(),
                     attached_token(end)
                 )
@@ -675,7 +787,7 @@ impl ToElements for SExpr<'_, '_> {
                 dedent,
                 rparen,
             } => {
-                line!(lparen, indent, body, dedent, rparen)
+                todo!()
             }
         }
     }
@@ -686,7 +798,7 @@ where
     T: ToElements,
 {
     fn to_elements(&self) -> Vec<Element> {
-        self.item.to_elements()
+        line!(self.item, self.separator.map(attached_token), self.newline)
     }
 }
 
@@ -778,7 +890,7 @@ impl ToElements for PatternMappingKey<STree<'_, '_>> {
                 lparen,
                 key,
                 rparen,
-            } => line!(Element::group(
+            } => line!(Element::parens(
                 lparen.to_elements(),
                 key.to_elements(),
                 rparen.to_elements()
@@ -803,7 +915,16 @@ impl ToElements for SMappingItem<'_, '_> {
 
 impl ToElements for FmtExpr<STree<'_, '_>> {
     fn to_elements(&self) -> Vec<Element> {
-        line!(self.indent, self.stmts, self.dedent, self.fmt)
+        let block = Element::block(
+            self.stmts
+                .value
+                .iter()
+                .flat_map(|x| stmt_to_lines(x))
+                .collect::<Vec<_>>(),
+            true,
+        );
+
+        line!(self.indent, block, self.dedent, self.fmt)
     }
 }
 
@@ -829,7 +950,7 @@ impl ToElements for MappingKey<STree<'_, '_>> {
                 lparen,
                 key,
                 rparen,
-            } => line!(Element::group(
+            } => line!(Element::parens(
                 lparen.to_elements(),
                 key.to_elements(),
                 rparen.to_elements()
@@ -840,12 +961,18 @@ impl ToElements for MappingKey<STree<'_, '_>> {
                 parts,
                 end,
             } => {
-                let parts = parts
-                    .iter()
-                    .map(|(fmtexpr, cont)| line!(fmtexpr, cont))
-                    .collect::<Vec<_>>();
-
-                line!(begin, head, parts, end)
+                line!(
+                    unary_op_token(begin),
+                    unary_op_token(head),
+                    parts
+                        .iter()
+                        .map(|(a, b)| line!(
+                            a,
+                            special_token_to_elements(b, TokenContext::DoublyAttached)
+                        ))
+                        .collect::<Vec<_>>(),
+                    attached_token(end)
+                )
             }
             MappingKey::Unit { .. } => todo!(),
             MappingKey::ParenthesizedBlock { .. } => {
@@ -912,7 +1039,10 @@ where
         } => {
             line!(Element::listing(
                 line!(begin, indent),
-                items.iter().map(|item| item.to_elements()).collect(),
+                items
+                    .iter()
+                    .flat_map(|item| cleanup_lines(item.to_elements()))
+                    .collect(),
                 line!(dedent, newline, end),
                 false,
                 attached
@@ -943,32 +1073,24 @@ fn unary_op_token(token: &SToken) -> Vec<Element> {
     special_token_to_elements(token, TokenContext::UnaryOperator)
 }
 
-impl ToElements for Vec<Trivium<'_>> {
+impl ToElements for Vec<TrivialToken<'_>> {
     fn to_elements(&self) -> Vec<Element> {
         let mut elements = Vec::new();
         for trivium in self {
             match trivium.typ {
-                TriviumType::LineComment => {
-                    elements.push(Element::line_comment(trivium.value.to_string()));
+                TrivialTokenType::LineComment => {
+                    elements.push(Element::comment(trivium.value.to_string()));
                 }
-                TriviumType::BlockComment => {
-                    elements.push(Element::atom(trivium.value.to_string()));
+                TrivialTokenType::BlockComment => {
+                    elements.push(Element::comment(trivium.value.to_string()));
                 }
-                TriviumType::Newline => {
+                TrivialTokenType::Newline => {
                     elements.push(Element::line_break());
                 }
-                TriviumType::Whitespace => {}
+                TrivialTokenType::Whitespace => {}
             }
         }
         elements
-    }
-}
-
-impl<'src, 'tok> ToElements for SStmt<'src, 'tok> {
-    fn to_elements(&self) -> Vec<Element> {
-        // For now, just format as a placeholder
-        // This should be expanded based on the actual statement structure
-        vec![Element::atom("stmt".to_string())]
     }
 }
 
@@ -983,13 +1105,19 @@ fn special_token_to_elements(token: &SToken, context: TokenContext) -> Vec<Eleme
         let element = match context {
             TokenContext::UnaryOperator => Element::attached_after(token_text),
             TokenContext::Attached => Element::attached_before(token_text),
-            TokenContext::DoublyAttached => Element::range(token_text),
+            TokenContext::DoublyAttached => Element::attached_both(token_text),
             TokenContext::Normal => {
-                if token.trailing_trivia.is_empty()
+                if token
+                    .trailing_trivia
+                    .iter()
+                    .all(|x| !matches!(x.typ, TrivialTokenType::Whitespace))
                     && matches!(token.token, Token::Symbol(s) if s == "[" || s == "(" || s == "{")
                 {
                     Element::attached_after(token_text)
-                } else if token.leading_trivia.is_empty()
+                } else if token
+                    .leading_trivia
+                    .iter()
+                    .all(|x| !matches!(x.typ, TrivialTokenType::Whitespace))
                     && matches!(token.token, Token::Symbol(s) if s == "]" || s == ")" || s == "}")
                 {
                     Element::attached_before(token_text)
@@ -1011,7 +1139,13 @@ fn token_to_text(token: &SToken) -> String {
     match &token.token {
         Token::Ident(s) => s.to_string(),
         Token::None => "None".to_string(),
-        Token::Bool(b) => b.to_string(),
+        Token::Bool(b) => {
+            if *b {
+                "True".to_string()
+            } else {
+                "False".to_string()
+            }
+        }
         Token::Int(s) => s.to_string(),
         Token::IntBin(s) => s.to_string(),
         Token::IntOct(s) => s.to_string(),
@@ -1058,12 +1192,12 @@ impl ToElements for SPattern<'_, '_> {
                 }
             },
             Pattern::Mapping { listing } => line!(listing),
-            Pattern::Class { expr, items } => line!(expr, items),
+            Pattern::Class { expr, items } => line!(expr, attached_listing(items)),
             Pattern::Parenthesized {
                 lparen,
                 pattern,
                 rparen,
-            } => line!(Element::group(
+            } => line!(Element::parens(
                 lparen.to_elements(),
                 pattern.to_elements(),
                 rparen.to_elements(),
@@ -1126,6 +1260,7 @@ impl LayoutCalculator<'_> {
     }
 }
 
+#[derive(Debug)]
 pub struct LayoutWriter<'a> {
     config: &'a Config,
 
@@ -1146,23 +1281,50 @@ impl<'a> LayoutWriter<'a> {
 
     fn line_break(&mut self) {
         self.output.push('\n');
-        for _ in 0..(self.indent_level * self.config.indent_width) {
-            self.output.push(' ');
-        }
         self.attach_next = true;
     }
 
     pub fn write(&mut self, layout: &Vec<Line>) -> String {
-        for element in layout {
-            self.write_elements(&element);
-            self.line_break();
+        for line in layout {
+            self.write_line(line);
         }
+
+        if !self.output.ends_with("\n") {
+            self.output.push('\n');
+        }
+
         self.output.to_string()
     }
 
-    fn write_elements(&mut self, elements: &[Element]) {
+    fn write_line(&mut self, line: &Line) {
+        self.write_elements(line.iter().collect::<Vec<_>>().as_slice());
+    }
+
+    fn write_elements(&mut self, elements: &[&Element]) {
+        let mut indented = false;
+        let mut has_continuation = false;
+
         for e in elements {
-            self.write_element(e)
+            if indented && !has_continuation && matches!(e.data, ElementData::Block { .. }) {
+                self.indent_level -= 1;
+                indented = false;
+                has_continuation = false;
+            }
+
+            self.write_element(e);
+
+            if !indented && matches!(e.data, ElementData::LineBreak) {
+                self.indent_level += 1;
+                indented = true;
+            }
+
+            if indented && !matches!(e.data, ElementData::LineBreak | ElementData::Block { .. }) {
+                has_continuation = true;
+            }
+        }
+
+        if indented {
+            self.indent_level -= 1;
         }
     }
 
@@ -1170,59 +1332,52 @@ impl<'a> LayoutWriter<'a> {
         self.attach_next |= element.attach_before;
 
         match &element.data {
+            ElementData::Atom { content, .. } => {
+                if self.output.ends_with("\n") {
+                    for _ in 0..(self.indent_level * self.config.indent_width) {
+                        self.output.push(' ');
+                    }
+                }
+
+                if !self.attach_next {
+                    self.output.push(' ');
+                }
+
+                self.attach_next = element.attach_after;
+                self.output.push_str(content);
+            }
             ElementData::Group { elements, .. } => {
-                self.write_elements(elements);
+                self.write_line(elements);
             }
             ElementData::LineBreak => {
                 self.line_break();
             }
-            ElementData::Atom(content) => {
-                if !self.attach_next {
-                    self.output.push(' ');
-                }
-                self.output.push_str(content);
-            }
-            ElementData::LineComment(content) => {
-                if !self.attach_next {
-                    self.output.push(' ');
-                }
-                self.output.push_str(content);
-            }
             ElementData::Listing { lines, inline } => {
                 if *inline {
-                    for (i, line) in lines.iter().enumerate() {
-                        self.write_elements(line);
-                        if i < lines.len() - 1 {
-                            self.output.push_str(", ");
-                            self.attach_next = true;
-                        }
+                    for line in lines {
+                        self.write_line(line);
                     }
                 } else {
                     self.indent_level += 1;
                     for line in lines {
-                        self.line_break();
-                        self.write_elements(line);
+                        self.write_line(line);
                     }
                     self.indent_level -= 1;
-                    self.line_break();
                 }
             }
             ElementData::Parens {
                 begin,
                 elements,
                 end,
-                inline,
             } => {
-                self.write_elements(begin);
-                if !inline {
-                    self.write_elements(elements);
-                }
-                self.write_elements(end);
+                self.write_line(begin);
+                self.write_line(elements);
+                self.write_line(end);
             }
             ElementData::Block { lines, inline } => {
                 if *inline {
                     for (i, line) in lines.iter().enumerate() {
-                        self.write_elements(line);
+                        self.write_line(line);
                         if i < lines.len() - 1 {
                             self.output.push_str("; ");
                             self.attach_next = true;
@@ -1231,15 +1386,11 @@ impl<'a> LayoutWriter<'a> {
                 } else {
                     self.indent_level += 1;
                     for line in lines {
-                        self.line_break();
-                        self.write_elements(line);
+                        self.write_line(line);
                     }
                     self.indent_level -= 1;
-                    self.line_break();
                 }
             }
         }
-
-        self.attach_next = element.attach_after;
     }
 }
