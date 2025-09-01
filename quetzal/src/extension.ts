@@ -12,7 +12,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		context.extensionUri,
 		"target",
 		"wasm32-unknown-unknown",
-		"debug",
+		"release",
 		"quetzal.wasm",
 	);
 	const bits = (await vscode.workspace.fs.readFile(filename)) as Uint8Array<ArrayBuffer>;

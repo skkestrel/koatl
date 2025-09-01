@@ -9,3 +9,5 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 node_modules/**
+target/**
+!target/wasm32-unknown-unknown/release/quetzal.*

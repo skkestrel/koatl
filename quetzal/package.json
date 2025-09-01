@@ -6,7 +6,7 @@
 		"type": "git",
 		"url": "https://github.com/skkestrel/koatl"
 	},
-	"version": "0.0.6",
+	"version": "0.1.0",
 	"publisher": "koatl",
 	"engines": {
 		"vscode": "^1.100.0"
@@ -36,18 +36,11 @@
 				"scopeName": "source.koatl",
 				"path": "./syntaxes/tl.tmLanguage.json"
 			}
-		],
-		"commands": [
-			{
-				"command": "koatl.format",
-				"title": "Format Document",
-				"category": "Koatl"
-			}
 		]
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
-		"build": "npm run compile && CARGO_TARGET_DIR=./target cargo build --target wasm32-unknown-unknown",
+		"build": "npm run compile && CARGO_TARGET_DIR=./target cargo build --release --target wasm32-unknown-unknown",
 		"compile": "tsc -b",
 		"watch": "tsc -b -w",
 		"lint": "eslint",
