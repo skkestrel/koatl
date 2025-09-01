@@ -278,7 +278,10 @@ pub fn stmt_to_elements(stmt: &SStmt) -> Elements {
         Stmt::Raise { raise_kw, expr } => {
             line!(raise_kw, expr)
         }
-        Stmt::Error { raw } => vec![Element::atom(raw.to_string())],
+        Stmt::Error { raw } => {
+            let clean_raw = raw.trim_end().to_string();
+            vec![Element::attached_both(clean_raw), Element::line_break()]
+        }
     };
 
     tokens

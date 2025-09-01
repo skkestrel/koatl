@@ -2379,7 +2379,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
                 let mut indent_level = 0;
                 loop {
-                    let span = self.span_from(self.cursor);
+                    let span = self.span_from(before);
 
                     let err_stmt = Box::new(
                         Stmt::Error {
@@ -2463,7 +2463,7 @@ pub fn parse_tokens<'src: 'tok, 'tok>(
             .map(|err| {
                 (
                     true_span(err.index, err.index + 1, ctx.input),
-                    format!("{:?}", err.message),
+                    format!("{:?}. Found: {:?}", err.message, tokens.0[err.index].token),
                 )
             })
             .collect(),

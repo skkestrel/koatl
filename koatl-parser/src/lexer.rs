@@ -1518,17 +1518,19 @@ impl<'src> TokenizeCtx<'src> {
         };
 
         let len = tokens.len();
-        for i in len - 1..=0 {
-            // avoid putting trivia on an eol token
-            if matches!(tokens[i].token, Token::Eol) {
-                continue;
+        if len > 0 {
+            for i in len - 1..=0 {
+                // avoid putting trivia on an eol token
+                if matches!(tokens[i].token, Token::Eol) {
+                    continue;
+                }
+
+                tokens[i]
+                    .trailing_trivia
+                    .extend(cur_block_unassigned_trivia.drain(..));
+
+                break;
             }
-
-            tokens[i]
-                .trailing_trivia
-                .extend(cur_block_unassigned_trivia.drain(..));
-
-            break;
         }
 
         self.unassigned_trivia
