@@ -9,3 +9,4 @@ crate-type = ["cdylib"]
 [dependencies]
 wit-bindgen = "0.21.0"
 ohtli = { path = "../ohtli" }
+similar = "2.5"

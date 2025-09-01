@@ -1,5 +1,30 @@
 package koatl:ohtli;
 
+interface types {
+	record ohtli-diff-hunk {
+		tag: ohtli-diff-tag,
+		old-start: u32,
+		old-count: u32,
+		new-start: u32,
+		new-count: u32,
+		lines: list<ohtli-diff-line>,
+	}
+
+	record ohtli-diff-line {
+		tag: ohtli-diff-tag,
+		value: string,
+	}
+
+	enum ohtli-diff-tag {
+		equal,
+		delete,
+		insert,
+	}
+}
+
 world formatter {
+	export types;
+	use types.{ohtli-diff-hunk, ohtli-diff-tag, ohtli-diff-line};
 	export format: func(o: string) -> string;
+	export format-diff: func(original: string) -> list<ohtli-diff-hunk>;
 }

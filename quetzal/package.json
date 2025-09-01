@@ -52,16 +52,16 @@
 		"watch": "tsc -b -w",
 		"lint": "eslint",
 		"esbuild": "node ./bin/esbuild.js",
-		"generate:model": "wit2ts --outDir ./src ../ohtli/wit",
+		"generate:model": "wit2ts --outDir ./src ./wit",
 		"serve": "serve --cors -l 5000 --ssl-cert $HOME/certs/localhost.pem --ssl-key $HOME/certs/localhost-key.pem"
 	},
 	"dependencies": {
-		"@vscode/wasm-component-model": "1.0.0"
+		"@vscode/wasm-component-model": "^1.0.2"
 	},
 	"devDependencies": {
 		"@types/vscode": "^1.100.0",
 		"generator-code": "^1.11.10",
-		"typescript": "^5.9.2",
-		"serve": "^14.2.1"
+		"serve": "^14.2.1",
+		"typescript": "^5.9.2"
 	}
 }

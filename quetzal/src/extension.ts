@@ -32,9 +32,65 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	vscode.languages.registerDocumentFormattingEditProvider("koatl", {
 		provideDocumentFormattingEdits(document) {
 			const doc = document.getText();
-			const formatted = api.format(doc);
 
-			return [vscode.TextEdit.replace(new vscode.Range(0, 0, document.lineCount, 0), formatted)];
+			// Get the diff instead of the full formatted text
+			const diffHunks = api.formatDiff(doc);
+
+			// Convert diff hunks to TextEdits
+			const edits: vscode.TextEdit[] = [];
+
+			for (const hunk of diffHunks) {
+				// Process each hunk based on its type and lines
+				let currentOldLine = hunk.oldStart;
+				let currentNewLine = hunk.newStart;
+
+				// Group consecutive changes of the same type
+				let pendingDeletes: string[] = [];
+				let pendingInserts: string[] = [];
+				let deleteStartLine = currentOldLine;
+
+				const flushPendingChanges = () => {
+					if (pendingDeletes.length > 0 || pendingInserts.length > 0) {
+						const startPos = new vscode.Position(deleteStartLine, 0);
+						const endPos = new vscode.Position(deleteStartLine + pendingDeletes.length, 0);
+						const range = new vscode.Range(startPos, endPos);
+						const replacement = pendingInserts.join("");
+						edits.push(vscode.TextEdit.replace(range, replacement));
+
+						pendingDeletes = [];
+						pendingInserts = [];
+					}
+				};
+
+				for (const line of hunk.lines) {
+					switch (line.tag) {
+						case formatter.OhtliDiffTag.equal:
+							flushPendingChanges();
+							currentOldLine++;
+							currentNewLine++;
+							deleteStartLine = currentOldLine;
+							break;
+
+						case formatter.OhtliDiffTag.delete:
+							if (pendingDeletes.length === 0) {
+								deleteStartLine = currentOldLine;
+							}
+							pendingDeletes.push(line.value);
+							currentOldLine++;
+							break;
+
+						case formatter.OhtliDiffTag.insert:
+							pendingInserts.push(line.value);
+							currentNewLine++;
+							break;
+					}
+				}
+
+				// Flush any remaining changes
+				flushPendingChanges();
+			}
+
+			return edits;
 		},
 	});
 }

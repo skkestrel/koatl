@@ -9,5 +9,6 @@ vsce publish
 Requirements:
 
 ```
+cargo install wit-bindgen-cli
 cargo install wasm-tools
 ```
