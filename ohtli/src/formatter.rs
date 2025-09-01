@@ -96,12 +96,21 @@ impl Display for ElementData {
                 if *is_comment {
                     write!(f, "Comment({})", content)
                 } else {
-                    write!(f, "{}", content)
+                    write!(f, "{:?}", content)
                 }
             }
             ElementData::LineBreak => write!(f, "LineBreak"),
             ElementData::Listing { lines, inline } => {
-                write!(f, "Listing({}, inline={})", format_lines(lines), inline)
+                write!(
+                    f,
+                    "Listing({}, inline={})",
+                    lines
+                        .iter()
+                        .map(|x| format_elements(x))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    inline
+                )
             }
             ElementData::Parens {
                 begin,
@@ -120,13 +129,22 @@ impl Display for ElementData {
                 write!(f, "Group({}, power={})", format_elements(elements), power)
             }
             ElementData::Block { lines, inline } => {
-                write!(f, "Block({}, inline={})", format_lines(lines), inline)
+                write!(
+                    f,
+                    "Block({}, inline={})",
+                    lines
+                        .iter()
+                        .map(|x| format_elements(x))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    inline
+                )
             }
         }
     }
 }
 
-fn format_elements(elements: &[Element]) -> String {
+pub fn format_elements(elements: &[Element]) -> String {
     let element_strs: Vec<String> = elements
         .iter()
         .map(|e| {
@@ -145,7 +163,7 @@ fn format_elements(elements: &[Element]) -> String {
     format!("[{}]", element_strs.join(" "))
 }
 
-fn format_lines(lines: &[Line]) -> String {
+pub fn format_lines(lines: &[Line]) -> String {
     let line_strs: Vec<String> = lines.iter().map(|line| format_elements(line)).collect();
     format!("{}", line_strs.join("\n"))
 }
@@ -1275,72 +1293,34 @@ impl LayoutCalculator<'_> {
     pub fn do_layout(&self, elements: Vec<Line>) -> Vec<Line> {
         elements
             .into_iter()
-            .map(|line| self.layout_line(&line))
+            .map(|line| self.layout_line(line))
             .collect()
     }
 
-    pub fn layout_line(&self, line: &Line) -> Line {
-        let mut result = Vec::new();
-        let mut i = 0;
-
-        while i < line.len() {
-            let element = &line[i];
-
-            if matches!(element.data, ElementData::LineBreak) {
-                // Add the LineBreak to the result
-                result.push(self.layout_element(element));
-                i += 1;
-
-                // Check if there are more elements after the LineBreak
-                if i < line.len() {
-                    // Check if the next element is already a Block
-                    if matches!(line[i].data, ElementData::Block { .. }) {
-                        // Don't wrap in a new Block, just continue
-                        continue;
-                    } else {
-                        // Collect all remaining elements into a new Block
-                        let remaining_elements: Vec<Element> = line[i..].to_vec();
-
-                        // Create lines from the remaining elements
-                        // For now, treat each element as its own line
-                        let block_lines: Vec<Line> = remaining_elements
-                            .into_iter()
-                            .map(|elem| vec![self.layout_element(&elem)])
-                            .collect();
-
-                        // Add the Block element
-                        result.push(Element::block(block_lines, false));
-
-                        // We've processed all remaining elements
-                        break;
-                    }
-                }
-            } else {
-                // Regular element, recursively process it
-                result.push(self.layout_element(element));
-                i += 1;
-            }
-        }
-
-        result
+    pub fn layout_line(&self, line: Line) -> Line {
+        line.into_iter().map(|e| self.layout_element(e)).collect()
     }
 
-    fn layout_element(&self, element: &Element) -> Element {
-        let new_data = match &element.data {
+    fn layout_element(&self, element: Element) -> Element {
+        let new_data = match element.data {
             ElementData::Block { lines, inline } => {
-                // Recursively process each line in the block
-                let new_lines = lines.iter().map(|line| self.layout_line(line)).collect();
+                let new_lines = lines
+                    .into_iter()
+                    .map(|line| self.layout_line(line))
+                    .collect();
                 ElementData::Block {
                     lines: new_lines,
-                    inline: *inline,
+                    inline,
                 }
             }
             ElementData::Listing { lines, inline } => {
-                // Recursively process each line in the listing
-                let new_lines = lines.iter().map(|line| self.layout_line(line)).collect();
+                let new_lines = lines
+                    .into_iter()
+                    .map(|line| self.layout_line(line))
+                    .collect();
                 ElementData::Listing {
                     lines: new_lines,
-                    inline: *inline,
+                    inline,
                 }
             }
             ElementData::Parens {
@@ -1348,7 +1328,6 @@ impl LayoutCalculator<'_> {
                 elements,
                 end,
             } => {
-                // Recursively process the elements inside parens
                 let new_begin = self.layout_line(begin);
                 let new_elements = self.layout_line(elements);
                 let new_end = self.layout_line(end);
@@ -1359,15 +1338,13 @@ impl LayoutCalculator<'_> {
                 }
             }
             ElementData::Group { elements, power } => {
-                // Recursively process the elements in the group
                 let new_elements = self.layout_line(elements);
                 ElementData::Group {
                     elements: new_elements,
-                    power: *power,
+                    power,
                 }
             }
-            // For Atom and LineBreak, no recursion needed
-            ElementData::Atom { .. } | ElementData::LineBreak => element.data.clone(),
+            ElementData::Atom { .. } | ElementData::LineBreak => element.data,
         };
 
         Element {
@@ -1379,12 +1356,21 @@ impl LayoutCalculator<'_> {
 }
 
 #[derive(Debug)]
+struct WriterLineInfo {
+    just_emitted_line_break: bool,
+    seen_atom: bool,
+    continued: bool,
+}
+
+#[derive(Debug)]
 pub struct LayoutWriter<'a> {
     config: &'a Config,
 
     output: String,
     indent_level: usize,
     attach_next: bool,
+
+    line_stack: Vec<WriterLineInfo>,
 }
 
 impl<'a> LayoutWriter<'a> {
@@ -1394,6 +1380,7 @@ impl<'a> LayoutWriter<'a> {
             output: String::new(),
             indent_level: 0,
             attach_next: true,
+            line_stack: Vec::new(),
         }
     }
 
@@ -1415,12 +1402,28 @@ impl<'a> LayoutWriter<'a> {
     }
 
     fn write_line(&mut self, line: &Line) {
-        self.write_elements(line.iter().collect::<Vec<_>>().as_slice());
+        self.line_stack.push(WriterLineInfo {
+            just_emitted_line_break: false,
+            seen_atom: false,
+            continued: false,
+        });
+
+        println!("write line {:}", format_elements(line));
+
+        self.write_elements(line);
+
+        let popped = self.line_stack.pop().unwrap();
+
+        println!("done write line {:?}", popped);
+
+        if popped.continued {
+            self.indent_level -= 1;
+        }
     }
 
-    fn write_elements(&mut self, elements: &[&Element]) {
-        for e in elements {
-            self.write_element(e);
+    fn write_elements(&mut self, elements: &Elements) {
+        for element in elements {
+            self.write_element(element);
         }
     }
 
@@ -1428,7 +1431,25 @@ impl<'a> LayoutWriter<'a> {
         self.attach_next |= element.attach_before;
 
         match &element.data {
-            ElementData::Atom { content, .. } => {
+            ElementData::Atom {
+                content,
+                is_comment,
+            } => {
+                let top = self.line_stack.last_mut().unwrap();
+
+                if !*is_comment {
+                    top.seen_atom = true;
+
+                    if top.just_emitted_line_break {
+                        if !top.continued {
+                            top.continued = true;
+                            self.indent_level += 1;
+                        }
+                    }
+                }
+
+                top.just_emitted_line_break = false;
+
                 if self.output.ends_with("\n") {
                     for _ in 0..(self.indent_level * self.config.indent_width) {
                         self.output.push(' ');
@@ -1442,16 +1463,20 @@ impl<'a> LayoutWriter<'a> {
                 self.attach_next = element.attach_after;
                 self.output.push_str(content);
             }
+            ElementData::LineBreak => {
+                let top = self.line_stack.last_mut().unwrap();
+                top.just_emitted_line_break = true;
+                self.line_break();
+            }
+
+            // Composite
             ElementData::Group { elements, .. } => {
                 self.write_line(elements);
-            }
-            ElementData::LineBreak => {
-                self.line_break();
             }
             ElementData::Listing { lines, inline } => {
                 if *inline {
                     for line in lines {
-                        self.write_line(line);
+                        self.write_elements(line);
                     }
                 } else {
                     self.indent_level += 1;
@@ -1459,6 +1484,18 @@ impl<'a> LayoutWriter<'a> {
                         self.write_line(line);
                     }
                     self.indent_level -= 1;
+
+                    /*
+                     * reset continued status when ending a block - this allows
+                     * let x = [
+                     *    2
+                     *    3
+                     *    4
+                     * ]
+                     * ^ this one to appear on the base line
+                     */
+                    let top = self.line_stack.last_mut().unwrap();
+                    top.just_emitted_line_break = false;
                 }
             }
             ElementData::Parens {
@@ -1466,9 +1503,9 @@ impl<'a> LayoutWriter<'a> {
                 elements,
                 end,
             } => {
-                self.write_line(begin);
-                self.write_line(elements);
-                self.write_line(end);
+                self.write_elements(begin);
+                self.write_elements(elements);
+                self.write_elements(end);
             }
             ElementData::Block { lines, inline } => {
                 if *inline {
@@ -1485,6 +1522,9 @@ impl<'a> LayoutWriter<'a> {
                         self.write_line(line);
                     }
                     self.indent_level -= 1;
+
+                    let top = self.line_stack.last_mut().unwrap();
+                    top.just_emitted_line_break = false;
                 }
             }
         }

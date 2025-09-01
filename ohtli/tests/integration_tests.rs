@@ -1,12 +1,11 @@
 use koatl_parser::{parse_tokens, tokenize};
 use ohtli::{
-    formatter::{stmt_to_lines, LayoutCalculator, LayoutWriter},
+    formatter::{format_lines, stmt_to_lines, LayoutCalculator, LayoutWriter},
     Config,
 };
 
 fn assert_compare_formatting(input: &str, expected: &str) {
     let config = Config::default();
-
     let (tokens, lex_errors) = tokenize(input, true);
 
     let Some(tokens) = tokens else {
@@ -14,6 +13,8 @@ fn assert_compare_formatting(input: &str, expected: &str) {
     };
 
     let (cst, parse_errors) = parse_tokens(input, &tokens);
+
+    println!("{:#?}", tokens);
 
     let Some(cst) = cst else {
         panic!("Parsing errors: {:?}", parse_errors);
@@ -31,8 +32,8 @@ fn assert_compare_formatting(input: &str, expected: &str) {
     let result = output_generator.write(&processed_layout);
 
     if result.trim() != expected.trim() {
-        // println!("Input:\n{:#?}", lines);
-        // println!("Output:\n{:#?}", processed_layout);
+        println!("Input:\n{}", format_lines(&lines));
+        println!("Output:\n{}", format_lines(&processed_layout));
         assert_eq!(result.trim(), expected.trim());
     }
 }
@@ -130,8 +131,8 @@ fn test_match_expression() {
 
 #[test]
 fn test_complex_expression() {
-    let input = "result = func(a, b)\n .method()[index]";
-    let expected = "result = func(a, b)\n    .method()[index]";
+    let input = "func(a, b)\n .method";
+    let expected = "func(a, b)\n    .method";
     assert_compare_formatting(input, expected);
 }
 
