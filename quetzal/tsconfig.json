@@ -1,7 +1,11 @@
 {
 	"compilerOptions": {
-		"target": "es2024",
-		"lib": ["dom", "dom.iterable", "esnext"],
+		"lib": ["ES2024", "webworker"],
+		"types": ["vscode"],
+		"module": "Node16",
+		"skipLibCheck": true,
+		"moduleResolution": "Node16",
+		"outDir": "./out",
 		"allowJs": true,
 		"esModuleInterop": true,
 		"allowSyntheticDefaultImports": true,
@@ -9,15 +13,12 @@
 		"strict": true,
 		"forceConsistentCasingInFileNames": true,
 		"noFallthroughCasesInSwitch": true,
-		"module": "esnext",
 		"noImplicitAny": true,
-		"moduleResolution": "node",
 		"baseUrl": "./",
-		"outDir": "./public/js",
 		"typeRoots": ["src/types", "node_modules/@types"]
 	},
 	"include": ["src/**/*.ts*"],
 	"ts-node": {
-		"compilerOptions": { "module": "ES6", "esModuleInterop": true }
+		"compilerOptions": { "module": "commonjs", "esModuleInterop": true }
 	}
 }

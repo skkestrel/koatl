@@ -9,11 +9,13 @@
 	"version": "0.0.6",
 	"publisher": "koatl",
 	"engines": {
-		"vscode": "^1.90.0"
+		"vscode": "^1.100.0"
 	},
 	"categories": [
-		"Programming Languages"
+		"Programming Languages",
+		"Formatters"
 	],
+	"main": "./out/extension.js",
 	"contributes": {
 		"languages": [
 			{
@@ -34,14 +36,32 @@
 				"scopeName": "source.koatl",
 				"path": "./syntaxes/tl.tmLanguage.json"
 			}
+		],
+		"commands": [
+			{
+				"command": "koatl.format",
+				"title": "Format Document",
+				"category": "Koatl"
+			}
 		]
 	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"build": "npm run compile && CARGO_TARGET_DIR=./target cargo build --target wasm32-unknown-unknown",
+		"compile": "tsc -b",
+		"watch": "tsc -b -w",
+		"lint": "eslint",
+		"esbuild": "node ./bin/esbuild.js",
+		"generate:model": "wit2ts --outDir ./src ../ohtli/wit",
+		"serve": "serve --cors -l 5000 --ssl-cert $HOME/certs/localhost.pem --ssl-key $HOME/certs/localhost-key.pem"
+	},
+	"dependencies": {
+		"@vscode/wasm-component-model": "1.0.0"
+	},
 	"devDependencies": {
-		"@types/jest": "^30.0.0",
-		"jest": "^30.0.4",
-		"ts-jest": "^29.4.0",
-		"@babel/preset-env": "^7.28.0",
-		"@babel/preset-typescript": "^7.27.1",
-		"generator-code": "^1.11.10"
+		"@types/vscode": "^1.100.0",
+		"generator-code": "^1.11.10",
+		"typescript": "^5.9.2",
+		"serve": "^14.2.1"
 	}
 }
