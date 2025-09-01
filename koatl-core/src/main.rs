@@ -31,12 +31,12 @@ enum Commands {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    
+
     let (filename, is_run) = match cli.command {
         Commands::Trans { filename } => (filename, false),
         Commands::Run { filename } => (filename, true),
     };
-    
+
     let src = std::fs::read_to_string(&filename).unwrap();
 
     match transpile_to_source(&src, &filename, TranspileOptions::module()) {
@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("{}", ctx.source);
             }
-        },
+        }
         Err(errs) => {
             errs.0.into_iter().for_each(|e| {
                 let range = e.span.map(|e| e.start..e.end).unwrap_or(0..0);
