@@ -10,6 +10,7 @@ const START_BLOCK: Token = Token::Symbol(":");
 #[derive(Debug, Clone)]
 enum ErrMsg<'a> {
     Unexpected,
+    UnmatchedDelimiter,
     Trailing,
     Expected(Cow<'a, str>),
     Custom(Cow<'a, str>),
@@ -2377,7 +2378,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 // Recover
                 self.rewind(before);
 
-                let mut indent_level = 0;
+                let mut delim_stack = vec![];
+
                 loop {
                     let span = self.span_from(before);
 
@@ -2390,27 +2392,44 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
                     match self.peek_token() {
                         Some(tok) if tok.token == Token::Eol => {
-                            if indent_level == 0 {
+                            if delim_stack.is_empty() {
                                 stmts.push(err_stmt);
                                 self.next();
                                 break;
                             }
                         }
-                        Some(tok) if tok.token == Token::Dedent => {
-                            indent_level -= 1;
-                            if indent_level < 0 {
-                                stmts.push(err_stmt);
-                                break 'outer;
-                            }
+                        Some(tok)
+                            if tok.token == Token::Indent
+                                || tok.token == Token::Symbol("(")
+                                || tok.token == Token::Symbol("[")
+                                || tok.token == Token::Symbol("{") =>
+                        {
+                            delim_stack.push(tok.token.clone());
                         }
-                        Some(tok) if tok.token == Token::Indent => {
-                            indent_level += 1;
+                        Some(tok) => {
+                            if let Some(expected) = match tok.token {
+                                Token::Dedent => Some(Token::Indent),
+                                Token::Symbol(")") => Some(Token::Symbol("(".into())),
+                                Token::Symbol("]") => Some(Token::Symbol("[".into())),
+                                Token::Symbol("}") => Some(Token::Symbol("{".into())),
+                                _ => None,
+                            } {
+                                let Some(delim) = delim_stack.pop() else {
+                                    stmts.push(err_stmt);
+                                    break 'outer;
+                                };
+
+                                if delim != expected {
+                                    return Err(
+                                        self.set_error(self.cursor, ErrMsg::UnmatchedDelimiter)
+                                    );
+                                }
+                            }
                         }
                         None => {
                             stmts.push(err_stmt);
                             break 'outer;
                         }
-                        _ => {}
                     }
                     self.next();
                 }

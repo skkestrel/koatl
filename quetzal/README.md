@@ -11,4 +11,6 @@ Requirements:
 ```
 cargo install wit-bindgen-cli
 cargo install wasm-tools
+npm install
+npm run generate:model
 ```

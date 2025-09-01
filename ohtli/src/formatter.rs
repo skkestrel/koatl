@@ -23,11 +23,15 @@ impl Formatter {
             anyhow::bail!("Lexing errors: {:?}", lex_errors);
         };
 
+        // println!("{:#?} {:#?}", tokens, lex_errors);
+
         let (cst, parse_errors) = parse_tokens(source, &tokens);
 
         let Some(cst) = cst else {
             anyhow::bail!("Parsing errors: {:?}", parse_errors);
         };
+
+        // println!("{:#?} {:#?}", cst, parse_errors);
 
         let mut lines = Vec::new();
 
