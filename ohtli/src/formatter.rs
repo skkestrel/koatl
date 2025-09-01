@@ -193,6 +193,7 @@ pub fn cleanup_lines(tokens: Elements) -> Vec<Line> {
             ElementData::Block { .. } => {
                 cur_line.push(t);
                 lines.push(std::mem::take(&mut cur_line));
+                saw_semantic_token = false;
                 continue;
             }
             _ => {
@@ -467,7 +468,7 @@ impl ToElements for ImportTree<STree<'_, '_>> {
             self.dots
                 .value
                 .iter()
-                .flat_map(|(dot, _count)| unary_op_token(dot))
+                .flat_map(|(dot, _count)| attached_next_token(dot))
                 .collect::<Vec<_>>(),
             self.trunk
                 .iter()
@@ -519,7 +520,10 @@ impl ToElements for SExpr<'_, '_> {
                 expr,
                 op_kind: _,
             } => {
-                line!(unary_op_token(op), expr)
+                line!(
+                    special_token_to_elements(op, TokenContext::UnaryOperator),
+                    expr
+                )
             }
             Expr::List { listing } => line!(listing),
             Expr::Mapping { listing } => line!(listing),
@@ -730,23 +734,21 @@ impl ToElements for SExpr<'_, '_> {
                 cases,
                 finally,
             } => {
-                let mut tokens = Vec::new();
-                tokens.extend(try_kw.to_elements());
-                tokens.extend(body.clone().to_elements());
-                for case in cases {
-                    tokens.extend(case.except.to_elements());
-                    tokens.extend(case.pattern.clone().to_elements());
-                    if let Some((if_kw, guard_expr)) = &case.guard {
-                        tokens.extend(if_kw.to_elements());
-                        tokens.extend(guard_expr.to_elements());
-                    }
-                    tokens.extend(case.body.clone().to_elements());
-                }
-                if let Some((finally_kw, finally_body)) = finally {
-                    tokens.extend(finally_kw.to_elements());
-                    tokens.extend(finally_body.clone().to_elements());
-                }
-                tokens
+                let cases = cases
+                    .iter()
+                    .map(|case| {
+                        line!(
+                            case.except,
+                            case.pattern,
+                            case.guard.as_ref().map(|(if_, expr)| line!(if_, expr)),
+                            case.body
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                let finally = finally.as_ref().map(|(kw, block)| line!(kw, block));
+
+                line!(try_kw, body, cases, finally)
             }
             Expr::Checked {
                 check_kw,
@@ -772,8 +774,8 @@ impl ToElements for SExpr<'_, '_> {
                 // TODO re-glue the parts
                 Element::group(
                     line!(
-                        unary_op_token(begin),
-                        unary_op_token(head),
+                        attached_next_token(begin),
+                        attached_next_token(head),
                         parts
                             .iter()
                             .map(|(a, b)| line!(
@@ -829,8 +831,8 @@ impl ToElements for ArgDefItem<STree<'_, '_>> {
                     ))
                 )
             }
-            ArgDefItem::ArgSpread { star, name } => line!(unary_op_token(star), name),
-            ArgDefItem::KwargSpread { stars, name } => line!(unary_op_token(stars), name),
+            ArgDefItem::ArgSpread { star, name } => line!(attached_next_token(star), name),
+            ArgDefItem::KwargSpread { stars, name } => line!(attached_next_token(stars), name),
         }
     }
 }
@@ -839,7 +841,7 @@ impl ToElements for SListItem<'_, '_> {
     fn to_elements(&self) -> Vec<Element> {
         match self {
             ListItem::Item { expr } => line!(expr),
-            ListItem::Spread { star, expr } => line!(unary_op_token(star), expr),
+            ListItem::Spread { star, expr } => line!(attached_next_token(star), expr),
         }
     }
 }
@@ -853,8 +855,8 @@ impl ToElements for SCallItem<'_, '_> {
                 special_token_to_elements(eq, TokenContext::DoublyAttached),
                 expr
             ),
-            CallItem::ArgSpread { expr, star } => line!(unary_op_token(star), expr),
-            CallItem::KwargSpread { expr, stars } => line!(unary_op_token(stars), expr),
+            CallItem::ArgSpread { expr, star } => line!(attached_next_token(star), expr),
+            CallItem::KwargSpread { expr, stars } => line!(attached_next_token(stars), expr),
         }
     }
 }
@@ -863,7 +865,7 @@ impl ToElements for PatternSequenceItem<STree<'_, '_>> {
     fn to_elements(&self) -> Vec<Element> {
         match self {
             PatternSequenceItem::Item { pattern } => line!(pattern),
-            PatternSequenceItem::Spread { star, name } => line!(unary_op_token(star), name),
+            PatternSequenceItem::Spread { star, name } => line!(attached_next_token(star), name),
         }
     }
 }
@@ -877,7 +879,7 @@ impl ToElements for PatternMappingItem<STree<'_, '_>> {
                 pattern,
             } => line!(key, colon, pattern),
             PatternMappingItem::Ident { name } => line!(name),
-            PatternMappingItem::Spread { stars, name } => line!(unary_op_token(stars), name),
+            PatternMappingItem::Spread { stars, name } => line!(attached_next_token(stars), name),
         }
     }
 }
@@ -923,7 +925,7 @@ impl ToElements for SMappingItem<'_, '_> {
                 value
             ),
             MappingItem::Ident { ident } => line!(ident),
-            MappingItem::Spread { stars, expr } => line!(unary_op_token(stars), expr),
+            MappingItem::Spread { stars, expr } => line!(attached_next_token(stars), expr),
         }
     }
 }
@@ -977,8 +979,8 @@ impl ToElements for MappingKey<STree<'_, '_>> {
                 end,
             } => Element::group(
                 line!(
-                    unary_op_token(begin),
-                    unary_op_token(head),
+                    attached_next_token(begin),
+                    attached_next_token(head),
                     parts
                         .iter()
                         .map(|(a, b)| line!(
@@ -1072,6 +1074,7 @@ where
 enum TokenContext {
     Normal,
     UnaryOperator,
+    AttachedNext,
     Attached,
     DoublyAttached,
 }
@@ -1086,8 +1089,8 @@ fn attached_token(token: &SToken) -> Vec<Element> {
     special_token_to_elements(token, TokenContext::Attached)
 }
 
-fn unary_op_token(token: &SToken) -> Vec<Element> {
-    special_token_to_elements(token, TokenContext::UnaryOperator)
+fn attached_next_token(token: &SToken) -> Vec<Element> {
+    special_token_to_elements(token, TokenContext::AttachedNext)
 }
 
 impl ToElements for Vec<TrivialToken<'_>> {
@@ -1120,9 +1123,16 @@ fn special_token_to_elements(token: &SToken, context: TokenContext) -> Vec<Eleme
         let token_text = token_to_text(token);
 
         let element = match context {
-            TokenContext::UnaryOperator => Element::attached_after(token_text),
+            TokenContext::AttachedNext => Element::attached_after(token_text),
             TokenContext::Attached => Element::attached_before(token_text),
             TokenContext::DoublyAttached => Element::attached_both(token_text),
+            TokenContext::UnaryOperator => {
+                if matches!(token.token, Token::Kw("not")) {
+                    Element::atom(token_text)
+                } else {
+                    Element::attached_after(token_text)
+                }
+            }
             TokenContext::Normal => {
                 if token
                     .trailing_trivia
