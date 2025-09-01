@@ -4,19 +4,44 @@ use std::{
 };
 
 use ariadne::{Color, Label, Report, ReportKind, sources};
+use clap::{Parser, Subcommand};
 use koatl_core::{TranspileOptions, transpile_to_source, util::TlErrKind};
 
+#[derive(Parser)]
+#[command(name = "koatl-core")]
+#[command(about = "A Koatl transpiler and runner")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Transpile Koatl source to Python
+    Trans {
+        /// Input file to transpile
+        filename: String,
+    },
+    /// Transpile and run Koatl source
+    Run {
+        /// Input file to run
+        filename: String,
+    },
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cmd = std::env::args().nth(1).ok_or("Missing command argument")?;
-    let filename = std::env::args().nth(2).ok_or("Missing filename argument")?;
+    let cli = Cli::parse();
+    
+    let (filename, is_run) = match cli.command {
+        Commands::Trans { filename } => (filename, false),
+        Commands::Run { filename } => (filename, true),
+    };
+    
     let src = std::fs::read_to_string(&filename).unwrap();
 
     match transpile_to_source(&src, &filename, TranspileOptions::module()) {
-        Ok(ctx) => match cmd.as_str() {
-            "trans" => {
-                println!("{}", ctx.source);
-            }
-            "run" => {
+        Ok(ctx) => {
+            if is_run {
                 let mut child = Command::new("python3").stdin(Stdio::piped()).spawn()?;
 
                 if let Some(stdin) = child.stdin.as_mut() {
@@ -28,9 +53,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("{}", String::from_utf8_lossy(&output.stderr));
                     return Err("Python script execution failed.".into());
                 }
-            }
-            _ => {
-                return Err("Unknown command. Use 'trans' or 'run'.".into());
+            } else {
+                println!("{}", ctx.source);
             }
         },
         Err(errs) => {

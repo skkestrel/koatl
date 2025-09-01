@@ -5,10 +5,7 @@ edition = "2024"
 
 [dependencies]
 ariadne = "0.5.1"
+clap = { version = "4.4", features = ["derive"] }
 koatl-parser = { path = "../koatl-parser" }
 once_cell = "1.19.0"
 slotmap = "1.0.7"
-
-[[bin]]
-name = "parse_timer"
-path = "src/parse_timer.rs"
