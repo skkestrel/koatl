@@ -357,17 +357,6 @@ where
 }
 
 impl Element {
-    pub fn is_multiline(&self) -> bool {
-        match &self.data {
-            ElementData::LineBreak => false,
-            ElementData::Group { .. } => false,
-            ElementData::Atom { .. } => true,
-            ElementData::Listing { inline, .. } => !*inline,
-            ElementData::Parens { .. } => todo!(),
-            ElementData::Block { .. } => todo!(),
-        }
-    }
-
     pub fn atom(content: String) -> Self {
         Element {
             attach_before: false,
@@ -791,7 +780,7 @@ impl ToElements for SExpr<'_, '_> {
             }
             Expr::Tuple { kind } => match kind {
                 TupleKind::Unit(lparen, rparen) => {
-                    line!(lparen, rparen)
+                    line!(lparen, attached_token(rparen))
                 }
                 TupleKind::Listing(items) => {
                     line!(items)
@@ -901,7 +890,7 @@ impl ToElements for PatternMappingKey<STree<'_, '_>> {
     fn to_elements(&self) -> Vec<Element> {
         match self {
             PatternMappingKey::Ident { token } => line!(token),
-            PatternMappingKey::Unit { .. } => todo!(),
+            PatternMappingKey::Unit { lparen, rparen } => line!(lparen, attached_token(rparen)),
             PatternMappingKey::Literal { token } => line!(token),
             PatternMappingKey::Expr {
                 lparen,
@@ -993,7 +982,7 @@ impl ToElements for MappingKey<STree<'_, '_>> {
                 0,
             )
             .to_elements(),
-            MappingKey::Unit { .. } => todo!(),
+            MappingKey::Unit { lparen, rparen } => line!(lparen, attached_token(rparen)),
             MappingKey::ParenthesizedBlock { .. } => {
                 todo!()
             }
@@ -1137,14 +1126,14 @@ fn special_token_to_elements(token: &SToken, context: TokenContext) -> Vec<Eleme
                 if token
                     .trailing_trivia
                     .iter()
-                    .all(|x| !matches!(x.typ, TrivialTokenType::Whitespace))
+                    .all(|x| matches!(x.typ, TrivialTokenType::Whitespace))
                     && matches!(token.token, Token::Symbol(s) if s == "[" || s == "(" || s == "{")
                 {
                     Element::attached_after(token_text)
                 } else if token
                     .leading_trivia
                     .iter()
-                    .all(|x| !matches!(x.typ, TrivialTokenType::Whitespace))
+                    .all(|x| matches!(x.typ, TrivialTokenType::Whitespace))
                     && matches!(token.token, Token::Symbol(s) if s == "]" || s == ")" || s == "}")
                 {
                     Element::attached_before(token_text)
@@ -1273,6 +1262,7 @@ impl ToElements for SInducedBlock<'_, '_> {
     }
 }
 
+#[allow(dead_code)]
 pub struct LayoutCalculator<'a> {
     config: &'a Config,
 }
@@ -1284,6 +1274,107 @@ impl LayoutCalculator<'_> {
 
     pub fn do_layout(&self, elements: Vec<Line>) -> Vec<Line> {
         elements
+            .into_iter()
+            .map(|line| self.layout_line(&line))
+            .collect()
+    }
+
+    pub fn layout_line(&self, line: &Line) -> Line {
+        let mut result = Vec::new();
+        let mut i = 0;
+
+        while i < line.len() {
+            let element = &line[i];
+
+            if matches!(element.data, ElementData::LineBreak) {
+                // Add the LineBreak to the result
+                result.push(self.layout_element(element));
+                i += 1;
+
+                // Check if there are more elements after the LineBreak
+                if i < line.len() {
+                    // Check if the next element is already a Block
+                    if matches!(line[i].data, ElementData::Block { .. }) {
+                        // Don't wrap in a new Block, just continue
+                        continue;
+                    } else {
+                        // Collect all remaining elements into a new Block
+                        let remaining_elements: Vec<Element> = line[i..].to_vec();
+
+                        // Create lines from the remaining elements
+                        // For now, treat each element as its own line
+                        let block_lines: Vec<Line> = remaining_elements
+                            .into_iter()
+                            .map(|elem| vec![self.layout_element(&elem)])
+                            .collect();
+
+                        // Add the Block element
+                        result.push(Element::block(block_lines, false));
+
+                        // We've processed all remaining elements
+                        break;
+                    }
+                }
+            } else {
+                // Regular element, recursively process it
+                result.push(self.layout_element(element));
+                i += 1;
+            }
+        }
+
+        result
+    }
+
+    fn layout_element(&self, element: &Element) -> Element {
+        let new_data = match &element.data {
+            ElementData::Block { lines, inline } => {
+                // Recursively process each line in the block
+                let new_lines = lines.iter().map(|line| self.layout_line(line)).collect();
+                ElementData::Block {
+                    lines: new_lines,
+                    inline: *inline,
+                }
+            }
+            ElementData::Listing { lines, inline } => {
+                // Recursively process each line in the listing
+                let new_lines = lines.iter().map(|line| self.layout_line(line)).collect();
+                ElementData::Listing {
+                    lines: new_lines,
+                    inline: *inline,
+                }
+            }
+            ElementData::Parens {
+                begin,
+                elements,
+                end,
+            } => {
+                // Recursively process the elements inside parens
+                let new_begin = self.layout_line(begin);
+                let new_elements = self.layout_line(elements);
+                let new_end = self.layout_line(end);
+                ElementData::Parens {
+                    begin: new_begin,
+                    elements: new_elements,
+                    end: new_end,
+                }
+            }
+            ElementData::Group { elements, power } => {
+                // Recursively process the elements in the group
+                let new_elements = self.layout_line(elements);
+                ElementData::Group {
+                    elements: new_elements,
+                    power: *power,
+                }
+            }
+            // For Atom and LineBreak, no recursion needed
+            ElementData::Atom { .. } | ElementData::LineBreak => element.data.clone(),
+        };
+
+        Element {
+            attach_before: element.attach_before,
+            attach_after: element.attach_after,
+            data: new_data,
+        }
     }
 }
 
@@ -1328,30 +1419,8 @@ impl<'a> LayoutWriter<'a> {
     }
 
     fn write_elements(&mut self, elements: &[&Element]) {
-        let mut indented = false;
-        let mut has_continuation = false;
-
         for e in elements {
-            if indented && !has_continuation && matches!(e.data, ElementData::Block { .. }) {
-                self.indent_level -= 1;
-                indented = false;
-                has_continuation = false;
-            }
-
             self.write_element(e);
-
-            if !indented && matches!(e.data, ElementData::LineBreak) {
-                self.indent_level += 1;
-                indented = true;
-            }
-
-            if indented && !matches!(e.data, ElementData::LineBreak | ElementData::Block { .. }) {
-                has_continuation = true;
-            }
-        }
-
-        if indented {
-            self.indent_level -= 1;
         }
     }
 
