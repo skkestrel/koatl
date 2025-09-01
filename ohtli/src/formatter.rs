@@ -35,11 +35,11 @@ impl Formatter {
             lines.extend(stmt_to_lines(stmt));
         }
 
-        println!("Input Layout:\n{}", format_lines(&lines));
+        // println!("Input Layout:\n{}", format_lines(&lines));
 
         let processed_layout = LayoutCalculator::new(&self.config).do_layout(lines);
 
-        println!("Layout:\n{}", format_lines(&processed_layout));
+        // println!("Layout:\n{}", format_lines(&processed_layout));
 
         let mut output_generator = LayoutWriter::new(&self.config);
         Ok(output_generator.write(&processed_layout))
@@ -163,6 +163,7 @@ pub fn format_elements(elements: &[Element]) -> String {
     format!("[{}]", element_strs.join(" "))
 }
 
+#[allow(dead_code)]
 pub fn format_lines(lines: &[Line]) -> String {
     let line_strs: Vec<String> = lines.iter().map(|line| format_elements(line)).collect();
     format!("{}", line_strs.join("\n"))
@@ -190,33 +191,18 @@ trait IntoElements {
     fn to_elements(self) -> Vec<Element>;
 }
 
-pub fn cleanup_lines(tokens: Elements) -> Vec<Line> {
-    let mut saw_semantic_token = false;
+pub fn split_blocks_into_separate_lines(tokens: Elements) -> Vec<Line> {
     let mut cur_line = vec![];
-
     let mut lines = vec![];
 
     for t in tokens {
         match &t.data {
-            ElementData::Atom {
-                is_comment: true, ..
-            } => {}
-            ElementData::LineBreak => {
-                if !saw_semantic_token {
-                    cur_line.push(t);
-                    lines.push(std::mem::take(&mut cur_line));
-                    continue;
-                }
-            }
-            ElementData::Block { .. } => {
+            ElementData::Block { inline: false, .. } => {
                 cur_line.push(t);
                 lines.push(std::mem::take(&mut cur_line));
-                saw_semantic_token = false;
                 continue;
             }
-            _ => {
-                saw_semantic_token = true;
-            }
+            _ => {}
         }
 
         cur_line.push(t)
@@ -229,7 +215,7 @@ pub fn cleanup_lines(tokens: Elements) -> Vec<Line> {
     lines
 }
 
-pub fn stmt_to_lines(stmt: &SStmt) -> Vec<Line> {
+pub fn stmt_to_elements(stmt: &SStmt) -> Elements {
     let tokens = match &stmt.value {
         Stmt::Expr { expr } => line!(expr),
         Stmt::PatternAssign {
@@ -295,7 +281,22 @@ pub fn stmt_to_lines(stmt: &SStmt) -> Vec<Line> {
         Stmt::Error { raw } => vec![Element::atom(raw.to_string())],
     };
 
-    cleanup_lines(tokens)
+    tokens
+}
+
+/**
+ * Some statements become multiple lines:
+ * if True:
+ *  1
+ * else:
+ *  2
+ *
+ * is a single statement but is best represented as two independent lines,
+ * one for each branch.
+ */
+pub fn stmt_to_lines(stmt: &SStmt) -> Vec<Line> {
+    let elements = stmt_to_elements(stmt);
+    split_blocks_into_separate_lines(elements)
 }
 
 impl<T> IntoElements for Option<T>
@@ -777,25 +778,22 @@ impl ToElements for SExpr<'_, '_> {
                 head,
                 parts,
                 end,
-            } => {
-                // TODO re-glue the parts
-                Element::group(
-                    line!(
-                        attached_next_token(begin),
-                        attached_next_token(head),
-                        parts
-                            .iter()
-                            .map(|(a, b)| line!(
-                                a,
-                                special_token_to_elements(b, TokenContext::DoublyAttached)
-                            ))
-                            .collect::<Vec<_>>(),
-                        attached_token(end)
-                    ),
-                    0,
-                )
-                .to_elements()
-            }
+            } => Element::group(
+                line!(
+                    attached_next_token(begin),
+                    attached_next_token(head),
+                    parts
+                        .iter()
+                        .map(|(a, b)| line!(
+                            a,
+                            special_token_to_elements(b, TokenContext::DoublyAttached)
+                        ))
+                        .collect::<Vec<_>>(),
+                    attached_token(end)
+                ),
+                0,
+            )
+            .to_elements(),
             Expr::Tuple { kind } => match kind {
                 TupleKind::Unit(lparen, rparen) => {
                     line!(lparen, attached_token(rparen))
@@ -811,7 +809,19 @@ impl ToElements for SExpr<'_, '_> {
                 dedent,
                 rparen,
             } => {
-                todo!()
+                let body_lines = body
+                    .value
+                    .iter()
+                    .flat_map(|item| stmt_to_lines(item))
+                    .collect();
+                let body = Element::block(body_lines, false);
+
+                Element::parens(
+                    lparen.to_elements(),
+                    line!(indent, body, dedent),
+                    rparen.to_elements(),
+                )
+                .to_elements()
             }
         }
     }
@@ -939,16 +949,7 @@ impl ToElements for SMappingItem<'_, '_> {
 
 impl ToElements for FmtExpr<STree<'_, '_>> {
     fn to_elements(&self) -> Vec<Element> {
-        let block = Element::block(
-            self.stmts
-                .value
-                .iter()
-                .flat_map(|x| stmt_to_lines(x))
-                .collect::<Vec<_>>(),
-            true,
-        );
-
-        line!(self.indent, block, self.dedent, self.fmt)
+        line!(self.expr, self.fmt)
     }
 }
 
@@ -1067,7 +1068,7 @@ where
                 line!(begin, indent),
                 items
                     .iter()
-                    .flat_map(|item| cleanup_lines(item.to_elements()))
+                    .flat_map(|item| split_blocks_into_separate_lines(item.to_elements()))
                     .collect(),
                 line!(dedent, newline, end),
                 false,
@@ -1252,7 +1253,7 @@ impl ToElements for SInducedBlock<'_, '_> {
                     }
                 });
 
-                line!(inducer, Element::block(stmt_to_lines(stmt), true))
+                line!(inducer, Element::block(vec![stmt_to_elements(stmt)], true))
             }
             InducedBlock::Block {
                 inducer,
@@ -1408,13 +1409,9 @@ impl<'a> LayoutWriter<'a> {
             continued: false,
         });
 
-        println!("write line {:}", format_elements(line));
-
         self.write_elements(line);
 
         let popped = self.line_stack.pop().unwrap();
-
-        println!("done write line {:?}", popped);
 
         if popped.continued {
             self.indent_level -= 1;
@@ -1437,15 +1434,15 @@ impl<'a> LayoutWriter<'a> {
             } => {
                 let top = self.line_stack.last_mut().unwrap();
 
+                if top.just_emitted_line_break && top.seen_atom {
+                    if !top.continued {
+                        top.continued = true;
+                        self.indent_level += 1;
+                    }
+                }
+
                 if !*is_comment {
                     top.seen_atom = true;
-
-                    if top.just_emitted_line_break {
-                        if !top.continued {
-                            top.continued = true;
-                            self.indent_level += 1;
-                        }
-                    }
                 }
 
                 top.just_emitted_line_break = false;
@@ -1486,13 +1483,10 @@ impl<'a> LayoutWriter<'a> {
                     self.indent_level -= 1;
 
                     /*
-                     * reset continued status when ending a block - this allows
                      * let x = [
                      *    2
-                     *    3
-                     *    4
                      * ]
-                     * ^ this one to appear on the base line
+                     * ^ we want this to appear on the base line, so reset just_emitted_line_break
                      */
                     let top = self.line_stack.last_mut().unwrap();
                     top.just_emitted_line_break = false;

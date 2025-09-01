@@ -1002,11 +1002,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let mut parts = Vec::new();
 
         loop {
-            let Some((indent, stmts, dedent)) = optional!(self, |ctx| {
-                let indent = ctx.token(&Token::Indent)?;
-                let stmts = ctx.stmts()?;
-                let dedent = ctx.token(&Token::Dedent)?;
-                Ok((indent, stmts, dedent))
+            let Some(expr) = optional!(self, |ctx| {
+                let expr = ctx.expr()?.boxed();
+                Ok(expr)
             })?
             else {
                 break;
@@ -1018,12 +1016,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 Ok(FmtSpec { sep, head, parts })
             })?;
 
-            let fmt_expr = FmtExpr {
-                indent,
-                stmts,
-                dedent,
-                fmt,
-            };
+            let fmt_expr = FmtExpr { expr, fmt };
 
             let inner_content = 'block: {
                 let next = self.next_token();

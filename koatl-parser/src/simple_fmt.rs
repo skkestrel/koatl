@@ -600,9 +600,9 @@ impl<'src, 'tok> SimpleFmt for InducedBlock<STree<'src, 'tok>> {
 impl<'src, 'tok> SimpleFmt for FmtExpr<STree<'src, 'tok>> {
     fn simple_fmt(&self) -> String {
         if let Some(_) = &self.fmt {
-            format!("{}!...", self.stmts.simple_fmt())
+            format!("{}!...", self.expr.simple_fmt())
         } else {
-            self.stmts.simple_fmt()
+            self.expr.simple_fmt()
         }
     }
 }

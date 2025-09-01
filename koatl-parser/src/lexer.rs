@@ -156,6 +156,7 @@ pub enum ParseBlockMode {
     BeginInput,
     NewBlock,
     Continuation,
+    FmtExpr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1016,9 +1017,7 @@ impl<'src> TokenizeCtx<'src> {
                 current_str = String::new();
 
                 let (inner_tokens, _, inner_span) =
-                    self.try_parse(|x| x.parse_block(0, ParseBlockMode::BeginInput))?;
-
-                self.parse_indentation()?;
+                    self.try_parse(|x| x.parse_block(0, ParseBlockMode::FmtExpr))?;
 
                 marker = self.cursor();
                 let mut format_tokens = vec![];
@@ -1032,23 +1031,7 @@ impl<'src> TokenizeCtx<'src> {
                     format_tokens.extend(self.parse_fstr_inner('}', 1, verbatim)?);
                 }
 
-                tokens.push(SToken::new(
-                    Token::Indent,
-                    Span {
-                        start: inner_span.start,
-                        end: inner_span.start,
-                    },
-                    Vec::new(),
-                ));
                 tokens.extend(inner_tokens.0);
-                tokens.push(SToken::new(
-                    Token::Dedent,
-                    Span {
-                        start: inner_span.end,
-                        end: inner_span.end,
-                    },
-                    Vec::new(),
-                ));
                 tokens.extend(format_tokens);
 
                 marker = self.cursor();
@@ -1330,7 +1313,6 @@ impl<'src> TokenizeCtx<'src> {
                         ));
                     }
 
-                    // EOF
                     break ParseBlockEndType::EolOrEof;
                 };
 
@@ -1364,7 +1346,7 @@ impl<'src> TokenizeCtx<'src> {
                     } else if !line_tokens.is_empty() {
                         tokens.extend(line_tokens.drain(..));
 
-                        if mode != ParseBlockMode::Continuation {
+                        if mode != ParseBlockMode::Continuation && mode != ParseBlockMode::FmtExpr {
                             tokens.push(SToken::new(
                                 Token::Eol,
                                 self.span_since(&self.cursor()),
@@ -1375,6 +1357,7 @@ impl<'src> TokenizeCtx<'src> {
                 } else {
                     match mode {
                         ParseBlockMode::BeginInput => {}
+                        ParseBlockMode::FmtExpr => {}
                         ParseBlockMode::NewBlock => {
                             if line_indent_level <= current_indent {
                                 return Err(LexError::custom(
@@ -1503,7 +1486,7 @@ impl<'src> TokenizeCtx<'src> {
         if !line_tokens.is_empty() {
             tokens.extend(line_tokens.drain(..));
 
-            if mode != ParseBlockMode::Continuation {
+            if mode != ParseBlockMode::Continuation && mode != ParseBlockMode::FmtExpr {
                 tokens.push(SToken::new(
                     Token::Eol,
                     self.span_since(&self.cursor()),

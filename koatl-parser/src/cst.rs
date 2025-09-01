@@ -133,9 +133,7 @@ pub struct FmtSpec<TTree: Tree> {
 
 #[derive(Debug, Clone)]
 pub struct FmtExpr<TTree: Tree> {
-    pub indent: TTree::Token,
-    pub stmts: Spanned<Vec<TTree::Stmt>>,
-    pub dedent: TTree::Token,
+    pub expr: TTree::Expr,
     pub fmt: Option<FmtSpec<TTree>>,
 }
 

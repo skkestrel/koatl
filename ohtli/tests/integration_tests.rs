@@ -519,3 +519,19 @@ else:
     default_value()"#;
     assert_compare_formatting(input, expected);
 }
+
+#[test]
+fn test_parenthesized_block() {
+    let input = r#"let a = (
+    let b =
+        3+4
+    b
+)"#;
+    let expected = r#"let a = (
+    let b =
+        3 + 4
+    b
+)"#;
+
+    assert_compare_formatting(input, expected);
+}

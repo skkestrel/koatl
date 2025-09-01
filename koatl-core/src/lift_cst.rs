@@ -38,21 +38,9 @@ fn lift_fstr<'src, 'tok>(
                 _ => panic!("Expected FstrContinue token"),
             };
 
-            if fmt_expr.stmts.value.len() == 1 {
-                if let cst::Stmt::Expr { expr } = &fmt_expr.stmts.value[0].value {
-                    return (
-                        ast::FmtExpr {
-                            expr: expr.lift(),
-                            fmt: fmt_expr.fmt.as_ref().map(lift_fstr_fmt),
-                        },
-                        cont_str.spanned(cont.span),
-                    );
-                }
-            }
-
             (
                 ast::FmtExpr {
-                    expr: fmt_expr.stmts.lift(),
+                    expr: fmt_expr.expr.lift(),
                     fmt: fmt_expr.fmt.as_ref().map(lift_fstr_fmt),
                 },
                 cont_str.spanned(cont.span),
