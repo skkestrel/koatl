@@ -9,7 +9,9 @@
 			"name": "Extension",
 			"type": "extensionHost",
 			"request": "launch",
-			"args": ["--extensionDevelopmentPath=${workspaceFolder}"]
+			"args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+			"sourceMaps": true,
+			"preLaunchTask": "npm build: quetzal"
 		}
 	]
 }

@@ -12,6 +12,17 @@
 				"kind": "build",
 				"isDefault": true
 			}
+		},
+		{
+			"label": "npm build: quetzal",
+			"type": "npm",
+			"script": "build",
+			"path": "quetzal/",
+			"problemMatcher": [],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
 		}
 	]
 }
