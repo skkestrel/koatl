@@ -535,3 +535,27 @@ fn test_parenthesized_block() {
 
     assert_compare_formatting(input, expected);
 }
+
+#[test]
+fn test_trailing_comments() {
+    let input = r#"a #a
+#b"#;
+    let expected = r#"a #a
+    #b"#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_list_trailing_comments() {
+    let input = r#"[
+    1
+    #a
+]
+#b"#;
+    let expected = r#"[
+    1
+        #a
+]
+    #b"#;
+    assert_compare_formatting(input, expected);
+}

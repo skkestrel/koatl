@@ -1402,10 +1402,6 @@ impl<'a> LayoutWriter<'a> {
             self.write_line(line);
         }
 
-        if !self.output.ends_with("\n") {
-            self.output.push('\n');
-        }
-
         self.output.to_string()
     }
 
