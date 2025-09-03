@@ -2133,7 +2133,14 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             self,
             "import leaf",
             |ctx| {
-                let listing = ctx.listing("(", ")", Token::Symbol(","), |ctx| ctx.import_tree())?;
+                let listing = ctx.listing("(", ")", Token::Symbol(","), |ctx| {
+                    first_of!(
+                        ctx,
+                        "import path",
+                        Self::import_tree,
+                        Self::import_this_tree
+                    )
+                })?;
                 Ok(ImportLeaf::Multi(listing))
             },
             |ctx| {
@@ -2148,15 +2155,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             |ctx| {
                 let star = ctx.symbol("*")?;
                 Ok(ImportLeaf::Star { star })
-            },
-            |ctx| {
-                let dot = ctx.symbol(".")?;
-                let alias = optional!(ctx, |ctx: &mut Self| {
-                    let as_kw = ctx.keyword("as")?;
-                    let alias_name = ctx.any_ident()?;
-                    Ok((as_kw, alias_name))
-                })?;
-                Ok(ImportLeaf::This { dot, alias })
             }
         )?;
 
@@ -2164,6 +2162,25 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             dots: dots.spanned(dots_span),
             trunk,
             leaf: leaf.spanned(self.span_from(leaf_start)),
+        })
+    }
+
+    fn import_this_tree(&mut self) -> ParseResult<ImportTree<STree<'src, 'tok>>> {
+        let dots_span = self.span_from(self.cursor);
+
+        let start = self.cursor;
+
+        let dot = self.symbol(".")?;
+        let alias = optional!(self, |ctx: &mut Self| {
+            let as_kw = ctx.keyword("as")?;
+            let alias_name = ctx.any_ident()?;
+            Ok((as_kw, alias_name))
+        })?;
+
+        Ok(ImportTree {
+            dots: vec![].spanned(dots_span),
+            trunk: vec![],
+            leaf: ImportLeaf::This { dot, alias }.spanned(self.span_from(start)),
         })
     }
 
