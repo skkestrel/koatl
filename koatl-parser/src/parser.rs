@@ -81,19 +81,21 @@ enum ExprPrec {
 }
 
 pub fn true_span(start: usize, end: usize, input: &[SToken]) -> Span {
-    let start = if start < input.len() {
+    let true_start = if start < input.len() {
         input[start].span.start
     } else {
         input.last().map_or(0, |t| t.span.end)
     };
 
-    let end = if end < input.len() {
-        input[end].span.start
+    let true_end = if end == start {
+        true_start
+    } else if end <= input.len() {
+        input[end.saturating_sub(1)].span.end
     } else {
         input.last().map_or(0, |t| t.span.end)
     };
 
-    Span::new(start..end)
+    Span::new(true_start..true_end)
 }
 
 impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
@@ -583,7 +585,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     fn pattern_mapping_item(&mut self) -> ParseResult<PatternMappingItem<STree<'src, 'tok>>> {
         first_of!(
             self,
-            "pattern mapping item",
+            "mapping item",
             |ctx| {
                 let stars = ctx.symbol("**")?;
                 let name = ctx.any_ident()?;
@@ -599,13 +601,23 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         Ok(PatternMappingKey::Ident { token })
                     },
                     |ctx| {
+                        let token = ctx.literal()?;
+                        Ok(PatternMappingKey::Literal { token })
+                    },
+                    |ctx| {
+                        let _ = ctx.fstr()?;
+
+                        Err(ctx.set_error(
+                            ctx.cursor,
+                            ErrMsg::Custom(
+                                "f-strings are not allowed as mapping-pattern keys".into(),
+                            ),
+                        ))
+                    },
+                    |ctx| {
                         let lparen = ctx.symbol("(")?;
                         let rparen = ctx.symbol(")")?;
                         Ok(PatternMappingKey::Unit { lparen, rparen })
-                    },
-                    |ctx| {
-                        let token = ctx.literal()?;
-                        Ok(PatternMappingKey::Literal { token })
                     },
                     |ctx| {
                         let lparen = ctx.symbol("(")?;
@@ -916,7 +928,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         },
                         |ctx| {
                             let lparen = ctx.symbol("(")?;
-                            let key = ctx.expr()?;
+                            let key = ctx.open_expr()?;
                             let rparen = ctx.symbol(")")?;
                             Ok(MappingKey::Expr {
                                 lparen,
@@ -2389,9 +2401,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             {
                 stmts.push(Box::new(stmt));
             } else {
-                let error = self.take_error().1;
-                self.errors.push(error);
-
                 // Recover
                 self.rewind(before);
 
@@ -2410,8 +2419,13 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     match self.peek_token() {
                         Some(tok) if tok.token == Token::Eol => {
                             if delim_stack.is_empty() {
+                                // Successfully recovered
+                                let error = self.take_error().1;
+                                self.errors.push(error);
+
                                 stmts.push(err_stmt);
                                 self.next();
+
                                 break;
                             }
                         }
@@ -2437,9 +2451,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                                 };
 
                                 if delim != expected {
-                                    return Err(
-                                        self.set_error(self.cursor, ErrMsg::UnmatchedDelimiter)
-                                    );
+                                    return Err(());
                                 }
                             }
                         }

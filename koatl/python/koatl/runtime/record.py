@@ -188,7 +188,7 @@ class Record:
                 return key
             return f'"{key}"'
 
-        elif isinstance(key, (int, float, bool, type(None))):
+        elif isinstance(key, (int, float, bool, type(None), tuple)):
             # If key is a literal like 0, 1, True, False, None, use repr
             return repr(key)
 
@@ -218,10 +218,12 @@ for key, value in MutableMapping.__dict__.items():
     if key not in Record.__dict__:
         setattr(Record, key, value)
 
+
 koatl_keywords = {
     "if",
     "then",
     "else",
+    "check",
     "import",
     "export",
     "as",
