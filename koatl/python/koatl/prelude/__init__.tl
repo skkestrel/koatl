@@ -36,5 +36,7 @@ __tl__.Ok = koatl.std.alg.result.Ok
 __tl__.Err = koatl.std.alg.result.Err
 __tl__.Result = koatl.std.alg.result.Result
 
+__tl__.MatchError = koatl.std.MatchError
+
 __tl__.memo_value = koatl.std.alg.memo.Memo.value
 __tl__.async_memo_value = koatl.std.alg.memo.AsyncMemo.value

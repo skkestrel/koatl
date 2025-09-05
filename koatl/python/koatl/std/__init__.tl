@@ -1,0 +1,1 @@
+export MatchError = class(Exception): None
