@@ -852,11 +852,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let start = self.cursor;
 
         let class_kw = self.keyword("class")?;
+
         let args = optional!(self, |ctx: &mut Self| {
-            ctx.listing("(", ")", Token::Symbol(","), |ctx| {
-                let expr = ctx.atom()?;
-                Ok(CallItem::Arg { expr: expr.boxed() })
-            })
+            ctx.listing("(", ")", Token::Symbol(","), |ctx| Ok(ctx.call_item()?))
         })?;
 
         let body = self.colon_block()?;
@@ -1016,7 +1014,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         loop {
             let Some(expr) = optional!(self, |ctx| {
-                let expr = ctx.expr()?.boxed();
+                let expr = ctx.open_expr()?.boxed();
                 Ok(expr)
             })?
             else {
@@ -2343,7 +2341,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let return_stmt = |ctx: &mut Self| {
             let return_kw = ctx.keyword("return")?;
-            let expr = ctx.expr()?;
+            let expr = ctx.parse(expr)?;
             Ok(Stmt::Return {
                 return_kw,
                 expr: expr.boxed(),
@@ -2352,7 +2350,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let raise_stmt = |ctx: &mut Self| {
             let raise_kw = ctx.keyword("raise")?;
-            let expr = optional!(ctx, |ctx: &mut Self| ctx.expr())?;
+            let expr = optional!(ctx, expr)?;
             Ok(Stmt::Raise {
                 raise_kw,
                 expr: expr.map(|e| e.boxed()),
