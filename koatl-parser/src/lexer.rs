@@ -196,6 +196,7 @@ pub fn py_escape_str(s: &str) -> String {
             '\r' => escaped_string.push_str("\\r"),
             '\t' => escaped_string.push_str("\\t"),
             '\"' => escaped_string.push_str("\\\""),
+            '\'' => escaped_string.push_str("\\\'"),
             '\\' => escaped_string.push_str("\\\\"),
 
             // Handle all other ASCII control characters (0x00 to 0x1F) using hex escapes
@@ -477,15 +478,15 @@ impl<'src> TokenizeCtx<'src> {
             // Check for binary, octal, or hex prefix
             match self.peek() {
                 Some('b') | Some('B') => {
-                    self.next(); // consume 'b'
+                    self.next();
                     return self.parse_binary_number(start);
                 }
                 Some('o') | Some('O') => {
-                    self.next(); // consume 'o'
+                    self.next();
                     return self.parse_octal_number(start);
                 }
                 Some('x') | Some('X') => {
-                    self.next(); // consume 'x'
+                    self.next();
                     return self.parse_hex_number(start);
                 }
                 Some('.') => {
@@ -519,7 +520,6 @@ impl<'src> TokenizeCtx<'src> {
             // Handle .2 format
             return self.parse_decimal_float(start, false);
         } else {
-            // Regular decimal number
             return self.parse_decimal_number(start, false);
         }
     }
@@ -532,7 +532,7 @@ impl<'src> TokenizeCtx<'src> {
                 has_digits = true;
                 self.next();
             } else if c == '_' {
-                self.next(); // Allow underscores for readability
+                self.next();
             } else {
                 break;
             }
@@ -584,7 +584,7 @@ impl<'src> TokenizeCtx<'src> {
                 has_digits = true;
                 self.next();
             } else if c == '_' {
-                self.next(); // Allow underscores for readability
+                self.next();
             } else {
                 break;
             }
@@ -609,24 +609,20 @@ impl<'src> TokenizeCtx<'src> {
     ) -> TResult<'src, (Token<'src>, Span, bool)> {
         let mut has_digits = has_leading_zero;
 
-        // Parse integer part
         while let Some(c) = self.peek() {
             if c.is_ascii_digit() {
                 has_digits = true;
                 self.next();
             } else if c == '_' {
-                self.next(); // Allow underscores for readability
+                self.next();
             } else {
                 break;
             }
         }
 
-        // Check for decimal point or exponent
         if self.peek() == Some('.') && !self.look_ahead(|x| x.parse_seq("..")).is_ok() {
-            // This is a float
             return self.parse_decimal_float(start, has_digits);
         } else if matches!(self.peek(), Some('e') | Some('E')) {
-            // This is a float with exponent
             return self.parse_decimal_float(start, has_digits);
         }
 
@@ -651,7 +647,7 @@ impl<'src> TokenizeCtx<'src> {
 
         // Parse decimal point and fractional part
         if self.peek() == Some('.') && !self.look_ahead(|x| x.parse_seq("..")).is_ok() {
-            self.next(); // consume '.'
+            self.next();
 
             // Parse fractional digits
             while let Some(c) = self.peek() {
@@ -674,23 +670,20 @@ impl<'src> TokenizeCtx<'src> {
             ));
         }
 
-        // Parse optional exponent
         if matches!(self.peek(), Some('e') | Some('E')) {
             self.next(); // consume 'e' or 'E'
 
-            // Optional sign
             if matches!(self.peek(), Some('+') | Some('-')) {
                 self.next();
             }
 
-            // Exponent digits (required)
             let mut has_exp_digits = false;
             while let Some(c) = self.peek() {
                 if c.is_ascii_digit() {
                     has_exp_digits = true;
                     self.next();
                 } else if c == '_' {
-                    self.next(); // Allow underscores for readability
+                    self.next();
                 } else {
                     break;
                 }
@@ -1211,12 +1204,44 @@ impl<'src> TokenizeCtx<'src> {
         let start = self.cursor();
 
         let _ = self.try_parse(|x| x.parse_ident_or_token());
-        self.parse_char('"')?;
+        if self.try_parse(|ctx| ctx.parse_char('"')).is_ok() {
+            return Ok(());
+        }
+        if self.try_parse(|ctx| ctx.parse_char('\'')).is_ok() {
+            return Ok(());
+        }
 
-        Ok(())
+        Err(LexError::custom(
+            self.span_since(&start),
+            "expected string start",
+        ))
     }
 
     fn parse_str(&mut self) -> TResult<'src, TokenList<'src>> {
+        // ' variants
+
+        if self.look_ahead(|x| x.parse_seq("rf\'")).is_ok() {
+            let tokens = self.parse_fstr('\'')?;
+            return Ok(tokens);
+        }
+
+        if self.look_ahead(|x| x.parse_seq("f\'")).is_ok() {
+            let tokens = self.parse_fstr('\'')?;
+            return Ok(tokens);
+        }
+
+        if self.look_ahead(|x| x.parse_seq("r\'")).is_ok() {
+            let (token, span) = self.parse_regular_str('\'')?;
+            return Ok(TokenList(vec![SToken::new(token, span, Vec::new())]));
+        }
+
+        if self.look_ahead(|x| x.parse_seq("\'")).is_ok() {
+            let (token, span) = self.parse_regular_str('\'')?;
+            return Ok(TokenList(vec![SToken::new(token, span, Vec::new())]));
+        }
+
+        // " variants
+
         if self.look_ahead(|x| x.parse_seq("rf\"")).is_ok() {
             let tokens = self.parse_fstr('"')?;
             return Ok(tokens);
