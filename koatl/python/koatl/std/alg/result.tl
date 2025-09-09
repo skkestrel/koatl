@@ -136,6 +136,7 @@ export Result = class(MonadOnce):
 export Ok = class(Result):
     __slots__ = ("value",)
     ok = True
+
     __new__ = (cls, value) => object.__new__(cls)
     __init__ = (self, value) =>
         if hasattr(self, "value"):
@@ -151,6 +152,10 @@ export Ok = class(Result):
         return self.value == other.value
 
     __repr__ = self => f"Ok({repr(self.value)})"
+
+    __reduce__ = self =>
+        Ok, (self.value,)
+
     unwrap = self => self.value
     coalesce = (self, f) => self.value
 
@@ -170,6 +175,10 @@ export Err = class(Result):
         return self.value == other.value
 
     __repr__ = self => f"Err({self.value === None then "" else repr(self.value)})"
+
+    __reduce__ = self =>
+        Err, (self.value,)
+
     unwrap = self =>
         if self.value matches BaseException():
             raise self.value
