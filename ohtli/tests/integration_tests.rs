@@ -559,3 +559,35 @@ fn test_list_trailing_comments() {
     #b"#;
     assert_compare_formatting(input, expected);
 }
+
+#[test]
+fn test_fstr_continuation_0() {
+    let input = r#"
+f"" +
+    f""
+"#;
+    let expected = r#"
+f"" +
+    f""
+"#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_fstr_continuation_in_block() {
+    let input = r#"
+if True:
+    raise (f"" +
+        f"")
+
+a
+"#;
+    let expected = r#"
+if True:
+    raise (f"" +
+        f"")
+
+a
+"#;
+    assert_compare_formatting(input, expected);
+}

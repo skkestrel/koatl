@@ -79,11 +79,6 @@ pub enum ElementData {
         end: Elements,
     },
 
-    Group {
-        elements: Elements,
-        power: u8,
-    },
-
     Block {
         lines: Vec<Line>,
         inline: bool,
@@ -128,9 +123,6 @@ impl Display for ElementData {
                     format_elements(elements),
                     format_elements(end)
                 )
-            }
-            ElementData::Group { elements, power } => {
-                write!(f, "Group({}, power={})", format_elements(elements), power)
             }
             ElementData::Block { lines, inline } => {
                 write!(
@@ -429,14 +421,6 @@ impl Element {
                 content,
                 is_comment: true,
             },
-        }
-    }
-
-    pub fn group(elements: Elements, power: u8) -> Self {
-        Element {
-            attach_before: false,
-            attach_after: false,
-            data: ElementData::Group { elements, power },
         }
     }
 
@@ -785,22 +769,18 @@ impl ToElements for SExpr<'_, '_> {
                 head,
                 parts,
                 end,
-            } => Element::group(
-                line!(
-                    attached_next_token(begin),
-                    attached_next_token(head),
-                    parts
-                        .iter()
-                        .map(|(a, b)| line!(
-                            a,
-                            special_token_to_elements(b, TokenContext::DoublyAttached)
-                        ))
-                        .collect::<Vec<_>>(),
-                    attached_token(end)
-                ),
-                0,
-            )
-            .to_elements(),
+            } => line!(
+                attached_next_token(begin),
+                attached_next_token(head),
+                parts
+                    .iter()
+                    .map(|(a, b)| line!(
+                        a,
+                        special_token_to_elements(b, TokenContext::DoublyAttached)
+                    ))
+                    .collect::<Vec<_>>(),
+                attached_token(end)
+            ),
             Expr::Tuple { kind } => match kind {
                 TupleKind::Unit(lparen, rparen) => {
                     line!(lparen, attached_token(rparen))
@@ -992,22 +972,18 @@ impl ToElements for MappingKey<STree<'_, '_>> {
                 head,
                 parts,
                 end,
-            } => Element::group(
-                line!(
-                    attached_next_token(begin),
-                    attached_next_token(head),
-                    parts
-                        .iter()
-                        .map(|(a, b)| line!(
-                            a,
-                            special_token_to_elements(b, TokenContext::DoublyAttached)
-                        ))
-                        .collect::<Vec<_>>(),
-                    attached_token(end)
-                ),
-                0,
-            )
-            .to_elements(),
+            } => line!(
+                attached_next_token(begin),
+                attached_next_token(head),
+                parts
+                    .iter()
+                    .map(|(a, b)| line!(
+                        a,
+                        special_token_to_elements(b, TokenContext::DoublyAttached)
+                    ))
+                    .collect::<Vec<_>>(),
+                attached_token(end)
+            ),
             MappingKey::Unit { lparen, rparen } => line!(lparen, attached_token(rparen)),
             MappingKey::ParenthesizedBlock { .. } => {
                 todo!()
@@ -1345,13 +1321,6 @@ impl LayoutCalculator<'_> {
                     end: new_end,
                 }
             }
-            ElementData::Group { elements, power } => {
-                let new_elements = self.layout_line(elements);
-                ElementData::Group {
-                    elements: new_elements,
-                    power,
-                }
-            }
             ElementData::Atom { .. } | ElementData::LineBreak => element.data,
         };
 
@@ -1470,9 +1439,6 @@ impl<'a> LayoutWriter<'a> {
             }
 
             // Composite
-            ElementData::Group { elements, .. } => {
-                self.write_line(elements);
-            }
             ElementData::Listing { lines, inline } => {
                 if *inline {
                     for line in lines {
