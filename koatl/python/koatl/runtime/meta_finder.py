@@ -52,13 +52,18 @@ class TlLoader(Loader):
             self.filepath,
         )
 
+        ver = (sys.version_info.major, sys.version_info.minor)
+
         if module.__name__.startswith("koatl"):
             transpiled_code = transpile(
-                source_code, mode="no_prelude", filename=self.filepath
+                source_code,
+                mode="no_prelude",
+                filename=self.filepath,
+                target_version=ver,
             )
         else:
             transpiled_code = transpile(
-                source_code, mode="module", filename=self.filepath
+                source_code, mode="module", filename=self.filepath, target_version=ver
             )
 
         code = compile(transpiled_code, self.filepath, "exec")

@@ -20,6 +20,7 @@ use crate::util::{TlErr, TlErrKind, TlErrs, TlResult};
 use ariadne::{Color, Label, Report, ReportKind, sources};
 
 pub struct TranspileOptions {
+    pub target_version: (usize, usize),
     pub inject_prelude: bool,
     pub inject_runtime: bool,
     pub set_exports: bool,
@@ -28,14 +29,21 @@ pub struct TranspileOptions {
 }
 
 impl TranspileOptions {
-    pub fn script() -> Self {
+    pub fn module() -> Self {
         TranspileOptions {
             inject_prelude: true,
             inject_runtime: true,
-            interactive: false,
-            set_exports: false,
+            set_exports: true,
             allow_await: false,
+            interactive: false,
+            target_version: (3, 12),
         }
+    }
+
+    pub fn script() -> Self {
+        let mut opt = TranspileOptions::module();
+        opt.set_exports = false;
+        opt
     }
 
     pub fn interactive() -> Self {
@@ -45,16 +53,6 @@ impl TranspileOptions {
         opt.allow_await = true;
         opt.interactive = true;
         opt
-    }
-
-    pub fn module() -> Self {
-        TranspileOptions {
-            allow_await: false,
-            inject_prelude: true,
-            inject_runtime: true,
-            set_exports: true,
-            interactive: false,
-        }
     }
 
     pub fn no_prelude() -> Self {
@@ -96,7 +94,10 @@ pub fn transpile_to_py_ast<'src>(
         &tl_ast,
         &resolve_state,
         &inference,
-        options.interactive,
+        transform::TransformOptions {
+            interactive: options.interactive,
+            target_version: options.target_version,
+        },
     ) {
         Ok(output) => Some(output),
         Err(e) => {

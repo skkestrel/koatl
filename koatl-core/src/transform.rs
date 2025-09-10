@@ -1,3 +1,4 @@
+use core::fmt;
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
@@ -70,6 +71,8 @@ struct TlCtx<'src, 'ast> {
     declarations: &'ast SlotMap<DeclarationKey, Declaration<'src>>,
 
     types: &'ast HashMap<RefHash, Type>,
+
+    target_version: (usize, usize),
 }
 
 impl<'src, 'ast> TlCtx<'src, 'ast> {
@@ -99,6 +102,7 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
             declarations: &resolve_state.declarations,
 
             types: &inference.types,
+            target_version: (3, 12),
         })
     }
 
@@ -208,7 +212,7 @@ fn deduplicate<'src, 'ast>(
     expr: SPyExpr<'src>,
     span: Span,
 ) -> TlResult<SPyExprWithPre<'src>> {
-    let var_name = ctx.create_aux_var("lhs", span.start);
+    let var_name = ctx.create_aux_var("exp", span.start);
     let a = PyAstBuilder::new(span);
     let mut pre = PyBlock::new();
 
@@ -2242,7 +2246,15 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 nodes.push(PyFstrPart::Str(begin.value.clone().into()));
 
                 for (fmt_expr, str_part) in parts {
-                    let expr = pre.bind(fmt_expr.expr.transform(ctx)?);
+                    // Nested strings are not allowed in f-strings pre 3.12,
+                    // so lift the expression part out
+                    let expr = if ctx.target_version >= (3, 12) {
+                        pre.bind(fmt_expr.expr.transform(ctx)?)
+                    } else {
+                        let e = pre.bind(fmt_expr.expr.transform(ctx)?);
+                        pre.bind(deduplicate(ctx, e, fmt_expr.expr.span)?)
+                    };
+
                     let fmt = fmt_expr
                         .fmt
                         .as_ref()
@@ -2369,6 +2381,11 @@ fn py_fn_bindings<'src, 'ast>(
     Ok((py_body, nonlocals, globals))
 }
 
+pub struct TransformOptions {
+    pub interactive: bool,
+    pub target_version: (usize, usize),
+}
+
 pub struct TransformOutput<'src> {
     pub py_block: PyBlock<'src>,
     pub exports: Vec<PyToken<'src>>,
@@ -2381,11 +2398,12 @@ pub fn transform_ast<'src, 'ast>(
     block: &'ast SExpr<'src>,
     resolve_state: &'ast ResolveState<'src>,
     inference: &'ast InferenceCtx<'src, 'ast>,
-    interactive: bool,
+    options: TransformOptions,
 ) -> TlResult<TransformOutput<'src>> {
     let mut ctx = TlCtx::new(source, filename, resolve_state, inference)?;
+    ctx.target_version = options.target_version;
 
-    let py_block = if interactive {
+    let py_block = if options.interactive {
         let mut py_value = block.transform(&mut ctx)?;
         let span = py_value.value.tl_span;
         py_value

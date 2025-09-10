@@ -58,10 +58,17 @@ class KoatlShell(ZMQInteractiveShell):
         return ret
 
     def transform_cell(self, raw_cell):
+        import sys
+
         cell = super().transform_cell(raw_cell)
         self._koatl_cell = cell
 
-        cell, sourcemap = koatl.transpile_raw(cell, mode="interactive")
+        cell, sourcemap = koatl.transpile_raw(
+            cell,
+            mode="interactive",
+            target_version=(sys.version_info.major, sys.version_info.minor),
+        )
+
         self._koatl_sourcemap = sourcemap
 
         return cell

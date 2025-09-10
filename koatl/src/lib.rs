@@ -25,9 +25,17 @@ fn get_option(mode: &str) -> PyResult<TranspileOptions> {
     })
 }
 
-#[pyfunction(signature=(src, mode="script", filename="<string>"))]
-fn transpile(src: &str, mode: &str, filename: &str) -> PyResult<PyObject> {
-    let options = get_option(mode)?;
+#[pyfunction(signature=(src, mode="script", filename="<string>", target_version=None))]
+fn transpile(
+    src: &str,
+    mode: &str,
+    filename: &str,
+    target_version: Option<(usize, usize)>,
+) -> PyResult<PyObject> {
+    let mut options = get_option(mode)?;
+    if let Some(ver) = target_version {
+        options.target_version = ver;
+    }
 
     let py_ast = transpile_to_py_ast(src, filename, options).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PySyntaxError, _>(format_errs(&e, filename, src))
@@ -39,9 +47,17 @@ fn transpile(src: &str, mode: &str, filename: &str) -> PyResult<PyObject> {
     Ok(py_ast_obj)
 }
 
-#[pyfunction(signature=(src, mode="script", filename="<string>"))]
-fn transpile_raw(src: &str, mode: &str, filename: &str) -> PyResult<PyObject> {
-    let options = get_option(mode)?;
+#[pyfunction(signature=(src, mode="script", filename="<string>", target_version=None))]
+fn transpile_raw(
+    src: &str,
+    mode: &str,
+    filename: &str,
+    target_version: Option<(usize, usize)>,
+) -> PyResult<PyObject> {
+    let mut options = get_option(mode)?;
+    if let Some(ver) = target_version {
+        options.target_version = ver;
+    }
 
     let ctx = transpile_to_source(src, filename, options).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PySyntaxError, _>(format_errs(&e, filename, src))
