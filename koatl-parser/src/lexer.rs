@@ -1542,6 +1542,11 @@ impl<'src> TokenizeCtx<'src> {
             }
         };
 
+        if delim_stack.len() > 0 {
+            let (_unmatched_char, span) = delim_stack.pop().unwrap();
+            return Err(LexError::custom(span, "unmatched delimiter"));
+        }
+
         let len = tokens.len();
         for i in (0..len).rev() {
             // avoid putting trivia on an eol token

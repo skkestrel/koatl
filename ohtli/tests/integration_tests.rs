@@ -591,3 +591,27 @@ a
 "#;
     assert_compare_formatting(input, expected);
 }
+
+#[test]
+fn test_error() {
+    let input = r#"
+a a
+"#;
+    let expected = r#"
+a a
+"#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_error2() {
+    let input = r#"
+a a
+let a = 1
+"#;
+    let expected = r#"
+a a
+let a = 1
+"#;
+    assert_compare_formatting(input, expected);
+}

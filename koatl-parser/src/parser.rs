@@ -2455,7 +2455,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         }
                         None => {
                             stmts.push(err_stmt);
-                            break 'outer;
+                            return Err(());
                         }
                     }
                     self.next();
@@ -2509,7 +2509,15 @@ pub fn parse_tokens<'src: 'tok, 'tok>(
             .map(|err| {
                 (
                     true_span(err.index, err.index + 1, ctx.input),
-                    format!("{:?}. Found: {:?}", err.message, tokens.0[err.index].token),
+                    format!(
+                        "{:?}. Found: {}",
+                        err.message,
+                        tokens
+                            .0
+                            .get(err.index)
+                            .map(|x| format!("{:?}", x.token))
+                            .unwrap_or("Eof".into())
+                    ),
                 )
             })
             .collect(),

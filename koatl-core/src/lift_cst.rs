@@ -468,7 +468,7 @@ impl<'src, 'tok> Lift<Indirect<ast::SStmt<'src>>> for cst::SStmt<'src, 'tok> {
                 ast::Stmt::Import(tree.lift(), export.is_some())
             }
             cst::Stmt::Error { .. } => ast::Stmt::Expr(
-                ast::Expr::Ident(ast::Ident("error".into()).spanned(self.span))
+                ast::Expr::Ident(ast::Ident("_ERROR_".into()).spanned(self.span))
                     .spanned(self.span)
                     .indirect(),
             ),

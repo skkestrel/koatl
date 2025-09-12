@@ -69,11 +69,11 @@ pub fn transpile_to_py_ast<'src>(
 ) -> TlResult<PyBlock<'src>> {
     let (tl_ast, tl_errs) = parse_tl(src);
 
-    let Some(tl_ast) = tl_ast else {
-        return Err(tl_errs);
-    };
-
     let mut errs = tl_errs;
+
+    let Some(tl_ast) = tl_ast else {
+        return Err(errs);
+    };
 
     let (resolve_state, errors, tl_ast) =
         resolve_scopes::resolve_names(src, tl_ast, options.allow_await);
