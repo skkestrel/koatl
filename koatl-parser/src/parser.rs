@@ -1276,6 +1276,11 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 rhs: SExpr<'src, 'tok>,
                 rparen: &'tok SToken<'src>,
             },
+            MaybeAttribute {
+                question: &'tok SToken<'src>,
+                dot: &'tok SToken<'src>,
+                attr: &'tok SToken<'src>,
+            },
             Attribute {
                 dot: &'tok SToken<'src>,
                 attr: &'tok SToken<'src>,
@@ -1340,6 +1345,15 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         let args =
                             ctx.listing("(", ")", Token::Symbol(","), |ctx| ctx.call_item())?;
                         Ok(Postfix::MethodCall { dot, method, args })
+                    },
+                    |ctx| {
+                        let question = ctx.symbol("?")?;
+                        let attr = ctx.any_ident()?;
+                        Ok(Postfix::MaybeAttribute {
+                            question,
+                            dot,
+                            attr,
+                        })
                     },
                     |ctx| {
                         let attr = ctx.any_ident()?;
@@ -1409,6 +1423,17 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         expr: expr.boxed(),
                         question,
                         dot,
+                        attr,
+                    },
+                    Postfix::MaybeAttribute {
+                        question: question2,
+                        dot,
+                        attr,
+                    } => Expr::MaybeAttribute {
+                        expr: expr.boxed(),
+                        question,
+                        dot,
+                        question2,
                         attr,
                     },
                     Postfix::Decorator { op, decorator } => {

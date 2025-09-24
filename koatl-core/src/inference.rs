@@ -229,7 +229,9 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
             Expr::RawAttribute(expr, _)
             | Expr::MappedRawAttribute(expr, _)
             | Expr::Attribute(expr, _)
-            | Expr::MappedAttribute(expr, _) => {
+            | Expr::MappedAttribute(expr, _)
+            | Expr::MaybeAttribute(expr, _)
+            | Expr::MappedMaybeAttribute(expr, _) => {
                 expr.traverse(ctx);
                 Type::Any
             }

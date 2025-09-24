@@ -1410,6 +1410,20 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 return traversed;
             }
+            Expr::MaybeAttribute(expr, attr) => {
+                Expr::MaybeAttribute(expr.traverse(state), attr.clone())
+            }
+            Expr::MappedMaybeAttribute(expr, attr) => {
+                let traversed = Expr::MappedMaybeAttribute(expr.traverse(state), attr)
+                    .spanned(span)
+                    .indirect();
+
+                state
+                    .mapped_fninfo
+                    .insert(traversed.as_ref().into(), FnInfo::new());
+
+                return traversed;
+            }
             Expr::RawAttribute(expr, attr) => Expr::RawAttribute(expr.traverse(state), attr),
             Expr::MappedRawAttribute(expr, spanned) => {
                 let traversed = Expr::MappedRawAttribute(expr.traverse(state), spanned)

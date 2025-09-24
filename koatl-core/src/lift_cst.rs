@@ -317,6 +317,18 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                     ast::Expr::Attribute(expr.lift(), attr.lift_as_ident())
                 }
             }
+            cst::Expr::MaybeAttribute {
+                expr,
+                attr,
+                question,
+                ..
+            } => {
+                if question.is_some() {
+                    ast::Expr::MappedMaybeAttribute(expr.lift(), attr.lift_as_ident())
+                } else {
+                    ast::Expr::MaybeAttribute(expr.lift(), attr.lift_as_ident())
+                }
+            }
             cst::Expr::Call {
                 expr,
                 args,

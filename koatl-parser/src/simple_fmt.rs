@@ -190,6 +190,20 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                     attr.simple_fmt()
                 )
             }
+            Expr::MaybeAttribute {
+                expr,
+                question,
+                attr,
+                ..
+            } => {
+                let question_str = if question.is_some() { "?" } else { "" };
+                format!(
+                    "{}{}.?{}",
+                    expr.simple_fmt(),
+                    question_str,
+                    attr.simple_fmt()
+                )
+            }
             Expr::Slice {
                 start,
                 dots: _,

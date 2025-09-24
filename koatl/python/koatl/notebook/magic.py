@@ -36,8 +36,7 @@ def _make_help_call(target, esc):
 
 
 def crepr(s):
-    assert isinstance(s, str)
-    return '"' + repr(s)[1:-1] + '"'
+    return repr(s)
 
 
 def _tr_help(content):

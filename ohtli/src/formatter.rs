@@ -586,6 +586,21 @@ impl ToElements for SExpr<'_, '_> {
                     attached_token(attr)
                 )
             }
+            Expr::MaybeAttribute {
+                expr,
+                question,
+                dot,
+                question2,
+                attr,
+            } => {
+                line!(
+                    expr,
+                    question.map(attached_token),
+                    attached_token(dot),
+                    attached_token(question2),
+                    attached_token(attr)
+                )
+            }
             Expr::Subscript {
                 expr,
                 question,

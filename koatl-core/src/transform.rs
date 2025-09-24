@@ -1314,11 +1314,13 @@ fn transform_postfix_expr<'src, 'ast>(
         Expr::Call(obj, _) => (false, obj),
         Expr::ScopedAttribute(obj, _) => (false, obj),
         Expr::Attribute(obj, _) => (false, obj),
+        Expr::MaybeAttribute(obj, _) => (false, obj),
         Expr::MappedRawAttribute(obj, _) => (true, obj),
         Expr::MappedSubscript(obj, _) => (true, obj),
         Expr::MappedCall(obj, _) => (true, obj),
         Expr::MappedScopedAttribute(obj, _) => (true, obj),
         Expr::MappedAttribute(obj, _) => (true, obj),
+        Expr::MappedMaybeAttribute(obj, _) => (true, obj),
         _ => {
             return Err(simple_err(
                 "Internal error: Postfix expressions can only be attributes, subscripts, calls, or extensions",
@@ -1363,6 +1365,29 @@ fn transform_postfix_expr<'src, 'ast>(
                 } else {
                     a.attribute(lhs, rhs.value.escape(), access_ctx)
                 }
+            }
+            Expr::MaybeAttribute(_, rhs) | Expr::MappedMaybeAttribute(_, rhs) => {
+                let temp_var = ctx.create_aux_var("attr", expr.span.start);
+
+                inner_pre.push(a.try_(
+                    PyBlock(vec![a.assign(
+                        a.ident(temp_var.clone(), PyAccessCtx::Store),
+                        a.call(
+                            a.tl_builtin("vget"),
+                            vec![a.call_arg(lhs), a.call_arg(a.str(rhs.value.escape()))],
+                        ),
+                    )]),
+                    vec![PyExceptHandler {
+                        typ: None,
+                        name: None,
+                        body: PyBlock(vec![
+                            a.assign(a.ident(temp_var.clone(), PyAccessCtx::Store), a.none()),
+                        ]),
+                    }],
+                    None,
+                ));
+
+                a.load_ident(temp_var)
             }
             _ => {
                 panic!()
@@ -1905,7 +1930,11 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
             | Expr::ScopedAttribute(..)
             | Expr::MappedScopedAttribute(..)
             | Expr::Attribute(..)
-            | Expr::MappedAttribute(..) => pre.bind(transform_postfix_expr(ctx, self, access_ctx)?),
+            | Expr::MappedAttribute(..)
+            | Expr::MaybeAttribute(..)
+            | Expr::MappedMaybeAttribute(..) => {
+                pre.bind(transform_postfix_expr(ctx, self, access_ctx)?)
+            }
             Expr::With(pattern, value, body) => {
                 let temp_var = ctx.create_aux_var("with", span.start);
                 let value = pre.bind(value.transform(ctx)?);

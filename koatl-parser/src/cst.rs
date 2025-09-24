@@ -465,6 +465,13 @@ pub enum Expr<TTree: Tree> {
         rhs: TTree::Expr,
         rparen: TTree::Token,
     },
+    MaybeAttribute {
+        expr: TTree::Expr,
+        question: Option<TTree::Token>,
+        dot: TTree::Token,
+        question2: TTree::Token,
+        attr: TTree::Token,
+    },
     Attribute {
         expr: TTree::Expr,
         question: Option<TTree::Token>,
