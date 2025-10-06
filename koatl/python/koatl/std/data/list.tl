@@ -1,6 +1,6 @@
 import itertools
 
-import koatl.std.alg.Monad
+import koatl.std.control.Monad
 
 export List = class(Monad):
     __new__ = (cls, *args, **kwargs) => raise ValueError(

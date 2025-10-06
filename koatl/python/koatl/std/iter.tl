@@ -3,14 +3,14 @@ import builtins
 
 import koatl.std.data.Record
 import koatl.std.trait.Trait
-import .alg.(Traversable, Ok, Err, Memo, Async, AsyncMemo, Result)
+import .control.(Traversable, Ok, Err, Memo, Async, AsyncMemo, Result)
 
 export Iterable = class(Traversable, Trait):
     iter = Trait.abstract! self => None
 
     skip = (self, n) =>
         let it = self.iter
-        for _ in ..n:
+        for _ in..n:
             next(it, None)
         it
 
@@ -27,7 +27,7 @@ export Iterable = class(Traversable, Trait):
     take = (self, n) =>
         let impl = () =>
             let it = self.iter
-            for _ in ..n:
+            for _ in..n:
                 try:
                     yield next(it)
                 except StopIteration(value=value) =>
