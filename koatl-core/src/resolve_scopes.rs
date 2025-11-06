@@ -1675,7 +1675,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                         .collect::<Vec<_>>()
                         .join(".");
 
-                    let full_module = ".".repeat(tree.level) + &base_module;
+                    let full_module = ".".repeat(level) + &base_module;
 
                     match &tree.leaf.value {
                         ImportLeaf::Multi(branches) => {
