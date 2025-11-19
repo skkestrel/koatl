@@ -69,7 +69,7 @@ impl PyAstBuilder {
     pub fn fn_def<'src>(
         &self,
         name: impl Into<PyToken<'src>>,
-        args: Vec<PyArgDefItem<'src>>,
+        args: PyArgList<'src>,
         body: PyBlock<'src>,
         async_: bool,
     ) -> SPyStmt<'src> {
@@ -305,11 +305,7 @@ impl PyAstBuilder {
         (PyExpr::YieldFrom(Box::new(value)), self.span).into()
     }
 
-    pub fn lambda<'src>(
-        &self,
-        args: Vec<PyArgDefItem<'src>>,
-        body: SPyExpr<'src>,
-    ) -> SPyExpr<'src> {
+    pub fn lambda<'src>(&self, args: PyArgList<'src>, body: SPyExpr<'src>) -> SPyExpr<'src> {
         (PyExpr::Lambda(args, Box::new(body)), self.span).into()
     }
 
@@ -332,23 +328,6 @@ impl PyAstBuilder {
 
     pub fn call_kwarg_spread<'src>(&self, expr: SPyExpr<'src>) -> PyCallItem<'src> {
         PyCallItem::KwargSpread(expr)
-    }
-
-    // Utility builders for argument definitions
-    pub fn arg_def<'src>(
-        &self,
-        name: impl Into<PyToken<'src>>,
-        default: Option<SPyExpr<'src>>,
-    ) -> PyArgDefItem<'src> {
-        PyArgDefItem::Arg(name.into(), default)
-    }
-
-    pub fn arg_def_spread<'src>(&self, name: impl Into<PyToken<'src>>) -> PyArgDefItem<'src> {
-        PyArgDefItem::ArgSpread(name.into())
-    }
-
-    pub fn kwarg_def_spread<'src>(&self, name: impl Into<PyToken<'src>>) -> PyArgDefItem<'src> {
-        PyArgDefItem::KwargSpread(name.into())
     }
 
     // Utility builders for tuple items

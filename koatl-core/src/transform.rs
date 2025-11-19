@@ -944,24 +944,31 @@ fn make_class_def<'src, 'ast>(
     Ok(stmts)
 }
 
-struct PyArgList<'src> {
+struct PyArgListWithPre<'src> {
     pre: PyBlock<'src>,
     post: PyBlock<'src>,
-    items: Vec<PyArgDefItem<'src>>,
+    arglist: PyArgList<'src>,
 }
 
 fn make_arglist<'src, 'ast>(
     ctx: &mut TlCtx<'src, 'ast>,
     args: &'ast [SArgDefItem<'src>],
     info: &FnInfo,
-) -> TlResult<PyArgList<'src>> {
+) -> TlResult<PyArgListWithPre<'src>> {
     let mut pre = PyBlock::new();
     let mut post = PyBlock::new();
 
-    let mut args_vec = vec![];
+    let posonlyargs = vec![];
+    let mut regular_args = vec![];
+    let mut vararg = None;
+    let mut kwonlyargs = vec![];
+    let mut kwarg = None;
+
+    // Track state transitions: normal -> after_vararg -> after_kwarg
+    let mut after_vararg = false;
 
     for arg in args {
-        let arg = match arg {
+        match arg {
             ArgDefItem::Arg(arg_pattern, default) => {
                 let default = if let Some(default) = default {
                     Some(pre.bind(default.transform(ctx)?))
@@ -972,7 +979,13 @@ fn make_arglist<'src, 'ast>(
                 let meta = ctx.pattern_info(arg_pattern)?;
                 let (matcher, cursor) = create_throwing_matcher(ctx, arg_pattern, &meta)?;
                 post.extend(matcher);
-                PyArgDefItem::Arg(cursor, default)
+
+                // Arguments after *args are keyword-only
+                if after_vararg {
+                    kwonlyargs.push((cursor, default));
+                } else {
+                    regular_args.push((cursor, default));
+                }
             }
             ArgDefItem::ArgSpread(name) => {
                 let decl = info
@@ -983,12 +996,15 @@ fn make_arglist<'src, 'ast>(
 
                 let decl_value = &ctx.declarations[*decl];
 
-                if decl_value.name.0 == "_" {
+                let var_name = if decl_value.name.0 == "_" {
                     // need to create a unique name to prevent python complaining
-                    PyArgDefItem::ArgSpread(ctx.create_aux_var("_", name.span.start))
+                    ctx.create_aux_var("_", name.span.start)
                 } else {
-                    PyArgDefItem::ArgSpread(ctx.decl_py_ident(*decl)?)
-                }
+                    ctx.decl_py_ident(*decl)?
+                };
+
+                vararg = Some(var_name);
+                after_vararg = true;
             }
             ArgDefItem::KwargSpread(name) => {
                 let decl = info
@@ -999,27 +1015,34 @@ fn make_arglist<'src, 'ast>(
 
                 let decl_value = &ctx.declarations[*decl];
 
-                if decl_value.name.0 == "_" {
-                    PyArgDefItem::KwargSpread(ctx.create_aux_var("_", name.span.start))
+                let kwarg_name = if decl_value.name.0 == "_" {
+                    ctx.create_aux_var("_", name.span.start)
                 } else {
-                    PyArgDefItem::KwargSpread(ctx.decl_py_ident(*decl)?)
-                }
+                    ctx.decl_py_ident(*decl)?
+                };
+
+                kwarg = Some(kwarg_name);
             }
         };
-        args_vec.push(arg);
     }
 
-    Ok(PyArgList {
+    Ok(PyArgListWithPre {
         pre,
         post,
-        items: args_vec,
+        arglist: PyArgList {
+            posonlyargs,
+            args: regular_args,
+            vararg,
+            kwonlyargs,
+            kwarg,
+        },
     })
 }
 
 struct PartialPyFnDef<'a> {
     body: SPyExprWithPre<'a>,
     decorators: PyDecorators<'a>,
-    args: Vec<PyArgDefItem<'a>>,
+    args: PyArgList<'a>,
     async_: bool,
 }
 
@@ -1027,7 +1050,7 @@ enum FnDef<'src, 'ast> {
     /**
      * Args, body, is_do, is_async
      */
-    PyFnDef(Vec<PyArgDefItem<'src>>, SPyExprWithPre<'src>, bool, bool),
+    PyFnDef(PyArgList<'src>, SPyExprWithPre<'src>, bool, bool),
 
     // Expr::Fn, args, body
     TlFnDef(
@@ -1072,10 +1095,10 @@ fn prepare_py_fn<'src, 'ast>(
         FnDef::TlFnDef(expr, arglist, body) => {
             let fn_info = ctx.fn_info(expr)?;
 
-            let PyArgList {
+            let PyArgListWithPre {
                 pre: arg_pre,
                 post,
-                items: args_,
+                arglist: args_,
             } = make_arglist(ctx, arglist, fn_info)?;
 
             args = args_;
@@ -1411,7 +1434,7 @@ fn transform_postfix_expr<'src, 'ast>(
         let inner_fn = pre.bind(make_fn_exp(
             ctx,
             FnDef::PyFnDef(
-                vec![a.arg_def(arg_name, None)],
+                PyArgList::simple_args(vec![(arg_name, None)]),
                 py_expr,
                 false,
                 fn_info.is_async,
@@ -2130,7 +2153,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 let callback = pre.bind(make_fn_exp(
                     ctx,
                     FnDef::PyFnDef(
-                        vec![],
+                        PyArgList::empty(),
                         WithPre {
                             pre: py_body,
                             value: py_expr,
@@ -2316,7 +2339,7 @@ fn create_coalesce<'src, 'ast>(
 
     let inner_fn = pre.bind(make_fn_exp(
         ctx,
-        FnDef::PyFnDef(vec![], py_body, false, fn_info.is_async),
+        FnDef::PyFnDef(PyArgList::empty(), py_body, false, fn_info.is_async),
         &span,
     )?);
 

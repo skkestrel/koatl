@@ -110,41 +110,65 @@ impl<'src> PyBlockExt<'src> for PyBlock<'src> {
 trait PyArgDefExt<'src> {
     fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject>;
 }
-impl<'src> PyArgDefExt<'src> for Vec<PyArgDefItem<'src>> {
+impl<'src> PyArgDefExt<'src> for PyArgList<'src> {
     fn emit_py<'py>(&self, ctx: &PyCtx<'py, 'src>) -> PyTlResult<PyObject> {
+        let mut py_posonlyargs = Vec::new();
         let mut py_args = Vec::new();
+        let mut py_kwonlyargs = Vec::new();
         let mut py_defaults = Vec::new();
+        let mut py_kw_defaults = Vec::new();
         let mut vararg = None;
         let mut kwarg = None;
 
-        for arg in self {
-            match arg {
-                PyArgDefItem::Arg(arg_name, default) => {
-                    let arg_ast = ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?;
-                    py_args.push(arg_ast);
-                    if let Some(default_expr) = default {
-                        py_defaults.push(default_expr.emit_py(ctx)?);
-                    }
-                }
-                PyArgDefItem::ArgSpread(arg_name) => {
-                    vararg = Some(ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?);
-                }
-                PyArgDefItem::KwargSpread(arg_name) => {
-                    kwarg = Some(ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?);
-                }
+        // Process position-only arguments
+        for (arg_name, default) in &self.posonlyargs {
+            let arg_ast = ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?;
+            py_posonlyargs.push(arg_ast);
+            if let Some(default_expr) = default {
+                py_defaults.push(default_expr.emit_py(ctx)?);
             }
+        }
+
+        // Process regular arguments
+        for (arg_name, default) in &self.args {
+            let arg_ast = ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?;
+            py_args.push(arg_ast);
+            if let Some(default_expr) = default {
+                py_defaults.push(default_expr.emit_py(ctx)?);
+            }
+        }
+
+        // Process *args
+        if let Some(arg_name) = &self.vararg {
+            vararg = Some(ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?);
+        }
+
+        // Process keyword-only arguments
+        for (arg_name, default) in &self.kwonlyargs {
+            let arg_ast = ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?;
+            py_kwonlyargs.push(arg_ast);
+            if let Some(default_expr) = default {
+                py_kw_defaults.push(default_expr.emit_py(ctx)?);
+            } else {
+                py_kw_defaults.push(ctx.py.None());
+            }
+        }
+
+        // Process **kwargs
+        if let Some(arg_name) = &self.kwarg {
+            kwarg = Some(ctx.ast_cls("arg", (arg_name.as_ref(), ctx.py.None()))?);
         }
 
         ctx.ast_cls(
             "arguments",
             (
-                Vec::<PyObject>::new(), // posonlyargs
-                py_args,                // args
-                vararg,                 // vararg
-                Vec::<PyObject>::new(), // kwonlyargs
-                Vec::<PyObject>::new(), // kw_defaults
-                kwarg,                  // kwarg
-                py_defaults,            // defaults
+                py_posonlyargs, // posonlyargs
+                py_args,        // args
+                vararg,         // vararg
+                py_kwonlyargs,  // kwonlyargs
+                py_kw_defaults, // kw_defaults
+                kwarg,          // kwarg
+                py_defaults,    // defaults
             ),
         )
     }
@@ -379,6 +403,8 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                 let arguments = fndef.args.emit_py(ctx)?;
                 let body_ast = fndef.body.emit_py(ctx)?;
                 let decorators = fndef.decorators.emit_py(ctx)?;
+
+                println!("FnDef arguments AST: {:?}", fndef);
 
                 if fndef.async_ {
                     ctx.ast_node(

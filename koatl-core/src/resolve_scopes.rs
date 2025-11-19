@@ -180,6 +180,8 @@ impl<'src> ResolveState<'src> {
                 DeclType::Let,
             );
 
+            self.declarations[decl].is_implicit_global = true;
+
             self.scopes[self.root_scope].locals.push(decl.clone());
 
             return Ok(decl);
@@ -329,16 +331,20 @@ impl<'src> ResolveState<'src> {
             DeclType::Let | DeclType::Const => {
                 if class || global {
                     if let Some(found) = self.scope_stack.find_decl(self, &name) {
-                        self.errors.extend(
-                            TlErrBuilder::new()
-                                .message("Cannot shadow declarations in a class or global scope")
-                                .span(name.span)
-                                .context(
-                                    "Previous declaration here",
-                                    self.declarations[found.decl].loc,
-                                )
-                                .build(),
-                        );
+                        if !self.declarations[found.decl].is_implicit_global {
+                            self.errors.extend(
+                                TlErrBuilder::new()
+                                    .message(
+                                        "Cannot shadow declarations in a class or global scope",
+                                    )
+                                    .span(name.span)
+                                    .context(
+                                        "Previous declaration here",
+                                        self.declarations[found.decl].loc,
+                                    )
+                                    .build(),
+                            );
+                        }
                     }
                 }
             }
@@ -469,6 +475,7 @@ pub struct Declaration<'src> {
     pub loc: Span,
     pub typ: Type,
 
+    pub is_implicit_global: bool,
     pub is_fn_arg: bool,
     pub is_exported: bool,
     pub is_const: bool,
@@ -498,8 +505,9 @@ impl<'src> DeclSlotMapExt<'src> for SlotMap<DeclarationKey, Declaration<'src>> {
             scope,
             loc: name.span,
             typ: Type::Unprocessed,
-            is_fn_arg: false,
 
+            is_implicit_global: false,
+            is_fn_arg: false,
             is_const: matches!(modifier, DeclType::Const),
             is_exported: matches!(modifier, DeclType::Export),
             is_import: false,

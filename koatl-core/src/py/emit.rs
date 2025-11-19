@@ -105,24 +105,83 @@ impl PyCallItem<'_> {
     }
 }
 
-impl PyArgDefItem<'_> {
+impl PyArgList<'_> {
     fn emit_to(&mut self, ctx: &mut EmitCtx) -> TlResult<()> {
-        match self {
-            PyArgDefItem::Arg(name, default) => {
-                if let Some(default) = default {
-                    ctx.emit(name);
-                    ctx.emit("=");
-                    default.emit_to(ctx, LOW_PREC)?;
-                } else {
-                    ctx.emit(name);
-                }
+        let mut first = true;
+
+        // Emit position-only arguments
+        for (name, default) in &mut self.posonlyargs {
+            if !first {
+                ctx.emit(", ");
             }
-            PyArgDefItem::ArgSpread(name) => {
-                ctx.emit(&format!("*{}", name));
+            first = false;
+
+            ctx.emit(name);
+            if let Some(default) = default {
+                ctx.emit("=");
+                default.emit_to(ctx, LOW_PREC)?;
             }
-            PyArgDefItem::KwargSpread(name) => {
-                ctx.emit(&format!("**{}", name));
+        }
+
+        // Emit position-only marker if there are position-only args
+        if !self.posonlyargs.is_empty() {
+            if !first {
+                ctx.emit(", ");
             }
+            first = false;
+            ctx.emit("/");
+        }
+
+        // Emit regular args
+        for (name, default) in &mut self.args {
+            if !first {
+                ctx.emit(", ");
+            }
+            first = false;
+
+            ctx.emit(name);
+            if let Some(default) = default {
+                ctx.emit("=");
+                default.emit_to(ctx, LOW_PREC)?;
+            }
+        }
+
+        // Emit *args
+        if let Some(vararg) = &self.vararg {
+            if !first {
+                ctx.emit(", ");
+            }
+            first = false;
+            ctx.emit(&format!("*{}", vararg));
+        } else if !self.kwonlyargs.is_empty() {
+            // If there are keyword-only args but no *args, emit bare *
+            if !first {
+                ctx.emit(", ");
+            }
+            first = false;
+            ctx.emit("*");
+        }
+
+        // Emit keyword-only args
+        for (name, default) in &mut self.kwonlyargs {
+            if !first {
+                ctx.emit(", ");
+            }
+            first = false;
+
+            ctx.emit(name);
+            if let Some(default) = default {
+                ctx.emit("=");
+                default.emit_to(ctx, LOW_PREC)?;
+            }
+        }
+
+        // Emit **kwargs
+        if let Some(kwarg) = &self.kwarg {
+            if !first {
+                ctx.emit(", ");
+            }
+            ctx.emit(&format!("**{}", kwarg));
         }
 
         Ok(())
@@ -546,13 +605,7 @@ impl SPyExpr<'_> {
             }
             PyExpr::Lambda(args, body) => {
                 ctx.emit("(lambda ");
-                ctx.emit("");
-                for (i, arg) in args.iter_mut().enumerate() {
-                    if i > 0 {
-                        ctx.emit(", ");
-                    }
-                    arg.emit_to(ctx)?;
-                }
+                args.emit_to(ctx)?;
                 ctx.emit(": ");
                 body.emit_to(ctx, HIGH_PREC)?;
                 ctx.emit(")");
@@ -779,12 +832,7 @@ impl SPyStmt<'_> {
                 ctx.emit("def ");
                 ctx.emit(&name);
                 ctx.emit("(");
-                for (i, arg) in args.iter_mut().enumerate() {
-                    if i > 0 {
-                        ctx.emit(", ");
-                    }
-                    arg.emit_to(ctx)?;
-                }
+                args.emit_to(ctx)?;
                 ctx.emit("):");
                 ctx.emit_endl();
                 body.emit_to(ctx, 1)?;

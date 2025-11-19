@@ -47,7 +47,7 @@ impl<'a> PyDecorators<'a> {
 #[derive(Debug, Clone)]
 pub struct PyFnDef<'a> {
     pub name: PyToken<'a>,
-    pub args: Vec<PyArgDefItem<'a>>,
+    pub args: PyArgList<'a>,
     pub body: PyBlock<'a>,
     pub decorators: PyDecorators<'a>,
     pub async_: bool,
@@ -188,10 +188,39 @@ pub enum PyCallItem<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub enum PyArgDefItem<'a> {
-    Arg(PyToken<'a>, Option<SPyExpr<'a>>),
-    ArgSpread(PyToken<'a>),
-    KwargSpread(PyToken<'a>),
+pub struct PyArgList<'a> {
+    /// Position-only arguments (before `/` marker)
+    pub posonlyargs: Vec<(PyToken<'a>, Option<SPyExpr<'a>>)>,
+    /// Regular positional or keyword arguments
+    pub args: Vec<(PyToken<'a>, Option<SPyExpr<'a>>)>,
+    /// Variadic positional argument (*args)
+    pub vararg: Option<PyToken<'a>>,
+    /// Keyword-only arguments (after `*` or `*args`)
+    pub kwonlyargs: Vec<(PyToken<'a>, Option<SPyExpr<'a>>)>,
+    /// Variadic keyword argument (**kwargs)
+    pub kwarg: Option<PyToken<'a>>,
+}
+
+impl<'a> PyArgList<'a> {
+    pub fn empty() -> Self {
+        PyArgList {
+            posonlyargs: vec![],
+            args: vec![],
+            vararg: None,
+            kwonlyargs: vec![],
+            kwarg: None,
+        }
+    }
+
+    pub fn simple_args(args: Vec<(PyToken<'a>, Option<SPyExpr<'a>>)>) -> Self {
+        PyArgList {
+            posonlyargs: vec![],
+            args,
+            vararg: None,
+            kwonlyargs: vec![],
+            kwarg: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -225,7 +254,7 @@ pub enum PyExpr<'a> {
     Subscript(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>, PyAccessCtx),
 
     IfExpr(Box<SPyExpr<'a>>, Box<SPyExpr<'a>>, Box<SPyExpr<'a>>),
-    Lambda(Vec<PyArgDefItem<'a>>, Box<SPyExpr<'a>>),
+    Lambda(PyArgList<'a>, Box<SPyExpr<'a>>),
 
     List(Vec<PyListItem<'a>>, PyAccessCtx),
     Tuple(Vec<PyListItem<'a>>, PyAccessCtx),
