@@ -138,8 +138,8 @@ pub enum ArgDefItem<'a, TTree: Tree> {
     Arg(TTree::Pattern, Option<TTree::Expr>),
     ArgSpread(SIdent<'a>),
     KwargSpread(SIdent<'a>),
-    PosOnlyMarker,
-    KwOnlyMarker,
+    PosOnlyMarker(Spanned<()>),
+    KwOnlyMarker(Spanned<()>),
 }
 
 #[derive(Debug, Clone)]

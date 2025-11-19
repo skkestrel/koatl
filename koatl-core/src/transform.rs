@@ -981,53 +981,37 @@ fn make_arglist<'src, 'ast>(
                         ));
                     }
                 }
-                ArgDefItem::PosOnlyMarker => {
-                    // Get a span - we'll use the first arg's span as a fallback
-                    let span = args
-                        .first()
-                        .and_then(|a| match a {
-                            ArgDefItem::Arg(p, _) => Some(p.span),
-                            ArgDefItem::ArgSpread(n) | ArgDefItem::KwargSpread(n) => Some(n.span),
-                            _ => None,
-                        })
-                        .unwrap_or(Span { start: 0, end: 0 });
-
+                ArgDefItem::PosOnlyMarker(spanned) => {
                     if seen_posonly_marker.is_some() {
                         return Err(simple_err(
                             "Only one position-only marker (/) is allowed",
-                            span,
+                            spanned.span,
                         ));
                     }
                     if seen_kwonly_marker.is_some() || seen_vararg.is_some() {
                         return Err(simple_err(
                             "Position-only marker (/) must come before * or *args",
-                            span,
+                            spanned.span,
                         ));
                     }
-                    seen_posonly_marker = Some(span);
+                    seen_posonly_marker = Some(spanned.span);
                     // Reset for regular args section
                     seen_default = false;
                 }
-                ArgDefItem::KwOnlyMarker => {
-                    let span = args
-                        .first()
-                        .and_then(|a| match a {
-                            ArgDefItem::Arg(p, _) => Some(p.span),
-                            ArgDefItem::ArgSpread(n) | ArgDefItem::KwargSpread(n) => Some(n.span),
-                            _ => None,
-                        })
-                        .unwrap_or(Span { start: 0, end: 0 });
-
+                ArgDefItem::KwOnlyMarker(spanned) => {
                     if seen_kwonly_marker.is_some() {
                         return Err(simple_err(
                             "Only one keyword-only marker (*) is allowed",
-                            span,
+                            spanned.span,
                         ));
                     }
                     if seen_vararg.is_some() {
-                        return Err(simple_err("Cannot have both *args and bare * marker", span));
+                        return Err(simple_err(
+                            "Cannot have both *args and bare * marker",
+                            spanned.span,
+                        ));
                     }
-                    seen_kwonly_marker = Some(span);
+                    seen_kwonly_marker = Some(spanned.span);
                     after_kwonly_marker = true;
                     seen_default = false;
                 }
@@ -1088,11 +1072,11 @@ fn make_arglist<'src, 'ast>(
                     _ => kwonlyargs.push((cursor, default)),
                 }
             }
-            ArgDefItem::PosOnlyMarker => {
+            ArgDefItem::PosOnlyMarker(..) => {
                 // Transition from position-only to regular args
                 state = 1;
             }
-            ArgDefItem::KwOnlyMarker => {
+            ArgDefItem::KwOnlyMarker(..) => {
                 // Bare * marker - transition to keyword-only without vararg
                 state = 2;
             }

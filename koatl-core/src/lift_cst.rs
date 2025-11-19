@@ -555,8 +555,12 @@ impl<'src, 'tok> Lift<ast::ArgDefItem<'src, ast::STree<'src>>>
             cst::ArgDefItem::KwargSpread { name, .. } => {
                 ast::ArgDefItem::KwargSpread(name.lift_as_ident())
             }
-            cst::ArgDefItem::PosOnlyMarker { .. } => ast::ArgDefItem::PosOnlyMarker,
-            cst::ArgDefItem::KwOnlyMarker { .. } => ast::ArgDefItem::KwOnlyMarker,
+            cst::ArgDefItem::PosOnlyMarker { slash } => {
+                ast::ArgDefItem::PosOnlyMarker(().spanned(slash.span))
+            }
+            cst::ArgDefItem::KwOnlyMarker { star } => {
+                ast::ArgDefItem::KwOnlyMarker(().spanned(star.span))
+            }
         }
     }
 }
