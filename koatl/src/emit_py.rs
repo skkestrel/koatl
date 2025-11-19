@@ -404,8 +404,6 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                 let body_ast = fndef.body.emit_py(ctx)?;
                 let decorators = fndef.decorators.emit_py(ctx)?;
 
-                println!("FnDef arguments AST: {:?}", fndef);
-
                 if fndef.async_ {
                     ctx.ast_node(
                         "AsyncFunctionDef",

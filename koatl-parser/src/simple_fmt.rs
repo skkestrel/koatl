@@ -586,6 +586,8 @@ impl<'src, 'tok> SimpleFmt for ArgDefItem<STree<'src, 'tok>> {
             ArgDefItem::KwargSpread { name, .. } => {
                 format!("**{}", name.simple_fmt())
             }
+            ArgDefItem::PosOnlyMarker { .. } => "/".to_string(),
+            ArgDefItem::KwOnlyMarker { .. } => "*".to_string(),
         }
     }
 }

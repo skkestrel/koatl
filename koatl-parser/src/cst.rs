@@ -230,6 +230,12 @@ pub enum ArgDefItem<TTree: Tree> {
         stars: TTree::Token, // **
         name: TTree::Token,
     },
+    PosOnlyMarker {
+        slash: TTree::Token,
+    },
+    KwOnlyMarker {
+        star: TTree::Token,
+    },
 }
 
 #[derive(Debug, Clone)]

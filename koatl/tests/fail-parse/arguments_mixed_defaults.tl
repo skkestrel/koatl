@@ -1,0 +1,1 @@
+let a = (b=3, c, default=2, *a) => None

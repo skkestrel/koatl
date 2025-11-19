@@ -852,6 +852,8 @@ impl ToElements for ArgDefItem<STree<'_, '_>> {
             }
             ArgDefItem::ArgSpread { star, name } => line!(attached_next_token(star), name),
             ArgDefItem::KwargSpread { stars, name } => line!(attached_next_token(stars), name),
+            ArgDefItem::PosOnlyMarker { slash } => line!(attached_next_token(slash)),
+            ArgDefItem::KwOnlyMarker { star } => line!(attached_next_token(star)),
         }
     }
 }

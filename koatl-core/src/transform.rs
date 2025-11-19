@@ -955,17 +955,118 @@ fn make_arglist<'src, 'ast>(
     args: &'ast [SArgDefItem<'src>],
     info: &FnInfo,
 ) -> TlResult<PyArgListWithPre<'src>> {
+    // Validate Python argument syntax rules
+    {
+        let mut seen_posonly_marker: Option<Span> = None;
+        let mut seen_kwonly_marker: Option<Span> = None;
+        let mut seen_vararg: Option<Span> = None;
+        let mut seen_kwarg = false;
+        let mut seen_default = false;
+        let mut after_kwonly_marker = false;
+
+        for arg in args.iter() {
+            match arg {
+                ArgDefItem::Arg(arg_pattern, default) => {
+                    if after_kwonly_marker {
+                        // Keyword-only args can have any default pattern
+                        continue;
+                    }
+
+                    if default.is_some() {
+                        seen_default = true;
+                    } else if seen_default {
+                        return Err(simple_err(
+                            "Non-default argument follows default argument",
+                            arg_pattern.span,
+                        ));
+                    }
+                }
+                ArgDefItem::PosOnlyMarker => {
+                    // Get a span - we'll use the first arg's span as a fallback
+                    let span = args
+                        .first()
+                        .and_then(|a| match a {
+                            ArgDefItem::Arg(p, _) => Some(p.span),
+                            ArgDefItem::ArgSpread(n) | ArgDefItem::KwargSpread(n) => Some(n.span),
+                            _ => None,
+                        })
+                        .unwrap_or(Span { start: 0, end: 0 });
+
+                    if seen_posonly_marker.is_some() {
+                        return Err(simple_err(
+                            "Only one position-only marker (/) is allowed",
+                            span,
+                        ));
+                    }
+                    if seen_kwonly_marker.is_some() || seen_vararg.is_some() {
+                        return Err(simple_err(
+                            "Position-only marker (/) must come before * or *args",
+                            span,
+                        ));
+                    }
+                    seen_posonly_marker = Some(span);
+                    // Reset for regular args section
+                    seen_default = false;
+                }
+                ArgDefItem::KwOnlyMarker => {
+                    let span = args
+                        .first()
+                        .and_then(|a| match a {
+                            ArgDefItem::Arg(p, _) => Some(p.span),
+                            ArgDefItem::ArgSpread(n) | ArgDefItem::KwargSpread(n) => Some(n.span),
+                            _ => None,
+                        })
+                        .unwrap_or(Span { start: 0, end: 0 });
+
+                    if seen_kwonly_marker.is_some() {
+                        return Err(simple_err(
+                            "Only one keyword-only marker (*) is allowed",
+                            span,
+                        ));
+                    }
+                    if seen_vararg.is_some() {
+                        return Err(simple_err("Cannot have both *args and bare * marker", span));
+                    }
+                    seen_kwonly_marker = Some(span);
+                    after_kwonly_marker = true;
+                    seen_default = false;
+                }
+                ArgDefItem::ArgSpread(name) => {
+                    if seen_vararg.is_some() {
+                        return Err(simple_err("Only one *args is allowed", name.span));
+                    }
+                    if seen_kwonly_marker.is_some() {
+                        return Err(simple_err(
+                            "Cannot have both *args and bare * marker",
+                            name.span,
+                        ));
+                    }
+                    seen_vararg = Some(name.span);
+                    after_kwonly_marker = true;
+                    seen_default = false;
+                }
+                ArgDefItem::KwargSpread(name) => {
+                    if seen_kwarg {
+                        return Err(simple_err("Only one **kwargs is allowed", name.span));
+                    }
+                    seen_kwarg = true;
+                }
+            }
+        }
+    }
+
     let mut pre = PyBlock::new();
     let mut post = PyBlock::new();
 
-    let posonlyargs = vec![];
+    let mut posonlyargs = vec![];
     let mut regular_args = vec![];
     let mut vararg = None;
     let mut kwonlyargs = vec![];
     let mut kwarg = None;
 
-    // Track state transitions: normal -> after_vararg -> after_kwarg
-    let mut after_vararg = false;
+    // Track state transitions: posonly -> normal -> kwonly
+    // States: 0 = position-only, 1 = normal, 2 = keyword-only
+    let mut state = 0;
 
     for arg in args {
         match arg {
@@ -980,12 +1081,20 @@ fn make_arglist<'src, 'ast>(
                 let (matcher, cursor) = create_throwing_matcher(ctx, arg_pattern, &meta)?;
                 post.extend(matcher);
 
-                // Arguments after *args are keyword-only
-                if after_vararg {
-                    kwonlyargs.push((cursor, default));
-                } else {
-                    regular_args.push((cursor, default));
+                // Place argument in appropriate category based on state
+                match state {
+                    0 => posonlyargs.push((cursor, default)),
+                    1 => regular_args.push((cursor, default)),
+                    _ => kwonlyargs.push((cursor, default)),
                 }
+            }
+            ArgDefItem::PosOnlyMarker => {
+                // Transition from position-only to regular args
+                state = 1;
+            }
+            ArgDefItem::KwOnlyMarker => {
+                // Bare * marker - transition to keyword-only without vararg
+                state = 2;
             }
             ArgDefItem::ArgSpread(name) => {
                 let decl = info
@@ -1004,7 +1113,8 @@ fn make_arglist<'src, 'ast>(
                 };
 
                 vararg = Some(var_name);
-                after_vararg = true;
+                // Transition to keyword-only state after *args
+                state = 2;
             }
             ArgDefItem::KwargSpread(name) => {
                 let decl = info

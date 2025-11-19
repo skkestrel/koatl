@@ -1290,6 +1290,8 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                             ArgDefItem::KwargSpread(arg)
                         }
+                        ArgDefItem::PosOnlyMarker => ArgDefItem::PosOnlyMarker,
+                        ArgDefItem::KwOnlyMarker => ArgDefItem::KwOnlyMarker,
                     })
                     .collect::<Vec<_>>();
 

@@ -1981,6 +1981,14 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                             pattern: pattern.boxed(),
                             default,
                         })
+                    },
+                    |ctx| {
+                        let star = ctx.symbol("*")?;
+                        Ok(ArgDefItem::KwOnlyMarker { star })
+                    },
+                    |ctx| {
+                        let slash = ctx.symbol("/")?;
+                        Ok(ArgDefItem::PosOnlyMarker { slash })
                     }
                 )
             })?;
