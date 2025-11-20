@@ -956,8 +956,8 @@ fn make_arglist<'src, 'ast>(
     info: &FnInfo,
 ) -> TlResult<PyArgListWithPre<'src>> {
     // Validate Python argument syntax rules
+    let mut seen_posonly_marker: Option<Span> = None;
     {
-        let mut seen_posonly_marker: Option<Span> = None;
         let mut seen_kwonly_marker: Option<Span> = None;
         let mut seen_vararg: Option<Span> = None;
         let mut seen_kwarg = false;
@@ -1050,7 +1050,7 @@ fn make_arglist<'src, 'ast>(
 
     // Track state transitions: posonly -> normal -> kwonly
     // States: 0 = position-only, 1 = normal, 2 = keyword-only
-    let mut state = 0;
+    let mut state = if seen_posonly_marker.is_some() { 0 } else { 1 };
 
     for arg in args {
         match arg {
