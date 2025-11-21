@@ -631,6 +631,12 @@ impl<'src> PyExprExt<'src> for SPyExpr<'src> {
                     PyBinaryOp::FloorDiv => Some("FloorDiv"),
                     PyBinaryOp::Mod => Some("Mod"),
                     PyBinaryOp::Pow => Some("Pow"),
+                    PyBinaryOp::BitAnd => Some("BitAnd"),
+                    PyBinaryOp::BitOr => Some("BitOr"),
+                    PyBinaryOp::BitXor => Some("BitXor"),
+                    PyBinaryOp::MatMult => Some("MatMult"),
+                    PyBinaryOp::LShift => Some("LShift"),
+                    PyBinaryOp::RShift => Some("RShift"),
                     _ => None,
                 };
 
