@@ -1287,7 +1287,7 @@ pub struct LayoutCalculator<'a> {
 }
 
 impl LayoutCalculator<'_> {
-    pub fn new(config: &Config) -> LayoutCalculator {
+    pub fn new(config: &'_ Config) -> LayoutCalculator<'_> {
         LayoutCalculator { config }
     }
 

@@ -1829,26 +1829,21 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                                     tree.leaf.span,
                                 ))
                             } else {
-                                let base_module = trunk_accum[..trunk_accum.len() - 1]
+                                let full_module = trunk_accum
                                     .iter()
                                     .map(|ident| ident.value.0.as_ref())
                                     .collect::<Vec<_>>()
                                     .join(".");
 
-                                let aliases = vec![a.import_alias(
-                                    trunk_accum.last().unwrap().value.escape(),
-                                    alias.as_ref().map(|a| a.value.escape()),
-                                )];
+                                let last_name = trunk_accum.last().unwrap().value.escape();
+                                let asname = alias
+                                    .as_ref()
+                                    .map(|a| a.value.escape())
+                                    .unwrap_or(last_name);
 
-                                if trunk_accum.len() == 1 && level == 0 {
-                                    Ok(PyBlock(vec![a.import(aliases)]))
-                                } else {
-                                    Ok(PyBlock(vec![a.import_from(
-                                        Some(base_module.into()),
-                                        aliases,
-                                        level,
-                                    )]))
-                                }
+                                let aliases = vec![a.import_alias(full_module, Some(asname))];
+
+                                Ok(PyBlock(vec![a.import(aliases)]))
                             }
                         }
                         ImportLeaf::Single(name, alias) => {

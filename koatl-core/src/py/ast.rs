@@ -128,7 +128,7 @@ impl<'a> IntoIterator for PyBlock<'a> {
 }
 
 impl<'a> PyBlock<'a> {
-    pub fn iter(&self) -> std::slice::Iter<SPyStmt<'a>> {
+    pub fn iter(&self) -> std::slice::Iter<'_, SPyStmt<'a>> {
         self.0.iter()
     }
 }
