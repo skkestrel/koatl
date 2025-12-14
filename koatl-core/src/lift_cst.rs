@@ -382,9 +382,11 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                 ..
             } => {
                 if question.is_some() {
-                    ast::Expr::MappedScopedAttribute(expr.lift(), rhs.lift())
+                    ast::Expr::CallNullable(expr.lift(), rhs.lift())
                 } else {
-                    ast::Expr::ScopedAttribute(expr.lift(), rhs.lift())
+                    let func = rhs.lift();
+                    let arg = ast::CallItem::Arg(expr.lift());
+                    ast::Expr::Call(func, vec![arg])
                 }
             }
             cst::Expr::Checked { expr, pattern, .. } => {

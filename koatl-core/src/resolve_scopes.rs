@@ -1446,14 +1446,14 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 return traversed;
             }
-            Expr::ScopedAttribute(expr, value) => {
-                Expr::ScopedAttribute(expr.traverse(state), value.traverse_guarded(state))
+            Expr::Call(a, items) => {
+                Expr::Call(a.traverse_guarded(state), traverse_call_items(state, items))
             }
-            Expr::MappedScopedAttribute(expr, value) => {
+            Expr::CallNullable(expr, value) => {
                 let (rhs, fn_ctx) =
                     with_phantom_fninfo(state, span, |state| value.traverse_guarded(state));
 
-                let traversed = Expr::MappedScopedAttribute(expr.traverse(state), rhs)
+                let traversed = Expr::CallNullable(expr.traverse(state), rhs)
                     .spanned(span)
                     .indirect();
 
@@ -1462,9 +1462,6 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     .insert(traversed.as_ref().into(), fn_ctx);
 
                 return traversed;
-            }
-            Expr::Call(a, items) => {
-                Expr::Call(a.traverse(state), traverse_call_items(state, items))
             }
             Expr::MappedCall(a, call_items) => {
                 let (rhs, fn_ctx) = with_phantom_fninfo(state, span, |state| {

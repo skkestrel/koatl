@@ -162,10 +162,6 @@ impl AstBuilder {
         Expr::RawAttribute(value.indirect(), attr.into().spanned(self.span)).spanned(self.span)
     }
 
-    pub fn then<'src>(&self, left: SExpr<'src>, right: SExpr<'src>) -> SExpr<'src> {
-        Expr::ScopedAttribute(left.indirect(), right.indirect()).spanned(self.span)
-    }
-
     pub fn function<'src>(&self, args: Vec<SArgDefItem<'src>>, body: SExpr<'src>) -> SExpr<'src> {
         Expr::Fn(args, body.indirect()).spanned(self.span)
     }

@@ -235,9 +235,9 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
                 expr.traverse(ctx);
                 Type::Any
             }
-            Expr::ScopedAttribute(expr, other) | Expr::MappedScopedAttribute(expr, other) => {
+            Expr::CallNullable(expr, func) => {
                 expr.traverse(ctx);
-                other.traverse(ctx);
+                func.traverse(ctx);
                 Type::Any
             }
             Expr::Checked(expr, _pattern) => {

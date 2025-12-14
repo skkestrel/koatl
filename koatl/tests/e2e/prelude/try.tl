@@ -24,5 +24,5 @@ except _ =>
 
 assert_eq(check 1 matches Ok(1), True)
 
-assert_eq((check 5)?.($+1), Ok(6))
-assert_eq((check x)?.($+1) matches Err(), True)
+assert_eq((check 5)?.($ + 1), Ok(6))
+assert_eq((check x)?.($ + 1) matches Err(), True)
