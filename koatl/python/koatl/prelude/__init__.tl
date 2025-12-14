@@ -23,6 +23,16 @@ Extension.property(object, "result")! self => Result(self)
 Extension.method(str, "match")! (regex, str) => Pattern(regex).match(str)
 Extension.method(str, "matches")! (str, regex) => Pattern(regex).match(str)
 
+Extension.method(list, "map")! (self, f) => self.iter.map(f).list()
+Extension.method(list, "filter")! (self, f) => self.iter.filter(f).list()
+
+Extension.method(dict, "map")! (self, f) => self.iter.map(f).dict()
+Extension.method(dict, "map_values")! (self, f) => self.iter.map([k, v] => [k, f(v)]).dict()
+Extension.method(dict, "map_keys")! (self, f) => self.iter.map([k, v] => [f(k), v]).dict()
+Extension.method(dict, "filter")! (self, f) => self.iter.filter(f).dict()
+Extension.method(dict, "filter_keys")! (self, f) => self.iter.filter([k, v] => f(k)).dict()
+Extension.method(dict, "filter_values")! (self, f) => self.iter.filter([k, v] => f(v)).dict()
+
 __tl__.do = koatl.std.control.do.do
 
 __tl__.op_map = koatl.std.control.result.op_map

@@ -21,10 +21,12 @@ test_max = () =>
     assert_eq([42].max(), 42)
 
 test_map = () =>
-    assert_eq([1, 2, 3].map($ * 2).list(), [2, 4, 6])
-    assert_eq([1, 2, 3].map($ + 10).list(), [11, 12, 13])
+    # List.map returns a list directly (not an iterator)
+    assert_eq([1, 2, 3].map($ * 2), [2, 4, 6])
+    assert_eq([1, 2, 3].map($ + 10), [11, 12, 13])
+    assert_eq([].map($ * 2), [])
+    # Range/iterator map still returns an iterator
     assert_eq((..5).map($ * 2).list(), [0, 2, 4, 6, 8])
-    assert_eq([].map($ * 2).list(), [])
 
 test_filter = () =>
     assert_eq([1, 2, 3, 4, 5].filter($ > 3).list(), [4, 5])
@@ -134,7 +136,8 @@ test_list_conversion = () =>
     assert_eq([1, 2, 3].map($ * 2).list(), [2, 4, 6])
 
 test_record_conversion = () =>
-    assert_eq({1: 2, 3: 4}.map([k, v] => [k * 2, v * 3]).record(), {2: 6, 6: 12})
+    # Dict.map returns a dict directly (not an iterator)
+    assert_eq({1: 2, 3: 4}.map([k, v] => [k * 2, v * 3]), {2: 6, 6: 12})
     assert_eq([[1, "a"], [2, "b"]].record(), {1: "a", 2: "b"})
 
 test_record_take = () =>
@@ -149,3 +152,25 @@ test_fold = () =>
     assert_eq([1, 2, 3, 4].fold(0, (acc, x) => acc + x), 10)
     assert_eq([1, 2, 3].fold(1, (acc, x) => acc * x), 6)
     assert_eq([5, 3, 8, 1].fold(0, (acc, x) => max(acc, x)), 8)
+
+# Record/dict methods - defined in both prelude/__init__.tl (Extension.method for dict)
+# and runtime/record.py (Record class methods)
+test_record_map = () =>
+    # map transforms both keys and values
+    assert_eq({1: 10, 2: 20}.map([k, v] => [k + 1, v + 5]), {2: 15, 3: 25})
+    assert_eq({"a": 1, "b": 2}.map([k, v] => [k.upper(), v * 10]), {"A": 10, "B": 20})
+
+test_record_filter = () =>
+    # filter based on key-value pairs (defined in prelude/__init__.tl for dict)
+    assert_eq({1: 10, 2: 20, 3: 30}.filter([k, v] => v > 15), {2: 20, 3: 30})
+    assert_eq({1: 10, 2: 20, 3: 30}.filter([k, v] => k %% 2 == 1), {1: 10, 3: 30})
+
+test_record_filter_keys = () =>
+    # filter_keys - defined in prelude/__init__.tl for dict and record.py for Record
+    assert_eq({1: 10, 2: 20, 3: 30}.filter_keys($ > 1), {2: 20, 3: 30})
+    assert_eq({"a": 1, "b": 2, "c": 3}.filter_keys($ <> "b"), {"a": 1, "c": 3})
+
+test_record_filter_values = () =>
+    # filter_values - defined in prelude/__init__.tl for dict and record.py for Record
+    assert_eq({1: 10, 2: 20, 3: 30}.filter_values($ >= 20), {2: 20, 3: 30})
+    assert_eq({"a": 5, "b": 10, "c": 25}.filter_values($ %% 10 == 5), {"a": 5, "c": 25})

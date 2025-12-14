@@ -46,6 +46,47 @@ class Record:
 
         return object.__getattribute__(self, name)
 
+    def map(self, f):
+        newrec = Record()
+        for k, v in self.items():
+            nk, nv = f((k, v))
+            newrec[nk] = nv
+        return newrec
+
+    def map_values(self, f):
+        newrec = Record()
+        for k, v in self.items():
+            newrec[k] = f(v)
+        return newrec
+
+    def map_keys(self, f):
+        newrec = Record()
+        for k, v in self.items():
+            nk = f(k)
+            newrec[nk] = v
+        return newrec
+
+    def filter(self, f):
+        newrec = Record()
+        for k, v in self.items():
+            if f((k, v)):
+                newrec[k] = v
+        return newrec
+
+    def filter_values(self, f):
+        newrec = Record()
+        for k, v in self.items():
+            if f(v):
+                newrec[k] = v
+        return newrec
+
+    def filter_keys(self, f):
+        newrec = Record()
+        for k, v in self.items():
+            if f(k):
+                newrec[k] = v
+        return newrec
+
     @__builtins__["property"]
     def iter(self):
         return iter(self.items())
