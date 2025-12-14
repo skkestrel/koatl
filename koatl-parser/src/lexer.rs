@@ -1574,7 +1574,16 @@ impl<'src> TokenizeCtx<'src> {
 
         let mut tokens = TokenList(vec![]);
 
-        let (block_tokens, _, _) = self.parse_block(0, ParseBlockMode::BeginInput)?;
+        let (block_tokens, end_type, _) = self.parse_block(0, ParseBlockMode::BeginInput)?;
+
+        // Check if we ended due to an unmatched closing delimiter at the top level
+        if end_type == ParseBlockEndType::Delimiter {
+            return Err(LexError::custom(
+                self.span_since(&self.cursor()),
+                "unmatched closing delimiter",
+            ));
+        }
+
         tokens.0.extend(block_tokens.0);
 
         Ok(tokens)
