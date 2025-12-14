@@ -11,18 +11,18 @@ import os.*
 
 assert_eq(getcwd, os.getcwd)
 
-import util.module0
+import e2e.test_modules.module0
 
 assert_eq(set(module0.__all__), set(["z"]))
 assert_eq(module0.z, 3)
 
-import util.module1
+import e2e.test_modules.module1
 
 assert_eq(set(module1.__all__), set(["a", "z"]))
 assert_eq(module1.a, 1)
 assert_eq(module1.z, 3)
 
-import util.module2
+import e2e.test_modules.module2
 
 assert_eq(set(module2.__all__), set(["b"]))
 assert_eq(module2.b, 3)

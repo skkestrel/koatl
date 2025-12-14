@@ -639,11 +639,25 @@ impl ToElements for SExpr<'_, '_> {
                 step_dots,
                 step,
             } => {
+                // For the first dots: doubly-attached only if start is present; otherwise attach to next
+                let first_ctx = if start.is_some() {
+                    TokenContext::DoublyAttached
+                } else {
+                    TokenContext::AttachedNext
+                };
+
+                // For step dots: doubly-attached only if step is present; otherwise attach to previous
+                let step_ctx = if step.is_some() {
+                    TokenContext::DoublyAttached
+                } else {
+                    TokenContext::Attached
+                };
+
                 line!(
                     start,
-                    special_token_to_elements(dots, TokenContext::DoublyAttached),
+                    special_token_to_elements(dots, first_ctx),
                     stop,
-                    step_dots.map(|x| special_token_to_elements(x, TokenContext::DoublyAttached)),
+                    step_dots.map(|x| special_token_to_elements(x, step_ctx)),
                     step
                 )
             }

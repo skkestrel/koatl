@@ -10,7 +10,7 @@ export Iterable = class(Traversable, Trait):
 
     skip = (self, n) =>
         let it = self.iter
-        for _ in..n:
+        for _ in ..n:
             next(it, None)
         it
 
@@ -27,7 +27,7 @@ export Iterable = class(Traversable, Trait):
     take = (self, n) =>
         let impl = () =>
             let it = self.iter
-            for _ in..n:
+            for _ in ..n:
                 try:
                     yield next(it)
                 except StopIteration(value=value) =>
@@ -55,6 +55,8 @@ export Iterable = class(Traversable, Trait):
 
     product = (self, *others) =>
         itertools.product(self.iter, *others.map($.iter))
+
+    cycle = self => itertools.cycle(self.iter)
 
     zip = (self, *others) =>
         zip(self.iter, *others.map($.iter))
@@ -86,7 +88,7 @@ export Iterable = class(Traversable, Trait):
 
     reverse = self => reversed(list(self.iter))
 
-    sorted = (self, key=None, reverse=False) =>
+    sort = (self, key=None, reverse=False) =>
         sorted(self.iter, key=key, reverse=reverse)
 
     copy = self => itertools.tee(self.iter)
@@ -184,7 +186,7 @@ export Iterable = class(Traversable, Trait):
 
         impl()
 
-    join_str = (self, sep="") =>
+    join = (self, sep="") =>
         sep.join(self.map(str))
 
     sum = self =>

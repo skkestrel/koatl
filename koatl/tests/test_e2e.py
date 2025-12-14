@@ -4,7 +4,7 @@ import os
 import koatl.cli
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent / "e2e"))
+sys.path.append(str(Path(__file__).parent))
 os.chdir(Path(__file__).parent / "e2e")
 
 

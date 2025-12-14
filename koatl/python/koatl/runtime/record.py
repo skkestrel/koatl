@@ -4,8 +4,6 @@ import functools
 import inspect
 import re
 
-_property = property
-
 __all__ = ["Record"]
 
 
@@ -48,9 +46,9 @@ class Record:
 
         return object.__getattribute__(self, name)
 
-    @_property
+    @__builtins__["property"]
     def iter(self):
-        return self.items()
+        return iter(self.items())
 
     # MutableMapping
     def __len__(self):
@@ -130,7 +128,7 @@ class Record:
         c.update(self)
         return c
 
-    @_property
+    @__builtins__["property"]
     def len(self):
         return len(self)
 
