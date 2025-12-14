@@ -1452,6 +1452,12 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 }
                 .spanned(self.span_from(start)),
                 Err(_) => {
+                    if question.is_some() {
+                        return Err(self.set_error(
+                            start,
+                            ErrMsg::Custom("'?' must be followed by a call, attribute access, or index operation".into()),
+                        ));
+                    }
                     break;
                 }
             }
