@@ -2,6 +2,8 @@ quetzal is a language provider for koatl.
 
 Version number is in `package.json`
 
+https://dev.azure.com/koatl-python
+
 ```
 vsce publish
 ```
