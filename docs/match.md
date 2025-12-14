@@ -64,14 +64,12 @@ x match:
     y => print("capture any value to a new variable y")
 ```
 
-Like if-expressions, matches are also expressions in Koatl, and introduces the `default` keyword that is a bit more readable than `_ =>`:
+Like if-expressions, matches are also expressions in Koatl:
 
 ```koatl
 result = x match:
     [_] => True
-    default: False
-
-result = x match [_] => True default False
+    _ => False
 ```
 
 ## Try-catch and check-expressions with pattern matching exceptions

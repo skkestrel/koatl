@@ -35,11 +35,21 @@ let greet = name => "Hello, " + name | print
 (a, /) => ...  # Positional-only arguments
 ```
 
-**Argument Defaults**:
+**Pattern Matching in Arguments**:
+
+Parenthesized function arguments support pattern matching (but not guards):
+
+```koatl
+([x, y]) => x + y  # Destructure list argument
+({name, age}) => f"{name} is {age}"  # Destructure record
+([x, y], default=10) => x + y + default  # With defaults
+```
+
+**Argument Defaults** (only in parenthesized functions):
 
 ```koatl
 (a, b=10) => a + b
-[x=0] => x  # Defaults work with patterns too
+(x=0) => x  # Defaults require parenthesized syntax
 ```
 
 **Block vs. Inline**:
@@ -132,13 +142,27 @@ Koatl provides sophisticated pattern matching in multiple contexts:
 
 #### In Match Expressions
 
+Match supports both postfix and classic syntax:
+
+**Postfix match** (preferred for expressions):
+
 ```koatl
 result = x match:
     [a, b, c] => a + b + c
     {name: n, age: a} => f"{n} is {a} years old"
     [_] => "Single element list"
-    default: "No match"
+    _ => "Default case (catch-all)"
 ```
+
+**Classic match** (preferred for statements/side effects):
+
+```koatl
+match x:
+    [a, b, c] => print(a + b + c)
+    _ => print("default")
+```
+
+> **Style Note**: Use postfix match (`x match:`) when the result is used as an expression. Use classic match (`match x:`) when performing side effects or when the match is a top-level statement.
 
 Match expressions also support **guards**:
 
@@ -202,17 +226,26 @@ list.filter($ > 5)      # => list.filter(x => x > 5)
 
 ### 5. **If-Expressions**
 
-If statements return values:
+If statements return values and support two syntaxes:
+
+**Classic (Python-style)** - preferred for statements/side effects:
 
 ```koatl
-x = if True:
-    1
+if condition:
+    do_something()
+    do_other_thing()
 else:
-    2
-
-# Or inline syntax
-y = condition then 10 else 20
+    do_alternative()
 ```
+
+**Postfix (inline)** - preferred for expressions:
+
+```koatl
+y = condition then 10 else 20
+x = is_valid then process(data) else default_value
+```
+
+> **Style Note**: Use postfix if (`then`/`else`) for inline expressions where you need the result. Use classic if (`if:`/`else:`) for multi-statement blocks or side effects.
 
 ### 6. **Check-Expressions**
 
@@ -281,6 +314,14 @@ x["a"] == 1
 # Expressions as keys
 key = "my_key"
 obj = {(key): "value", other: 42}
+
+# Block expressions as keys (for complex computed keys)
+obj = {
+    (
+        temp = compute_key()
+        temp.upper()
+    ): "computed key value"
+}
 
 # Records with methods and properties
 x = {
@@ -397,15 +438,13 @@ while True:
 
 ```koatl
 return value
-return  # Empty return (implicitly None)
+return  # Empty return (returns None)
 ```
 
 **Raise statements**:
 
 ```koatl
 raise ValueError("message")
-raise  # Re-raise current exception
-raise SomeError() from cause  # Python 3+ chaining
 ```
 
 ### Import Statements
@@ -457,18 +496,15 @@ These are expressions that return values and control program flow:
 
 ### 1. **If-Expressions**
 
-If can be both expression and statement:
+If can be both expression and statement, with two syntaxes:
 
-**As an expression** (returns a value):
+**Classic syntax** (Python-style):
 
 ```koatl
 x = if condition:
     value_if_true
 else:
     value_if_false
-
-# Inline syntax
-y = condition then 10 else 20
 
 # Can be chained
 z = if a:
@@ -477,6 +513,15 @@ else if b:
     2
 else:
     3
+```
+
+**Postfix syntax** (inline):
+
+```koatl
+y = condition then 10 else 20
+
+# Can also chain
+z = a then 1 else b then 2 else 3
 ```
 
 **Pattern matching in conditions**:
@@ -493,7 +538,9 @@ if x not matches pattern:
 
 ### 2. **Match-Expressions**
 
-True pattern matching with guards:
+True pattern matching with guards, supporting two syntaxes:
+
+**Postfix match** (preferred for expressions):
 
 ```koatl
 result = x match:
@@ -505,6 +552,17 @@ result = x match:
     {type: "ok", data: d} => f"success: {d}"
     _ => "unknown"
 ```
+
+**Classic match** (preferred for statements/side effects):
+
+```koatl
+match x:
+    1 => print("one")
+    2 => print("two")
+    _ => print("unknown")
+```
+
+> **Style Note**: Use postfix match (`x match:`) when using the result as an expression. Use classic match (`match x:`) for top-level statements or side effects.
 
 ### 3. **With-Expressions**
 
@@ -570,57 +628,9 @@ gen = x => (
 combined = => yield from other_generator()
 ```
 
-### 1. **Monads**
+## Advanced Language Features
 
-Koatl supports several monadic patterns using the `@` bind operator:
-
-#### **Memo Monad** (Memoization)
-
-```koatl
-fib = x => x < 2 then @Memo.pure(1) else memo @fib(x - 1) + @fib(x - 2)
-
-fib(200).run()  # Cached computation
-```
-
-Automatically tracks dependencies based on captured variables.
-
-#### **Result Monad** (Error Handling)
-
-```koatl
-f = () =>
-    x = @get_some_value()           # Returns early if error
-    y = @get_some_other_value(x)    # Returns early if error
-    x + y
-
-f() # Ok(result) or Err(exception)
-```
-
-#### **Async Monad**
-
-```koatl
-f = () =>
-    print("sleepy")
-    @Async.sleep(1)
-    print("refreshed!")
-
-await f()
-```
-
-#### **Env Monad** (Context/Dependency Injection)
-
-```koatl
-g = () =>
-    @Env.item("config_key")
-
-f = () =>
-    x = @Env.item("first")
-    y = @Env.item("second")
-    x + y
-
-f().run(config_dict)
-```
-
-### 2. **With-Expressions**
+### **With-Expressions**
 
 With statements return values:
 
@@ -629,7 +639,7 @@ content = with f = open("file.txt", "r"):
     f.read()
 ```
 
-### 3. **Scoped Variables**
+### **Scoped Variables**
 
 Proper lexical scoping with `let`:
 
@@ -643,7 +653,7 @@ print(a)            # Prints: 1
 
 Unlike Python, `nonlocal` is never needed—Koatl's scoping rules prevent binding conflicts.
 
-### 4. **Block Comments**
+### **Block Comments**
 
 Nestable block comments:
 
@@ -651,22 +661,7 @@ Nestable block comments:
 x = #- this is a #- nested -# comment -# 2
 ```
 
-### 5. **Extension Attributes**
-
-Non-destructively add methods/properties to any type:
-
-```koatl
-export SomeTrait = Extension.trait! class(Trait):
-    required_method = Trait.abstract! self => ()
-    derived_method = self => self.required_method()
-
-Extension.method(object, "my_method")! self => "result"
-Extension.property(object, "my_prop")! self => self.value
-
-None.my_method() == "result"
-```
-
-### 6. **Try-Catch Pattern Matching**
+### **Try-Catch Pattern Matching**
 
 Unified exception handling with pattern matching:
 
@@ -692,7 +687,7 @@ Koatl uses Python-style indentation for blocks:
 if True:
     statement1
     statement2
-    nested_value = if inner:
+    let nested_value = inner then:
         x
     else:
         y
@@ -710,20 +705,6 @@ x = (
     a = 2
     b = 3
     a + b    # This is the value (5)
-)
-
-# Multiline in function calls
-result = process(
-    initial_setup
-    configure_something
-    run_main_logic
-)
-
-# In expressions
-value = 2 + (
-    x = 5
-    y = 3
-    x * y   # Value is 15
 )
 ```
 
@@ -885,14 +866,153 @@ display_grid = (grid, size) =>
     )
 ```
 
+## Advanced Features
+
+### **Monads**
+
+Koatl supports several monadic patterns using the `@` bind operator:
+
+#### **Memo Monad** (Memoization)
+
+```koatl
+fib = x => x < 2 then @Memo.pure(1) else memo @fib(x - 1) + @fib(x - 2)
+
+fib(200).run()  # Cached computation
+```
+
+Automatically tracks dependencies based on captured variables.
+
+#### **Result Monad** (Error Handling)
+
+```koatl
+f = () =>
+    x = @get_some_value()           # Returns early if error
+    y = @get_some_other_value(x)    # Returns early if error
+    x + y
+
+f() # Ok(result) or Err(exception)
+```
+
+#### **Async Monad**
+
+```koatl
+f = () =>
+    print("sleepy")
+    @Async.sleep(1)
+    print("refreshed!")
+
+await f()
+```
+
+#### **Env Monad** (Context/Dependency Injection)
+
+```koatl
+g = () =>
+    @Env.item("config_key")
+
+f = () =>
+    x = @Env.item("first")
+    y = @Env.item("second")
+    x + y
+
+f().run(config_dict)
+```
+
+### **Extension Attributes & Traits**
+
+Non-destructively add methods/properties to any type using a virtual dispatch system powered by `vget`.
+
+#### How Extension Attributes Work
+
+When you access an attribute on an object, Koatl uses `vget` (virtual get) instead of Python's standard attribute lookup. The `vget` system:
+
+1. **First tries standard Python attribute lookup** via `getattr()`
+2. **If that fails**, checks two virtual tables (vtables):
+    - **Type-based vtable**: Methods/properties registered for specific types
+    - **Trait-based vtable**: Methods from traits with requirement checking
+
+This allows you to add methods to any type—even built-in types like `int`, `str`, `None`—without modifying their class definitions.
+
+#### Adding Extension Methods
+
+```koatl
+# Add a method to a specific type
+Extension.method(int, "double")! self => self * 2
+
+# Now all ints have this method
+(5).double()  # => 10
+```
+
+#### Adding Extension Properties
+
+```koatl
+# Add a property (computed attribute)
+Extension.property(list, "len")! self => len(self)
+
+# Access like a regular attribute
+[1, 2, 3].len  # => 3
+```
+
+#### Trait-Based Extensions
+
+Traits allow you to add methods to multiple types that satisfy requirements. Requirements are specified using `Trait.abstract!`:
+
+```koatl
+# Define a trait with requirements
+export Iterable = Extension.trait! class:
+    # Abstract methods define requirements - types must have these to use the trait
+    iter = Trait.abstract! self => ()
+
+    # Concrete methods are only available if requirements are met
+    map = self => f => self.iter().map(f)
+    filter = self => f => self.iter().filter(f)
+    list = self => list(self.iter())
+
+# Now any type with an 'iter' method gets these trait methods automatically
+[1, 2, 3].map(x => x * 2)  # Works because list has iter
+"hello".map(x => x.upper())  # Works because str has iter (via extension)
+```
+
+When you mark a method with `Trait.abstract!`, it becomes a requirement that types must satisfy to use the trait's other methods.
+
+#### Implementation Details
+
+The virtual dispatch system is implemented in Rust for performance:
+
+-   **`fast_vset(type, name, value)`**: Register a method/property for a specific type
+-   **`fast_vset_trait(trait_name, requirements, name, value)`**: Register a trait method
+-   **`fast_vget(obj, name)`**: Look up method/property via vtables
+
+When you call `obj.method()`, the transpiled code uses `vget(obj, "method")` which:
+
+1. Checks Python's `__getattribute__` first
+2. Falls back to type-specific vtable
+3. Falls back to trait vtables (checking requirements)
+4. Returns `None` if not found (or raises `AttributeError`)
+
+#### Example: Built-in Extensions
+
+The prelude adds many useful extensions:
+
+```koatl
+# String pattern matching
+"hello world".matches(r"w\w+")  # Uses Extension.method(str, "matches")
+
+# List operations
+[1, 2, 3].map(x => x * 2)  # Uses Iterable trait extension
+
+# Dict operations
+{a: 1, b: 2}.map_values(x => x * 10)  # Extension.method(dict, "map_values")
+```
+
 ## Decorators
 
-Use `&` as a decorator shorthand (equivalent to `function(arg)`):
+Use `!` as a decorator shorthand:
 
 ```koatl
 Foo = class:
-    method = staticmethod& () => ...
-    prop = property& self => self.value
+    method = staticmethod! () => ...
+    prop = property! self => self.value
 ```
 
 ## Attribute Access & Member Selection
@@ -917,41 +1037,30 @@ result = obj?(arg)        # None if obj is None
 result = result?.deeply?.nested?.property  # Chains safely
 ```
 
+### Maybe Attribute (`.?`)
+
+Try to access an attribute that may not exist, returning None instead of raising AttributeError:
+
+```koatl
+result = obj.?attr        # None if attr doesn't exist, otherwise returns the attribute
+result = obj.?method()    # Can chain with method calls
+
+# Useful for duck typing and optional attributes
+config.?debug_mode ?? False  # Get debug_mode if it exists, otherwise False
+```
+
+**Important distinction** - `.?` and `?.` check different things:
+
+-   `obj.?attr` (MaybeAttribute) - Checks if `attr` exists on `obj`. Returns None if the attribute doesn't exist (no AttributeError), otherwise returns the attribute value. The object `obj` itself must not be None.
+-   `obj?.attr` (Safe Navigation) - Checks if `obj` is None/Err first. If `obj` is None/Err, returns None. Otherwise, accesses `attr` normally (which must exist or will raise AttributeError).
+
 ### Raw Attribute Access
 
-Bypass `__getattr__` and access the true attribute:
+Bypass `vget` and access the true attribute:
 
 ```koatl
 obj::__dict__           # Get __dict__ directly, not via __getattr__
 obj::__class__          # Get __class__ directly
-```
-
-### Scoped Attribute Access
-
-Call method on attribute (special syntax):
-
-```koatl
-obj.(method)            # Equivalent to obj.method()
-obj.(method_name)       # Call attribute method
-```
-
-This is useful with high-precedence operators:
-
-```koatl
-(..10).(map $ * 2)      # Calls the map method
-result.(filter $ > 5)   # Filters result
-```
-
-### Qualified Identifiers
-
-For value patterns, use qualified names with `.` or `::`:
-
-```koatl
-y = 2
-x match:
-    .y => ...                 # Value pattern - match constant y
-    .module.submodule.value => ...  # Qualified value pattern
-    y => ...                  # Capture pattern - bind as y
 ```
 
 ## Operators Reference
@@ -960,20 +1069,20 @@ x match:
 
 The parser processes operators in this precedence order:
 
-| #   | Precedence  | Operators                                                      | Associativity | Note               |
-| --- | ----------- | -------------------------------------------------------------- | ------------- | ------------------ |
-| 11  | Pipe        | `\|`                                                           | Left-to-right | Lowest precedence  |
-| 10  | Coalesce    | `??`                                                           | Left-to-right |                    |
-| 9   | Logical OR  | `or`                                                           | Left-to-right |                    |
-| 8   | Logical AND | `and`                                                          | Left-to-right |                    |
-| 7   | Comparison  | `<`, `>`, `<=`, `>=`, `==`, `<>`, `===`, `<=>`, `in`, `not in` | Left-to-right |                    |
-| 6   | Bitwise OR  | `\|\|`                                                         | Left-to-right |                    |
-| 5   | Bitwise XOR | `^^`                                                           | Left-to-right |                    |
-| 4   | Bitwise AND | `&&`                                                           | Left-to-right |                    |
-| 3   | Shifts      | `<<`, `>>`                                                     | Left-to-right |                    |
-| 2   | Add/Sub     | `+`, `-`                                                       | Left-to-right |                    |
-| 1   | Mul/Div     | `*`, `/`, `//`, `%%`, `@@`                                     | Left-to-right |                    |
-| 0   | Power       | `**`                                                           | Right-to-left | Highest precedence |
+| #   | Precedence  | Operators                                                                   | Associativity | Note               |
+| --- | ----------- | --------------------------------------------------------------------------- | ------------- | ------------------ |
+| 11  | Pipe        | `\|`                                                                        | Left-to-right | Lowest precedence  |
+| 10  | Coalesce    | `??`                                                                        | Left-to-right |                    |
+| 9   | Logical OR  | `or`                                                                        | Left-to-right |                    |
+| 8   | Logical AND | `and`                                                                       | Left-to-right |                    |
+| 7   | Comparison  | `<`, `>`, `<=`, `>=`, `==`, `<>`, `!=`, `===`, `<=>`, `!==`, `in`, `not in` | Left-to-right |                    |
+| 6   | Bitwise OR  | `\|\|`                                                                      | Left-to-right |                    |
+| 5   | Bitwise XOR | `^^`                                                                        | Left-to-right |                    |
+| 4   | Bitwise AND | `&&`                                                                        | Left-to-right |                    |
+| 3   | Shifts      | `<<`, `>>`                                                                  | Left-to-right |                    |
+| 2   | Add/Sub     | `+`, `-`                                                                    | Left-to-right |                    |
+| 1   | Mul/Div     | `*`, `/`, `//`, `%%`, `@@`                                                  | Left-to-right |                    |
+| 0   | Power       | `**`                                                                        | Right-to-left | Highest precedence |
 
 **Special operators** (above binary precedence, processed in order):
 
@@ -1064,11 +1173,3 @@ Or with koatl-kernel:
 pip install koatl-kernel
 jupyter notebook  # Select Koatl kernel
 ```
-
-## Python Interoperability
-
--   Full Python library access via `mod` and `std`
--   Seamless integration with Python code
--   Exceptions converted to Result types when using `check`
--   .tl files importable from Python scripts
--   Transpiles to standard Python AST

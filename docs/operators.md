@@ -145,7 +145,7 @@ Koatl uses `..` to represent slices, and they can occur outside lists too:
 ```koatl
 up_to_three = [1, 2, 3, 4, 5][..3]
 
-odds_only = [1, 2, 3, 4, 5][1....2]
+odds_only = [1, 2, 3, 4, 5][1..5..2]
 
 my_saved_slice = ..5
 some_other_array[my_saved_slice]
@@ -164,11 +164,11 @@ Use `<>` (or `!=`) instead of Python's `!=`, and `===` and `<=>` (or `!==`) inst
 
 ## Decorators
 
-As a synonym for calling a one-argument function, the `&` operator can be used to attach decorators:
+As a synonym for calling a one-argument function, the `!` operator can be used to attach decorators:
 
 ```koatl
 Foo = class:
     do_something = staticmethod! () => ...
 ```
 
-`a& b` is equivalent to `a(b)`.
+`a! b` is equivalent to `a(b)`.

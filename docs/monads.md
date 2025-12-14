@@ -39,7 +39,7 @@ f = () =>
 
 f().run(Memo.Cache()) # or f().run()
 
-g = Memo.fn& x =>
+g = Memo.fn! x =>
     2 + 2
 
 g().run()

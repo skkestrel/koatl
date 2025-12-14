@@ -7,7 +7,7 @@ Extensions are registered globally using the `Extension.method(type, name)`, `Ex
 `Extension.trait` enables lookup of a set of methods, predicated on the existence of all required abstract attributes/methods.
 
 A trait is like a Python `abc.ABC`, and can be created by deriving from the global `Trait` base class.
-Objects satisfying the trait requirements (marked with `Abstract`) get access to all of the trait's properties.
+Objects satisfying the trait requirements (marked with `Trait.abstract!`) get access to all of the trait's properties.
 
 Example:
 
@@ -23,8 +23,8 @@ Extension.property(object, "some_global_prop")! self => ()
 
 None.some_global_attr() == ()
 None.some_global_prop == ()
-{required_method: Record.method& self => 42}.derived_method() == 42
-{required_method: Record.method& self => 42}.derived_property == 42
+{required_method: Record.method! self => 42}.derived_method() == 42
+{required_method: Record.method! self => 42}.derived_property == 42
 ```
 
 Virtual resolution order is as follows:

@@ -35,8 +35,8 @@ Records can be imbued with 1) functions, 2) methods, and 3) properties:
 x = {
     a: 1
     get_global_value: () => 2
-    get_own_a: Record.method& self => self.a
-    own_a_prop: Record.property& self => self.a
+    get_own_a: Record.method! self => self.a
+    own_a_prop: Record.property! self => self.a
 }
 
 x.get_global_value() == 2
