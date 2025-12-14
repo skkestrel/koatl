@@ -38,6 +38,7 @@ maturin publish
 
 ```
 cd koatl-kernel
+pip install --upgrade pip setuptools wheel
 pip install -e .
 koatl
 ```
@@ -47,6 +48,7 @@ koatl
 Version number is in `koatl_kernel/__init__.py`
 
 ```
+python3 -m pip install --upgrade build
 python3 -m build
 python3 -m twine upload --repository pypi dist/*
 ```
