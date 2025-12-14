@@ -20,7 +20,7 @@ export Pattern = class:
         if not isinstance(string, str):
             raise TypeError(f"Expected a string, but got {type(string).__name__}")
 
-        self.pattern.match(string, flags).result.map(Match)
+        self.pattern.match(string, flags).(Result).map(Match)
 
 export Match = collections.abc.Sequence.register! class:
     __slots__ = ("_match",)

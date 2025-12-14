@@ -825,7 +825,6 @@ mod.numpy.array([1, 2, 3]) + 2 | print
 ### **Built-in Extensions**
 
 -   `.iter` - Makes objects iterable (delegates to `.items()` for dicts)
--   `.result` - Wraps any value as Result
 -   `Iterable` trait - Common methods for iterators
 
 ## Common Patterns & Examples

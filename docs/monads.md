@@ -106,10 +106,8 @@ While errors typically aren't returned from functions in Python, the `check` ope
 Important: Result provides a default `bind_once` implementation for ALL types that don't otherwise define it;
 this means that (1).bind_once(...) will work, and therefore, the @ operator will also work with bare non-Result values using Result semantics.
 
-`.result` is also registered as a v-property on all objects, so the following will work:
-
 ```koatl
-external_function().result match:
+external_function().(Result) match:
     Ok(value) => ...
     Err(value) => ...
 ```

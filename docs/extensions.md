@@ -40,7 +40,3 @@ The `iter` extension attribute is built in to the Koatl runtime and is used in `
 it always delegates to `items()` if possible (to make dict iteration more sane) and also provides an implementation for slices.
 
 `koatl.prelude.iterable.Iterable` is automatically registered as an extension trait for all types with an `iter`, and provides common methods for working with iterators.
-
-## The builtin `result` extension property
-
-`.result` wraps any object in a `Result`.

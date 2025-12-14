@@ -14,15 +14,14 @@ import koatl.std.(
 export std = LazyModule("koatl.std")
 export mod = RootModulesProxy()
 
+# Extensions
+
 Extension.trait(Iterable)
-
-Extension.property(list, "len")! List.len.fget
-
-Extension.property(object, "result")! self => Result(self)
 
 Extension.method(str, "match")! (regex, str) => Pattern(regex).match(str)
 Extension.method(str, "matches")! (str, regex) => Pattern(regex).match(str)
 
+Extension.property(list, "len")! List.len.fget
 Extension.method(list, "map")! (self, f) => self.iter.map(f).list()
 Extension.method(list, "filter")! (self, f) => self.iter.filter(f).list()
 
@@ -32,6 +31,8 @@ Extension.method(dict, "map_keys")! (self, f) => self.iter.map([k, v] => [f(k), 
 Extension.method(dict, "filter")! (self, f) => self.iter.filter(f).dict()
 Extension.method(dict, "filter_keys")! (self, f) => self.iter.filter([k, v] => f(k)).dict()
 Extension.method(dict, "filter_values")! (self, f) => self.iter.filter([k, v] => f(v)).dict()
+
+# Implementations for language features
 
 __tl__.do = koatl.std.control.do.do
 

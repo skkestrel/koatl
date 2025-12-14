@@ -615,15 +615,17 @@ impl ToElements for SExpr<'_, '_> {
                 rhs,
                 rparen,
             } => {
+                let mut parens = Element::parens(
+                    lparen.to_elements(),
+                    rhs.to_elements(),
+                    rparen.to_elements(),
+                );
+                parens.attach_before = true;
                 line!(
                     expr,
                     question.map(attached_token),
                     attached_token(dot),
-                    Element::parens(
-                        lparen.to_elements(),
-                        rhs.to_elements(),
-                        rparen.to_elements()
-                    )
+                    parens
                 )
             }
             Expr::Attribute {
