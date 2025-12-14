@@ -1123,8 +1123,10 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                             (">=", BinaryOp::Geq),
                             ("==", BinaryOp::Eq),
                             ("<>", BinaryOp::Neq),
+                            ("!=", BinaryOp::Neq),
                             ("===", BinaryOp::Is),
                             ("<=>", BinaryOp::Nis),
+                            ("!==", BinaryOp::Nis),
                         ])?;
 
                         Ok((None, tok, kind))
