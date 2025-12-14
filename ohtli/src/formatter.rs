@@ -275,8 +275,61 @@ pub fn stmt_to_elements(stmt: &SStmt) -> Elements {
             line!(raise_kw, expr)
         }
         Stmt::Error { raw } => {
-            let clean_raw = raw.trim_end().to_string();
-            vec![Element::attached_both(clean_raw), Element::line_break()]
+            // Tokenize the raw error text to preserve trivia (comments, newlines, whitespace)
+            let (tokens_opt, _) = tokenize(raw, true);
+
+            if let Some(tokens) = tokens_opt {
+                let mut elements = Vec::new();
+
+                // Extract trivia and tokens from the error, preserving all formatting
+                for token in &tokens.0 {
+                    // Add leading trivia (comments, newlines, whitespace)
+                    for trivium in &token.leading_trivia {
+                        match trivium.typ {
+                            TrivialTokenType::LineComment | TrivialTokenType::BlockComment => {
+                                elements.push(Element::comment(trivium.value.to_string()));
+                            }
+                            TrivialTokenType::Newline => {
+                                elements.push(Element::line_break());
+                            }
+                            TrivialTokenType::Whitespace => {
+                                // Preserve whitespace for error statements
+                                elements.push(Element::attached_both(trivium.value.to_string()));
+                            }
+                        }
+                    }
+
+                    // Add the token itself if it's not whitespace/structural
+                    if !matches!(token.token, Token::Indent | Token::Dedent | Token::Eol) {
+                        let token_text = token_to_text(token);
+                        elements.push(Element::attached_both(token_text));
+                    }
+
+                    // Add trailing trivia (whitespace, comments)
+                    for trivium in &token.trailing_trivia {
+                        match trivium.typ {
+                            TrivialTokenType::LineComment | TrivialTokenType::BlockComment => {
+                                elements.push(Element::comment(trivium.value.to_string()));
+                            }
+                            TrivialTokenType::Newline => {
+                                elements.push(Element::line_break());
+                            }
+                            TrivialTokenType::Whitespace => {
+                                // Preserve whitespace for error statements
+                                elements.push(Element::attached_both(trivium.value.to_string()));
+                            }
+                        }
+                    }
+                }
+
+                // Add a line break at the end
+                elements.push(Element::line_break());
+                elements
+            } else {
+                // Fallback if tokenization fails
+                let clean_raw = raw.trim_end().to_string();
+                vec![Element::attached_both(clean_raw), Element::line_break()]
+            }
         }
     };
 

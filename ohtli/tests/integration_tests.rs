@@ -615,3 +615,33 @@ let a = 1
 "#;
     assert_compare_formatting(input, expected);
 }
+
+#[test]
+fn test_error_with_comment() {
+    let input = r#"
+# This is a comment
+a a
+"#;
+    let expected = r#"
+# This is a comment
+a a
+"#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_error_with_multiple_comments() {
+    let input = r#"
+# First comment
+# Second comment
+a a
+let b = 2
+"#;
+    let expected = r#"
+# First comment
+# Second comment
+a a
+let b = 2
+"#;
+    assert_compare_formatting(input, expected);
+}

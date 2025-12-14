@@ -2448,11 +2448,25 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 loop {
                     let span = self.span_from(before);
 
+                    // Include leading trivia of the first token in the error span
+                    let true_start = if before < self.input.len() {
+                        // Get the first trivia span if it exists, otherwise use the token start
+                        self.input[before]
+                            .leading_trivia
+                            .first()
+                            .map(|t| t.span.start)
+                            .unwrap_or(span.start)
+                    } else {
+                        span.start
+                    };
+
+                    let err_span = Span::new(true_start..span.end);
+
                     let err_stmt = Box::new(
                         Stmt::Error {
-                            raw: &self.src[span.start..span.end],
+                            raw: &self.src[err_span.start..err_span.end],
                         }
-                        .spanned(span),
+                        .spanned(err_span),
                     );
 
                     match self.peek_token() {
