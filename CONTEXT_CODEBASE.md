@@ -3,61 +3,13 @@
 ## Project Structure Overview
 
 ```
-koatl/                          # Main Python binding & emission
-  ├── src/emit_py.rs           # Python AST emission
-  ├── src/lib.rs               # PyO3 Python interface
-  └── Cargo.toml
-
-koatl-parser/                   # Lexing and parsing
-  ├── src/lexer.rs             # Tokenization with trivia preservation
-  ├── src/cst.rs               # Concrete Syntax Tree definitions
-  ├── src/parser.rs            # Recursive descent parser
-  ├── src/simple_fmt.rs        # Formatting utilities
-  └── Cargo.toml
-
-koatl-core/                     # Core language compilation
-  ├── src/lib.rs               # Main transpile entry points
-  ├── src/ast.rs               # Abstract Syntax Tree definitions
-  ├── src/ast_builder.rs       # AST construction helpers
-  ├── src/lift_cst.rs          # CST to AST conversion
-  ├── src/transform.rs         # AST to Python AST transformation
-  ├── src/resolve_scopes.rs    # Name resolution & scope tracking
-  ├── src/inference.rs         # Type inference (referenced, not impl shown)
-  ├── src/types.rs             # Type system definitions
-  ├── src/util.rs              # Error handling & utilities
-  ├── src/main.rs              # CLI transpiler tool
-  └── src/py/                  # Python AST and emission
-      ├── ast.rs               # Python AST structures
-      ├── ast_builder.rs       # Python AST helpers
-      ├── emit.rs              # Python code generation
-      └── ...
-  └── Cargo.toml
-
-ohtli/                          # Code formatter
-  ├── src/main.rs              # CLI formatter entry point
-  ├── src/formatter.rs         # Formatting implementation
-  ├── src/config.rs            # Formatter configuration
-  └── Cargo.toml
-
-quetzal/                        # VSCode extension
-  ├── src/extension.ts         # VSCode extension host
-  ├── src/formatter.ts         # Formatter integration
-  ├── syntaxes/tl.tmLanguage.json  # TextMate grammar
-  └── package.json
-
-docs/                           # Documentation
-  ├── intro.md
-  ├── match.md
-  ├── modules.md
-  ├── monads.md
-  ├── operators.md
-  ├── prelude.md
-  ├── containers.md
-  ├── extensions.md
-  ├── formatting.md
-  └── index.html
-
-sample/                         # Example programs
+koatl/          PyO3 binding and Rust crate; Python wheel sources live in python/koatl/
+koatl-core/     Core pipeline (parse → scope → infer → transform → emit)
+koatl-parser/   Lexer and parser library
+ohtli/          Formatter CLI (Rust)
+quetzal/        VS Code extension (TypeScript + wasm formatter)
+docs/           Documentation site
+sample/         Example Koatl programs
 ```
 
 ## Data Flow: Koatl Source → Python Code
@@ -100,507 +52,206 @@ Python Abstract Syntax Tree (PyAST)
 
 ## Module Responsibilities
 
-### **koatl-parser** - Lexical Analysis & Parsing
+### koatl-parser
 
-#### `lexer.rs` (~2100 lines)
+The foundation of the compiler pipeline, implementing lexical analysis and parsing.
 
-**Responsibility**: Convert Koatl source text into tokens with trivia preservation
+**Lexer** (`lexer.rs`):
 
-**Key Structures**:
+-   Tokenizes Koatl source into a stream of tokens with full trivia preservation
+-   Trivia (whitespace, comments, newlines) is attached to tokens as leading/trailing trivia rather than discarded
+-   Supports indentation-based syntax via `Indent`/`Dedent` tokens (Python-like)
+-   Handles string interpolation (f-strings) with nested formatting specifications
+-   Zero-copy design: tokens contain string slices (`&'src str`) referencing the original source
 
--   `Token<'src>` - Enumeration of token types:
-    -   `Ident`, `Kw`, `Symbol` - Keywords and identifiers
-    -   `Int`, `IntHex`, `IntOct`, `IntBin`, `Float` - Numeric literals
-    -   `Str`, `FstrBegin`, `FstrEnd`, etc. - String and f-string tokens
-    -   `Indent`, `Dedent`, `Eol` - Whitespace-sensitive tokens
--   `Span` - Source location (start byte, end byte)
--   `SToken<'src>` - Token with span and associated trivia
--   `TrivialToken<'src>` - Whitespace, comments, newlines (preserves formatting)
--   `TokenList<'src>` - Vector of tokens for parser input
+**Parser** (`parser.rs`):
 
-**Key Functions**:
+-   Pratt parser-based recursive descent parser that builds a Concrete Syntax Tree (CST)
+-   Error recovery strategy: tracks the furthest parsing position that failed, allowing the parser to continue collecting errors rather than stopping at the first error
+-   Uses backtracking combinators (`first_of!`, `optional!`) to try multiple parse paths
+-   Preserves all syntactic information including delimiters, separators, and newlines for accurate formatter reconstruction
+-   The parser context (`ParseCtx`) maintains:
+    -   Current position in token stream
+    -   Error accumulation: stores errors in `cur_error` and only commits them when certain they're valid
+    -   Backtracking state via `save()`/`rewind()` for speculative parsing
 
--   `tokenize()` - Main lexer entry point, produces TokenList
--   Handles multi-line strings, f-strings, nested block comments (`#- -#`)
--   Tracks indentation for Python-like scoping
--   Preserves all non-semantic whitespace and comments
+**Error Handling Approach**:
+The parser uses a "furthest failure" heuristic: when multiple parse paths fail, it reports the error from the path that consumed the most tokens, as this is likely closest to the user's intent. Errors are accumulated in `ParseCtx.errors` rather than immediately aborting, enabling comprehensive error reporting in a single pass.
 
-**Design Notes**:
+**CST** (`cst.rs`):
 
--   Uses `CharIndices` iterator for efficient character-by-character scanning
--   Preserves trivia (comments, whitespace) for accurate error messages and formatting
--   Supports both `.tl` file syntax and interactive notebook mode
+-   Generic tree representation via the `Tree` trait, allowing different backends (syntax highlighting, formatting, semantic analysis)
+-   Preserves all tokens including structural elements (parentheses, commas, colons)
+-   Maintains exact correspondence to source text for perfect round-tripping
 
-#### `cst.rs`
+### koatl-core
 
-**Responsibility**: Define the Concrete Syntax Tree (preserves syntax structure exactly as written)
+The semantic analysis and code generation pipeline, transforming Koatl AST to Python AST.
 
-**Key Structures**:
+**CST Lifting** (`lift_cst.rs`):
 
--   `SStmts<'src, 'tok>` - Block of statements with trivia
--   `STree<'src, 'tok>` - Either a statement or expression
--   `Stmt<'src, 'tok>` - Statement types (declarations, assignments, expressions, etc.)
--   `Expr<'src, 'tok>` - Expression types (literals, identifiers, function calls, pattern matching, etc.)
--   `Pattern<'src, 'tok>` - Pattern matching constructs
--   `CallItem<'src, 'tok>` - Function call arguments (positional, keyword, unpacking)
--   `ListItem<'src, 'tok>` - List elements (values, unpacking)
--   `MappingItem<'src, 'tok>` - Record/dict entries
--   `FmtSpec<'src, 'tok>` - Format specifiers in f-strings
+-   Converts the concrete syntax tree (CST) into an abstract syntax tree (AST)
+-   Discards purely syntactic elements (parentheses, separators) while preserving semantic content
+-   Lifts string interpolation (f-strings) into structured `Expr::Fstr` nodes
+-   Maintains span information for error reporting
 
-**Design Notes**:
+**Scope Resolution** (`resolve_scopes.rs`):
 
--   Mirrors Python's grammar but captures Koatl-specific syntax
--   Fully preserves formatting and comments in trivia
--   Intermediate representation between parsing and transformation
+-   Implements name binding and lexical scoping analysis
+-   Builds a scope tree tracking variable declarations, function definitions, and imports
+-   Resolves identifier references to their declarations using a `HashMap<RefHash, DeclarationKey>`
+-   Detects scope errors: undefined variables, duplicate declarations, invalid references
+-   Tracks special constructs:
+    -   Function metadata (`FnInfo`): parameter info, async/generator status, memoization
+    -   Pattern bindings (`PatternInfo`): destructuring assignments, match patterns
+    -   Export tracking: module-level exports for Python interop
+-   Uses `SlotMap` for efficient scope and declaration storage with stable keys
+-   Maintains a stack of active scopes (`scope_stack`) and function contexts (`fn_stack`) during traversal
 
-#### `parser.rs` (~2559 lines)
+**Type Inference** (`inference.rs`):
 
-**Responsibility**: Parse token stream into CST using recursive descent with error recovery
+-   Basic type inference for optimization hints (currently limited)
+-   Tracks expression types using `HashMap<RefHash, Type>`
+-   Distinguishes between `Type::NoReturn` (statements), `Type::Bottom` (never returns), and `Type::Any`
+-   Foundation for future type-based optimizations
 
-**Key Functions**:
+**Transformation** (`transform.rs`):
 
--   `parse_tokens(tokens) -> (CST, Errors)` - Main parser entry
--   `parse_expr()` - Parse expressions with operator precedence
--   `parse_stmt()` - Parse statements
--   `parse_pattern()` - Parse pattern matching syntax
--   `parse_call()` - Parse function call arguments
+-   Transforms Koatl AST to Python AST
+-   Python keyword escaping: renames identifiers that conflict with Python keywords (e.g., `class` → `class_`)
+-   Translates Koatl-specific features to Python equivalents:
+    -   Pipeline operators → function composition
+    -   Pattern matching → if/elif chains or match statements (Python 3.10+)
+    -   Memoization decorators → `@memo` function wrappers
+    -   Optional chaining (`?.`) → conditional attribute access with guards
+    -   Spread operators in various contexts
+-   Maintains source mapping for debugging and error messages
+-   Generates unique identifiers for compiler-introduced temporaries
 
-**Parser Techniques**:
+**Python Code Emission** (`py/emit.rs`):
 
--   Recursive descent with lookahead
--   Operator precedence climbing for expressions
--   Error recovery to collect multiple errors in one pass
--   Macros: `first_of!` for choice points, `optional!` for optional constructs
--   `ExprPrec` enum for precedence levels
+-   Converts Python AST to Python source code strings
+-   Precedence-aware expression printing to minimize parentheses
+-   Handles Python-specific string escaping for both regular strings and f-strings
+-   Maintains line mapping from generated Python back to original Koatl source (`source_line_map`)
+-   Tracks indentation state for proper code formatting
 
-**Key Parsing Features**:
+### koatl
 
--   Handles Python-like indentation
--   Supports Koatl-specific syntax:
-    -   Arrow functions (`=>`)
-    -   Pattern matching (`match`)
-    -   Pipe operator (`|`)
-    -   Check expressions
-    -   Placeholder variables (`$`)
-    -   Import syntax simplifications
+PyO3-based Python bindings exposing the compiler to Python.
 
-#### `simple_fmt.rs`
+**Main API** (`lib.rs`):
 
-**Responsibility**: Utility functions for formatting and manipulating parsed code
+-   `transpile()`: Full compilation to Python AST objects (usable by Python `compile()`)
+-   `transpile_raw()`: Compilation to Python source string with source map
+-   `fast_vget()`: Runtime support for virtual method dispatch (trait system implementation)
+-   Manages transpilation modes:
+    -   `module`: Full module with prelude and runtime imports
+    -   `script`: Standalone script without module exports
+    -   `interactive`: REPL mode with top-level await support
+    -   `no_prelude`: For compiling the prelude itself (bootstrap mode)
 
----
+**Python AST Emission** (`emit_py.rs`):
 
-### **koatl-core** - Semantic Analysis & Transformation
+-   Converts Koatl's Python AST representation into Python's native AST objects
+-   Uses PyO3 to construct Python `ast.Module`, `ast.Expr`, `ast.Stmt`, etc.
+-   Enables seamless integration with Python's compilation pipeline
 
-#### `lib.rs` (~291 lines)
+### ohtli
 
-**Responsibility**: Main transpilation API and orchestration
+Sophisticated code formatter for Koatl with a three-stage architecture.
 
-**Key Functions**:
+**Architecture Overview**:
 
--   `transpile_to_py_ast(src, filename, options) -> PyBlock<'src>` - Main entry point
+1. **CST → Element Tree**:
 
-    -   Parses Koatl source
-    -   Resolves names and scopes
-    -   Infers types
-    -   Transforms to Python AST
-    -   Handles TranspileOptions (prelude injection, exports, etc.)
-
--   `parse_tl(src) -> (Option<AST>, Errors)` - Top-level parse
--   `TranspileOptions` - Control transpilation behavior:
-    -   `inject_prelude` - Include prelude imports
-    -   `inject_runtime` - Include runtime support
-    -   `set_exports` - Auto-set `__all__`
-    -   `allow_await` - Allow async/await
-    -   `interactive` - Interactive mode (REPL)
-    -   `target_version` - Python version target
-
-**Error Handling**:
-
--   Collects errors from each phase
--   Uses ariadne for formatted error reporting with source context
-
-#### `ast.rs` (~307 lines)
-
-**Responsibility**: Define Abstract Syntax Tree (semantic structure)
-
-**Key Type Aliases**:
-
--   `Indirect<T>` = `Box<T>` - Boxing for recursive types
--   `SIdent<'a>` = `Spanned<Ident<'a>>` - Identifier with span
--   `SLiteral<'a>` = `Spanned<Literal<'a>>` - Literal with span
--   `SExpr<'a>` = `Spanned<Expr<'a, STree<'a>>>` - Expression with span
--   `SStmt<'a>` = `Spanned<Stmt<'a, STree<'a>>>` - Statement with span
--   `SPattern<'a>` = `Spanned<Pattern<'a, STree<'a>>>` - Pattern with span
-
-**Key Enums**:
-
--   `Ident<'a>` - Identifier name
--   `Literal<'a>` - Numeric, string, bool, None constants
--   `DeclType` - Declaration modifiers (Let, Const, Global, Export)
--   `Stmt<'a, TTree>` - Statement variants:
-    -   `Decl` - Variable declarations
-    -   `Assign` - Assignments
-    -   `PatternAssign` - Pattern-based assignments
-    -   `Expr` - Expression statements
-    -   `Return`, `While`, etc.
--   `Expr<'a, TTree>` - Expression variants:
-    -   `Literal` - Constants
-    -   `Ident` - Variable references
-    -   `Call` - Function calls
-    -   `Fn` - Function definitions
-    -   `If`, `Match`, `Try` - Control flow
-    -   `BinaryOp`, `UnaryOp` - Operations
-    -   `Fstr` - F-strings
-    -   `Check` - Error handling
-    -   And many more...
--   `Pattern<'a, TTree>` - Pattern variants:
-    -   `Capture` - Bind to variable
-    -   `Literal`, `Class`, `Sequence`, `Mapping` - Matching constructs
-    -   `MatchAs`, `MatchOr` - Pattern combinators
+    - Converts parsed CST into an intermediate representation of layout "elements"
+    - Elements are atomic units: `Atom` (tokens), `LineBreak`, `Listing` (comma-separated items), `Parens` (delimited groups), `Block` (indented statements)
+    - Trivia (comments, whitespace) is extracted from tokens and converted to elements
+    - Attachment flags (`attach_before`, `attach_after`) indicate whether spaces are needed around elements
 
-**Design Notes**:
+2. **Layout Calculation** (`LayoutCalculator`):
 
--   Generic `TTree: Tree` trait for flexibility
--   `STree<'src>` concrete implementation
--   Fully typed and structured (unlike CST which preserves formatting)
--   Ready for semantic analysis
-
-#### `lift_cst.rs` (~660 lines)
-
-**Responsibility**: Convert CST to AST (strip formatting, extract structure)
-
-**Key Functions**:
-
--   `lift_cst(cst) -> Indirect<SExpr>` - Main CST-to-AST conversion
--   `lift_fstr()` - Convert f-string CST to AST
--   `STokenExt` trait methods:
-    -   `lift_as_ident()` - Convert token to identifier
-    -   `lift_as_literal()` - Convert token to literal value
-    -   `lift_as_decl_modifier()` - Map keywords to DeclType
-
-**Transformations**:
-
--   Removes all trivia (comments, whitespace)
--   Converts parenthesized expressions to explicit AST structure
--   Handles special cases:
-    -   F-strings with format specifiers
-    -   Import statement simplification
-    -   Pattern matching constructs
-
-#### `resolve_scopes.rs`
-
-**Responsibility**: Name resolution and scope tracking
-
-**Key Structures** (inferred from usage in transform.rs):
-
--   `ResolveState` - Output of name resolution:
-    -   `functions` - Map of function definitions to FnInfo
-    -   `patterns` - Map of patterns to PatternInfo
-    -   `resolutions` - Map of expression refs to declarations
-    -   `memo_fninfo`, `mapped_fninfo`, `coal_fninfo` - Special function tracking
-    -   `scopes` - Scope information
-    -   `declarations` - All variable declarations with metadata
-
-**Responsibilities**:
-
--   Builds scope hierarchy
--   Tracks variable binding and usage
--   Detects shadowing
--   Records function information (parameters, closures)
--   Handles Koatl scoping rules (unlike Python, no nonlocal needed)
-
-#### `inference.rs`
-
-**Responsibility**: Type inference system (not fully shown)
-
-**Inferred from context**:
+    - Currently a pass-through stage (opportunity for future optimizations)
+    - Could implement line-length aware decisions (inline vs. block layout selection)
+    - Recursively processes element tree, potentially rewriting inline/block choices
+    - Placeholder for "pretty printing" algorithms (e.g., Wadler-Leijen)
 
--   `InferenceCtx` - Stores type information
-    -   `.types` - Map of expressions to their inferred types
--   `Type` enum - Type representations
--   Validates:
-    -   Pattern match feasibility
-    -   Monad operation compatibility
-    -   Result type handling
+3. **Layout Writing** (`LayoutWriter`):
+    - Converts element tree to final formatted string
+    - Manages indentation state via a stack of `WriterLineInfo` (tracks whether line has content, was just broken, needs continuation indent)
+    - **Continuation indentation heuristic**: If multiple atoms appear on separate lines within a single logical line, subsequent atoms get extra indentation (e.g., chained method calls)
+    - Respects attachment flags: omits spaces when `attach_next` is true
+    - Handles inline vs. block layout:
+        - Inline listings: rendered on single line with spaces
+        - Block listings: each item on separate line with increased indentation
+        - Inline blocks: semicolon-separated statements
+        - Block blocks: standard indented statements
+    - Special handling for comments: preserves them but doesn't affect indentation continuation logic
 
-#### `types.rs`
+**Error Handling in Formatting**:
+When the source has parse errors, the formatter preserves the unparseable regions as `Stmt::Error { raw }` nodes. These are tokenized to extract trivia, then all tokens and trivia are converted to tightly-attached elements, preserving the exact original formatting for the error region while formatting the rest of the file.
 
-**Responsibility**: Type system definitions
+**Config** (`config.rs`):
 
-**Key Type Enum**:
-Represents the Koatl type system for analysis and optimization
+-   Formatter configuration (currently just `indent_width`)
+-   Designed for extension with line length limits, style preferences, etc.
 
-#### `util.rs`
+### quetzal
 
-**Responsibility**: Error handling, caching, and utilities
+VS Code extension integrating Koatl tooling into the editor.
 
-**Key Structures**:
+**Extension** (`extension.ts`):
 
--   `LineColCache` - Cache line/column positions for error reporting
-    -   `linecol(byte_offset) -> (line, col)`
--   `RefHash` - Reference-based hashing for AST nodes
--   `TlErr` - Single error with span, message, and context
-    -   `.kind` - TlErrKind (Tokenize, Parse, Transform, Emit, Unknown)
--   `TlErrs` - Collection of errors
--   `TlErrBuilder` - Fluent error construction
+-   Loads formatter as WebAssembly module compiled from Rust
+-   Registers document formatting provider for `.tl` files
+-   Uses Wasm Component Model for TypeScript ↔ Rust interop
+-   Converts diff hunks from formatter into VS Code `TextEdit` operations
+-   Applies incremental edits rather than replacing entire file (preserves undo history)
 
-**Error Handling**:
+**Formatter Bridge** (`formatter.ts`, generated):
 
--   Collects multiple errors before failing
--   Provides detailed error context with source location
--   Used throughout compilation pipeline
+-   WIT-based interface definitions for calling Rust formatter from TypeScript
+-   Exposes `formatDiff()` function returning line-based diff hunks
 
-#### `transform.rs` (~2577 lines)
+**Rust Formatter** (`lib.rs`):
 
-**Responsibility**: Transform Koatl AST to Python AST (core transpilation logic)
+-   Wasm-compatible Rust implementation wrapping `ohtli::Formatter`
+-   Generates unified-diff-style output for efficient editor updates
 
-**Key Structures**:
+### profiling
 
--   `TlCtx<'src, 'ast>` - Transformation context:
-    -   Source code and filename
-    -   Name resolution state
-    -   Type information
-    -   Python identifier mappings
-    -   Monad function tracking
--   `TransformOptions` - Transformation settings:
+Minimal CLI tool for performance profiling of the compiler pipeline.
 
-    -   `interactive` - Interactive/REPL mode
-    -   `target_version` - Python version (3.7, 3.8, etc.)
+**Purpose**: Benchmark transpilation end-to-end with various input files to identify bottlenecks.
 
--   `TransformOutput<'src>` - Transpilation result:
-    -   `source` - Generated Python source code
-    -   `source_line_map` - Map from Python line to original Koatl byte offset
-    -   `module_star_exports` - Modules with `import *`
+## Testing
 
-**Key Functions** (inferred from code):
+### Architecture
 
--   `transform_ast()` - Main transformation entry
--   `transform_expr()` - Transform expressions
--   `transform_stmt()` - Transform statements
--   `transform_pattern()` - Transform patterns
--   Expression handlers for:
-    -   Arrow functions (create Python lambda or nested function)
-    -   Pattern matching (convert to Python match statement)
-    -   Monads (`@` operator - convert to generator-based bind)
-    -   Pipe operations (convert to function calls)
-    -   Check expressions (wrap in try-except returning Result)
-    -   Placeholder variables (extract and create lambdas)
+-   Pytest (under `koatl/tests/`) drives the PyO3 module. `conftest.py` adds a custom collector so any `test_*.tl` file can be transpiled and executed as a pytest module.
+-   End-to-end harness: `test_e2e.py` parametrizes over `.tl` fixtures in `tests/e2e/base` and `tests/e2e/prelude`, running them through `koatl.transpile_raw` and the CLI.
+-   Parser coverage: `test_parse.py` walks `tests/parse/*.tl` to ensure parsing succeeds; `test_parse_fail.py` walks `tests/fail-parse/*.tl` to assert parsing fails.
+-   Additional `.tl` samples (for example `test_iterable.tl`, `test_re.tl`) are collected by pytest via the custom collector.
+-   Rust crates (`koatl-core`, `koatl-parser`, `ohtli`, the Rust portion of `quetzal`) use the standard cargo test workflow.
 
-**Transformation Strategy**:
+### Running Tests
 
--   Rewrite Koatl-specific constructs to Python equivalents
--   Generate helper functions for complex operations
--   Mangle variable names to avoid conflicts (using `let_` prefix)
--   Track memo dependencies for Memo monad
--   Handle monad semantics (Result auto-unwrapping, Async wrapping, etc.)
+-   Pytest for the PyO3 module:
 
-**Helper Functions**:
+```bash
+cd koatl
+pyenv activate pyo3   # if using pyenv
+maturin develop        # build the extension in-place
+pytest                 # runs e2e, parse, fail-parse, and collected .tl modules
+```
 
--   `decl_py_ident()` - Generate safe Python identifiers for Koatl variables
--   `fn_info()`, `pattern_info()` - Retrieve semantic analysis results
--   `create_aux_var()` - Create temporary variables
--   Operator mapping (Koatl to Python)
+-   Cargo tests for Rust crates from the workspace root:
 
-#### `ast_builder.rs`
-
-**Responsibility**: Fluent AST construction helpers
-
-**Key Methods**:
-
--   `AstBuilder::new(span)` - Create builder
--   `ident()`, `expr()`, `assign()`, `return_()`, `while_()`, `for_()` - Build statements
--   Convenience methods for common patterns
-
-#### `main.rs` (~100 lines)
-
-**Responsibility**: CLI tool for transpilation
-
-**Commands**:
-
--   `trans <filename>` - Transpile to Python and print
--   `run <filename>` - Transpile and execute with Python
-
-**Features**:
-
--   Error formatting with ariadne
--   File I/O
--   Process spawning for Python execution
-
-#### `py/` directory - Python AST Generation
-
-**`py/ast.rs`** - Python AST structures
-
--   `PyBlock<'src>` - Python module body
--   `PyStmt`, `PyExpr` - Python statement and expression types
--   Mirrors Python's AST module structure
--   `PyToken<'src>`, `PyLiteral<'src>` - Python primitives
-
-**`py/ast_builder.rs`** - Python AST construction helpers
-
--   `PyAstBuilder` - Fluent interface for building Python AST
--   Convenience methods for common patterns
-
-**`py/emit.rs`** - Code generation
-
--   Walks Python AST and generates Python source code
--   Preserves line information for error mapping
-
----
-
-### **koatl** - Python Bindings (PyO3)
-
-#### `src/lib.rs` (~230 lines)
-
-**Responsibility**: PyO3 Python module interface
-
-**Exported Functions**:
-
--   `transpile(src, mode, filename, target_version) -> PyObject`
-
-    -   Main entry point for Python code
-    -   Calls `transpile_to_py_ast()` in koatl-core
-    -   Emits Python AST as PyObject
-    -   Modes: "module", "script", "interactive", "no_prelude"
-
--   `transpile_raw(src, mode, filename, target_version) -> (source, linemap)`
-    -   Returns Python source code as string
-    -   Provides line number mapping to original Koatl source
-
-**Virtual Method Tables** (Runtime feature):
-
--   `VTBL` - Type-based method lookup cache
--   `VTBL2` - Trait method lookup cache
--   `fast_vget()` - Fast virtual method resolution for extension attributes
-
-**Caching**:
-
--   Uses `once_cell::sync::Lazy` for thread-safe initialization
--   Caches extension method implementations at runtime
-
-#### `src/emit_py.rs` (~896 lines)
-
-**Responsibility**: Emit Python AST objects to PyObjects for execution
-
-**Key Structures**:
-
--   `PyTlErr` - Error representation for PyO3
--   `PyCtx<'py, 'src>` - Emission context:
-    -   Python interpreter reference
-    -   AST module access
-    -   Source code and line caching
-
-**Key Functions**:
-
--   `emit_py(py_block) -> PyObject`
-    -   Walks Python AST
-    -   Creates Python `ast` module objects
-    -   Returns executable PyAST
-
-**Emission Strategies**:
-
--   `ast_node()` - Create AST node with location info (lineno, col_offset)
--   Maps Python AST node types to `ast` module constructors
--   Preserves source location information for error reporting
-
----
-
-### **ohtli** - Code Formatter
-
-#### `src/main.rs` (~50 lines)
-
-**Responsibility**: CLI formatter tool
-
-**Commands**:
-
--   Format file in-place
--   `--check` mode to validate formatting without modification
-
-**Features**:
-
--   Integrable with editor LSP
--   Used by quetzal VSCode extension
-
-#### `src/formatter.rs`
-
-**Responsibility**: Koatl code formatting implementation
-
-**Features**:
-
--   Standardizes indentation
--   Consistent spacing
--   Proper alignment
--   Comment preservation (via trivia from lexer)
-
-#### `src/config.rs`
-
-**Responsibility**: Formatter configuration
-
----
-
-### **quetzal** - VSCode Extension
-
-#### `src/extension.ts`
-
-**Responsibility**: VSCode integration
-
-**Features**:
-
--   Syntax highlighting via TextMate grammar
--   Language definition
--   Formatter integration (calls ohtli)
-
-#### `src/formatter.ts`
-
-**Responsibility**: Formatter provider for VSCode
-
-#### `syntaxes/tl.tmLanguage.json`
-
-**Responsibility**: TextMate grammar for syntax highlighting
-
----
-
-## Key Algorithms & Patterns
-
-### Variable Name Mangling
-
-Koatl's `let` scoping requires variable name mangling in Python (which has function scope, not block scope). Variables are suffixed with `_<count>` to create unique Python names while preserving Koatl semantics.
-
-### Extension Attribute Resolution
-
-Extension methods/properties are resolved at runtime using virtual method tables (VTBL) that cache lookups by type and name. The resolution order is:
-
-1. Instance `__getattr__` if defined
-2. Type's extension method table
-3. Trait extension table
-4. Raise AttributeError
-
----
-
-## Error Handling Pipeline
-
-1. **Lexer**: Tokenization errors collected
-2. **Parser**: Syntax errors with recovery (multiple errors in one pass)
-3. **Lift CST**: Structural conversion errors
-4. **Resolve Scopes**: Name resolution errors
-5. **Inference**: Type compatibility errors
-6. **Transform**: Semantic validation errors
-7. **Emit**: Code generation errors
-
-All errors are collected and reported together with source location context via ariadne's formatted output.
-
----
-
-## Testing Architecture
-
-**Test types**:
-
--   `e2e/` - End-to-end tests (Koatl source → Python execution)
--   `fail-parse/` - Tests for parse failures
--   `parse/` - Tests for successful parsing
--   Integration tests verify full pipeline
-
-Tests in `koatl/tests/` directory use pytest to validate transpilation and execution.
+```bash
+cargo test
+cargo test -p koatl-core   # run a single crate
+```
 
 ---
 
