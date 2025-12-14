@@ -1661,7 +1661,7 @@ mod tests {
         );
     }
 
-    fn simple_tokenize(source: &str) -> TokenList {
+    fn simple_tokenize(source: &str) -> TokenList<'_> {
         let (tokens, errors) = tokenize(source, true);
         if !errors.is_empty() {
             assert!(false, "Errors during tokenization: {:?}", errors);
@@ -1671,7 +1671,7 @@ mod tests {
         tokens.unwrap()
     }
 
-    fn simple_trivium(typ: TrivialTokenType, value: &str) -> TrivialToken {
+    fn simple_trivium(typ: TrivialTokenType, value: &'_ str) -> TrivialToken<'_> {
         TrivialToken {
             span: Span { start: 0, end: 0 },
             typ,
@@ -1683,15 +1683,15 @@ mod tests {
         simple_trivium(TrivialTokenType::Newline, "\n")
     }
 
-    fn whitespace_trivium(value: &str) -> TrivialToken {
+    fn whitespace_trivium(value: &str) -> TrivialToken<'_> {
         simple_trivium(TrivialTokenType::Whitespace, value)
     }
 
-    fn comment_trivium(value: &str) -> TrivialToken {
+    fn comment_trivium(value: &str) -> TrivialToken<'_> {
         simple_trivium(TrivialTokenType::LineComment, value)
     }
 
-    fn block_comment_trivium(value: &str) -> TrivialToken {
+    fn block_comment_trivium(value: &'_ str) -> TrivialToken<'_> {
         simple_trivium(TrivialTokenType::BlockComment, value)
     }
 

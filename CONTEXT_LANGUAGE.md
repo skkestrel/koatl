@@ -1025,18 +1025,18 @@ The parser processes operators in this precedence order:
 
 ### Comparison Operators
 
-| Koatl      | Python   | Meaning                |
-| ---------- | -------- | ---------------------- |
-| `==`       | `==`     | Equality               |
-| `<>` / `!=`| `!=`     | Not equal              |
-| `<`        | `<`      | Less than              |
-| `<=`       | `<=`     | Less or equal          |
-| `>`        | `>`      | Greater than           |
-| `>=`       | `>=`     | Greater or equal       |
-| `===`      | `is`     | Identity (same object) |
+| Koatl         | Python   | Meaning                |
+| ------------- | -------- | ---------------------- |
+| `==`          | `==`     | Equality               |
+| `<>` / `!=`   | `!=`     | Not equal              |
+| `<`           | `<`      | Less than              |
+| `<=`          | `<=`     | Less or equal          |
+| `>`           | `>`      | Greater than           |
+| `>=`          | `>=`     | Greater or equal       |
+| `===`         | `is`     | Identity (same object) |
 | `<=>` / `!==` | `is not` | Non-identity           |
-| `in`       | `in`     | Membership             |
-| `not in`   | `not in` | Non-membership         |
+| `in`          | `in`     | Membership             |
+| `not in`      | `not in` | Non-membership         |
 
 ## Execution Modes
 
