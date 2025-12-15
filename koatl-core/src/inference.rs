@@ -235,7 +235,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
                 expr.traverse(ctx);
                 Type::Any
             }
-            Expr::CallNullable(expr, func) => {
+            Expr::ScopedAttribute(expr, func) | Expr::MappedScopedAttribute(expr, func) => {
                 expr.traverse(ctx);
                 func.traverse(ctx);
                 Type::Any

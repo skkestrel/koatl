@@ -1425,11 +1425,13 @@ fn transform_postfix_expr<'src, 'ast>(
         Expr::RawAttribute(obj, _) => (false, obj),
         Expr::Subscript(obj, _) => (false, obj),
         Expr::Call(obj, _) => (false, obj),
+        Expr::ScopedAttribute(obj, _) => (false, obj),
         Expr::Attribute(obj, _) => (false, obj),
         Expr::MaybeAttribute(obj, _) => (false, obj),
         Expr::MappedRawAttribute(obj, _) => (true, obj),
         Expr::MappedSubscript(obj, _) => (true, obj),
         Expr::MappedCall(obj, _) => (true, obj),
+        Expr::MappedScopedAttribute(obj, _) => (true, obj),
         Expr::MappedAttribute(obj, _) => (true, obj),
         Expr::MappedMaybeAttribute(obj, _) => (true, obj),
         _ => {
@@ -1459,6 +1461,10 @@ fn transform_postfix_expr<'src, 'ast>(
             Expr::Subscript(_, list) | Expr::MappedSubscript(_, list) => {
                 let t = inner_pre.bind(transform_subscript_items(ctx, &list, &expr.span)?);
                 a.subscript(lhs, t, access_ctx)
+            }
+            Expr::ScopedAttribute(_, rhs) | Expr::MappedScopedAttribute(_, rhs) => {
+                let t = inner_pre.bind(rhs.transform(ctx)?);
+                a.call(t, vec![PyCallItem::Arg(lhs)])
             }
             Expr::RawAttribute(_, attr) | Expr::MappedRawAttribute(_, attr) => {
                 a.attribute(lhs, attr.value.escape(), access_ctx)
@@ -2025,29 +2031,13 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
             | Expr::MappedCall(..)
             | Expr::Subscript(..)
             | Expr::MappedSubscript(..)
+            | Expr::ScopedAttribute(..)
+            | Expr::MappedScopedAttribute(..)
             | Expr::Attribute(..)
             | Expr::MappedAttribute(..)
             | Expr::MaybeAttribute(..)
             | Expr::MappedMaybeAttribute(..) => {
                 pre.bind(transform_postfix_expr(ctx, self, access_ctx)?)
-            }
-            Expr::CallNullable(obj, func) => {
-                let a = PyAstBuilder::new(span);
-                let obj_transformed = pre.bind(obj.transform(ctx)?);
-                let func_transformed = pre.bind(func.transform(ctx)?);
-
-                let maparg = ctx.create_aux_var("maparg", span.start);
-
-                a.call(
-                    a.tl_builtin("op_map"),
-                    vec![
-                        a.call_arg(obj_transformed),
-                        a.call_arg(a.lambda(
-                            PyArgList::simple_args(vec![(maparg.clone().into(), None)]),
-                            a.call(func_transformed, vec![a.call_arg(a.load_ident(maparg))]),
-                        )),
-                    ],
-                )
             }
             Expr::With(pattern, value, body) => {
                 let temp_var = ctx.create_aux_var("with", span.start);

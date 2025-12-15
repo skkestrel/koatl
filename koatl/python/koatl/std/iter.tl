@@ -260,6 +260,12 @@ export Iterable = class(Traversable, Trait):
     list = self =>
         list(self.iter)
 
+    set = self =>
+        set(self.iter)
+
+    tuple = self =>
+        tuple(self.iter)
+
     dict = self =>
         dict(self.iter)
 

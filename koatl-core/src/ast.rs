@@ -186,15 +186,16 @@ pub enum Expr<'a, TTree: Tree> {
     Call(TTree::Expr, Vec<CallItem<'a, TTree>>),
     Subscript(TTree::Expr, Vec<ListItem<TTree>>),
     RawAttribute(TTree::Expr, SIdent<'a>),
+    ScopedAttribute(TTree::Expr, TTree::Expr),
     Attribute(TTree::Expr, SIdent<'a>),
     MaybeAttribute(TTree::Expr, SIdent<'a>),
 
     MappedCall(TTree::Expr, Vec<CallItem<'a, TTree>>),
     MappedSubscript(TTree::Expr, Vec<ListItem<TTree>>),
     MappedRawAttribute(TTree::Expr, SIdent<'a>),
+    MappedScopedAttribute(TTree::Expr, TTree::Expr),
     MappedAttribute(TTree::Expr, SIdent<'a>),
     MappedMaybeAttribute(TTree::Expr, SIdent<'a>),
-    CallNullable(TTree::Expr, TTree::Expr),
 
     Try(TTree::Expr, Vec<MatchCase<TTree>>, Option<TTree::Expr>),
     Checked(TTree::Expr, Option<TTree::Pattern>),
