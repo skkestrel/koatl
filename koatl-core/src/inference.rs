@@ -265,7 +265,6 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
                 Type::Any
             }
             Expr::Literal(..) | Expr::Ident(..) => Type::Any,
-            Expr::Decorated(_, _) => panic!("Decorated expressions should not be traversed"),
             Expr::Placeholder => panic!("Placeholder expression should not be traversed"),
         };
 

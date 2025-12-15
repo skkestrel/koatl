@@ -1289,7 +1289,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             },
             Decorator {
                 op: &'tok SToken<'src>,
-                decorator: SExpr<'src, 'tok>,
+                decorated: SExpr<'src, 'tok>,
             },
         }
 
@@ -1332,8 +1332,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
             let decorator = |ctx: &mut Self| {
                 let op = ctx.symbol("!")?;
-                let decorator = ctx.expr()?;
-                Ok(Postfix::Decorator { op, decorator })
+                let decorated = ctx.expr()?;
+                Ok(Postfix::Decorator { op, decorated })
             };
 
             let dot_attribute = |ctx: &mut Self| {
@@ -1438,7 +1438,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         question2,
                         attr,
                     },
-                    Postfix::Decorator { op, decorator } => {
+                    Postfix::Decorator { op, decorated } => {
                         if question.is_some() {
                             return Err(self.set_error(
                                 start,
@@ -1446,9 +1446,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                             ));
                         }
                         Expr::Decorated {
-                            expr: expr.boxed(),
+                            expr: decorated.boxed(),
                             op,
-                            decorator: decorator.boxed(),
+                            decorator: expr.boxed(),
                         }
                     }
                 }

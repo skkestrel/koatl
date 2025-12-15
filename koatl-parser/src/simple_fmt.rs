@@ -350,7 +350,7 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
             Expr::Decorated {
                 expr, decorator, ..
             } => {
-                format!("{} & {}", expr.simple_fmt(), decorator.simple_fmt())
+                format!("{}! {}", expr.simple_fmt(), decorator.simple_fmt())
             }
         }
     }

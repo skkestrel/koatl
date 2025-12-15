@@ -1055,10 +1055,6 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 Expr::Checked(expr.traverse_guarded(state), pattern)
             }
-            Expr::Decorated(deco, expr) => Expr::Call(
-                deco.traverse(state),
-                vec![CallItem::Arg(expr.traverse(state))],
-            ),
             Expr::Matches(x, pattern) => {
                 let (pattern, meta) = pattern.traverse(state, false);
                 if !meta.captures.is_empty() {

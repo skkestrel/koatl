@@ -319,10 +319,6 @@ fn transform_assignment<'src, 'ast>(
                     cur_node = left;
                     decorators.push(right);
                 }
-                Expr::Decorated(deco, right) => {
-                    cur_node = right;
-                    decorators.push(deco);
-                }
                 Expr::Call(left, right) => {
                     if right.len() != 1 {
                         break;
@@ -2018,10 +2014,6 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
 
                 a.load_ident(name)
             }
-            Expr::Decorated(deco, expr) => a.call(
-                pre.bind(deco.transform(ctx)?),
-                vec![PyCallItem::Arg(pre.bind(expr.transform(ctx)?))],
-            ),
             Expr::Literal(lit) => a.literal(lit.value.transform(ctx)?),
             Expr::Ident(_) => {
                 let ident = ctx.py_ident(self);

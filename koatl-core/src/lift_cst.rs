@@ -274,9 +274,6 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                 ast::Expr::Fn(args_list, body.lift())
             }
             cst::Expr::Fstr { head, parts, .. } => lift_fstr(head, parts),
-            cst::Expr::Decorated {
-                expr, decorator, ..
-            } => ast::Expr::Decorated(expr.lift(), decorator.lift()),
             cst::Expr::Memo { async_kw, body, .. } => {
                 ast::Expr::Memo(body.lift(), async_kw.is_some())
             }
@@ -388,6 +385,13 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                     let arg = ast::CallItem::Arg(expr.lift());
                     ast::Expr::Call(func, vec![arg])
                 }
+            }
+            cst::Expr::Decorated {
+                expr, decorator, ..
+            } => {
+                let func = decorator.lift();
+                let arg = ast::CallItem::Arg(expr.lift());
+                ast::Expr::Call(func, vec![arg])
             }
             cst::Expr::Checked { expr, pattern, .. } => {
                 ast::Expr::Checked(expr.lift(), pattern.as_ref().map(|p| p.lift()))

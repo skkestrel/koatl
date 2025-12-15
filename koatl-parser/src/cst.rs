@@ -509,11 +509,10 @@ pub enum Expr<TTree: Tree> {
         end: TTree::Token,
     },
 
-    // these are removed during desugaring
     Decorated {
-        expr: TTree::Expr,
-        op: TTree::Token,
         decorator: TTree::Expr,
+        op: TTree::Token,
+        expr: TTree::Expr,
     },
     Placeholder {
         token: TTree::Token,

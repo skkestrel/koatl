@@ -204,8 +204,6 @@ pub enum Expr<'a, TTree: Tree> {
     Fn(Vec<ArgDefItem<'a, TTree>>, TTree::Expr),
     Fstr(Spanned<String>, Vec<(FmtExpr<TTree>, Spanned<String>)>),
 
-    // these are removed during desugaring
-    Decorated(TTree::Expr, TTree::Expr),
     Placeholder,
 }
 
