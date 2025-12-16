@@ -84,16 +84,20 @@ export Iterable = class(Traversable, Trait):
 
         impl()
 
-    flat_map = (self, f) => itertools.chain.from_iterable(self.map(f))
+    flat_map = (self, f=None) =>
+        if f === None:
+            itertools.chain.from_iterable(self.iter)
+        else:
+            itertools.chain.from_iterable(self.iter.map(f))
 
-    reverse = self => reversed(list(self.iter))
+    reversed = self => reversed(list(self.iter))
 
-    sort = (self, key=None, reverse=False) =>
+    sorted = (self, key=None, reverse=False) =>
         sorted(self.iter, key=key, reverse=reverse)
 
     copy = self => itertools.tee(self.iter)
 
-    count = (self, f=None) =>
+    tally = (self, f=None) =>
         let acc = 0
         if f === None:
             for _ in self:
@@ -187,7 +191,7 @@ export Iterable = class(Traversable, Trait):
         impl()
 
     join = (self, sep="") =>
-        sep.join(self.map(str))
+        sep.join(self.iter.map(str))
 
     sum = self =>
         let acc = 0

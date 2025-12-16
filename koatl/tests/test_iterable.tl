@@ -57,11 +57,14 @@ test_all = () =>
     assert_eq([].all(x => x > 0), True)
     assert_eq([True, True, True].all(x => x), True)
 
-test_count = () =>
-    # count() works on Iterable trait via .iter
-    assert_eq([1, 2, 3, 4, 5].iter.count(x => x > 2), 3)
-    assert_eq([1, 2, 3, 4, 5].iter.count(x => x %% 2 == 0), 2)
-    assert_eq([1, 2, 3].iter.count(x => x > 10), 0)
+test_tally = () =>
+    # tally() works on Iterable trait via .iter
+    assert_eq([1, 2, 3, 4, 5].iter.tally(), 5)
+    assert_eq([].iter.tally(), 0)
+    assert_eq((..10).tally(), 10)
+    assert_eq([1, 2, 3, 4, 5].iter.tally(x => x > 2), 3)
+    assert_eq([1, 2, 3, 4, 5].iter.tally(x => x %% 2 == 0), 2)
+    assert_eq([1, 2, 3].iter.tally(x => x > 10), 0)
 
 test_take = () =>
     assert_eq([1, 2, 3, 4, 5].take(3).list(), [1, 2, 3])
@@ -104,16 +107,15 @@ test_cycle = () =>
     assert_eq([1, 2, 3].cycle().take(7).list(), [1, 2, 3, 1, 2, 3, 1])
     assert_eq([5].cycle().take(3).list(), [5, 5, 5])
 
-test_reverse = () =>
-    # reverse() is a method on Iterable trait, accessed via .iter
-    assert_eq(list([1, 2, 3, 4, 5].iter.reverse()), [5, 4, 3, 2, 1])
-    assert_eq(list([1].iter.reverse()), [1])
-    assert_eq(list([].iter.reverse()), [])
+test_reversed = () =>
+    assert_eq(list([1, 2, 3, 4, 5].reversed()), [5, 4, 3, 2, 1])
+    assert_eq(list([1].reversed()), [1])
+    assert_eq(list([].reversed()), [])
 
-test_sort = () =>
-    assert_eq([3, 1, 4, 1, 5].iter.sort().list(), [1, 1, 3, 4, 5])
-    assert_eq(["c", "a", "b"].iter.sort().list(), ["a", "b", "c"])
-    assert_eq([].iter.sort().list(), [])
+test_sorted = () =>
+    assert_eq([3, 1, 4, 1, 5].iter.sorted().list(), [1, 1, 3, 4, 5])
+    assert_eq(["c", "a", "b"].iter.sorted().list(), ["a", "b", "c"])
+    assert_eq([].iter.sorted().list(), [])
 
 test_join = () =>
     assert_eq(["a", "b", "c"].join(", "), "a, b, c")
