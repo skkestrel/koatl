@@ -593,6 +593,82 @@ a
 }
 
 #[test]
+fn test_fstr_simple_interpolation() {
+    let input = r#"f"hello {name}""#;
+    let expected = r#"f"hello {name}""#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_fstr_escaped_braces() {
+    let input = r#"f"use {{braces}} for literals""#;
+    let expected = r#"f"use {{braces}} for literals""#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_fstr_format_specifier() {
+    let input = r#"f"value: {x%.2f}""#;
+    let expected = r#"f"value: {x%.2f}""#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_fstr_triple_quote_empty() {
+    let input = r#"f""" """"#;
+    let expected = r#"f""" """"#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_fstr_triple_quote_with_content() {
+    let input = r#"f"""hello {world}""""#;
+    let expected = r#"f"""hello {world}""""#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_fstr_triple_quote_multiline() {
+    let input = r#"f"""
+line1
+line2
+""""#;
+    let expected = r#"f"""
+line1
+line2
+""""#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_fstr_nested_expression() {
+    let input = r#"f"result: {obj.method(a, b)}""#;
+    let expected = r#"f"result: {obj.method(a, b)}""#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_fstr_multiple_interpolations() {
+    let input = r#"f"{a} + {b} = {c}""#;
+    let expected = r#"f"{a} + {b} = {c}""#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_fstr_escaped_and_interpolation() {
+    let input = r#"f"{{literal}} and {interpolated}""#;
+    let expected = r#"f"{{literal}} and {interpolated}""#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_fstr_verbatim() {
+    let input = r#"rf"raw\nstring {x}""#;
+    let expected = r#"rf"raw\nstring {x}""#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
 fn test_error() {
     let input = r#"
 a a

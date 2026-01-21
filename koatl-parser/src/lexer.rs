@@ -970,9 +970,11 @@ impl<'src> TokenizeCtx<'src> {
                 seen_quotes += 1;
 
                 if seen_quotes == ending_char_count {
-                    let span = self.span_since(&marker);
+                    // Use ending_marker for the span/slice end position, not current cursor,
+                    // because we may have consumed some ending quotes already
+                    let span = Span::new(marker..ending_marker);
                     tokens.push(SToken::new(
-                        Token::FstrInner(self.slice_since(&marker), current_str),
+                        Token::FstrInner(&self.input[marker..ending_marker], current_str),
                         span,
                         Vec::new(),
                     ));
