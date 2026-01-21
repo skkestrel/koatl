@@ -708,11 +708,17 @@ impl<'src> PyExprExt<'src> for SPyExpr<'src> {
                         PyFstrPart::Str(s) => {
                             values.push(ctx.ast_node("Constant", (s.as_ref(),), &self.tl_span)?);
                         }
-                        PyFstrPart::Expr(expr, _format_spec) => {
+                        PyFstrPart::Expr(expr, format_spec) => {
                             let expr_ast = expr.emit_py(ctx)?;
+                            let format_spec_ast = if let Some(spec) = format_spec {
+                                spec.emit_py(ctx)?
+                            } else {
+                                ctx.py.None()
+                            };
+
                             values.push(ctx.ast_node(
                                 "FormattedValue",
-                                (expr_ast, -1, ctx.py.None()),
+                                (expr_ast, -1, format_spec_ast),
                                 &self.tl_span,
                             )?);
                         }
