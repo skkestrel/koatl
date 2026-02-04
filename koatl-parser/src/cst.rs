@@ -385,6 +385,7 @@ pub enum Expr<TTree: Tree> {
         if_kw: TTree::Token,
         cond: TTree::Expr,
         body: InducedBlock<TTree>,
+        elif_clauses: Vec<(TTree::Token, TTree::Expr, InducedBlock<TTree>)>,
         else_clause: Option<(TTree::Token, InducedBlock<TTree>)>,
     },
 

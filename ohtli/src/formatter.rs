@@ -768,13 +768,25 @@ impl ToElements for SExpr<'_, '_> {
                 if_kw,
                 cond,
                 body,
+                elif_clauses,
                 else_clause,
             } => {
-                if let Some((else_kw, else_body)) = else_clause {
-                    line![if_kw, cond, body.clone(), else_kw, else_body.clone()]
-                } else {
-                    line![if_kw, cond, body.clone()]
-                }
+                let elif_elements = elif_clauses
+                    .iter()
+                    .map(|(elif_kw, elif_cond, elif_body)| {
+                        line!(elif_kw, elif_cond, elif_body.clone())
+                    })
+                    .collect::<Vec<_>>();
+
+                line!(
+                    if_kw,
+                    cond,
+                    body.clone(),
+                    elif_elements,
+                    else_clause
+                        .as_ref()
+                        .map(|(else_kw, else_body)| { line!(else_kw, else_body.clone()) })
+                )
             }
             Expr::Yield {
                 yield_kw,

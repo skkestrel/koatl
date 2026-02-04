@@ -811,6 +811,24 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let body = self.colon_block()?;
 
+        let mut elif_clauses = Vec::new();
+        loop {
+            // Try to parse elif clause
+            let elif_result = optional!(self, |ctx: &mut Self| {
+                optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
+                let elif_kw = ctx.keyword("elif")?;
+                let elif_cond = ctx.expr()?.boxed();
+                let elif_body = ctx.colon_block()?;
+                Ok((elif_kw, elif_cond, elif_body))
+            })?;
+
+            if let Some(elif_clause) = elif_result {
+                elif_clauses.push(elif_clause);
+            } else {
+                break;
+            }
+        }
+
         let else_clause = optional!(self, |ctx: &mut Self| {
             optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
             let else_kw = ctx.keyword("else")?;
@@ -822,6 +840,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             if_kw,
             cond,
             body,
+            elif_clauses,
             else_clause,
         }
         .spanned(self.span_from(start)))

@@ -107,19 +107,28 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                 if_kw: _,
                 cond,
                 body,
+                elif_clauses,
                 else_clause,
             } => {
-                let else_str = if let Some((_, expr)) = else_clause {
-                    format!(" else {}", expr.simple_fmt())
-                } else {
-                    String::new()
-                };
-                format!(
-                    "if {} then {}{}",
+                let mut result = format!(
+                    "if {} then {}",
                     cond.simple_fmt(),
-                    body.simple_fmt(),
-                    else_str
-                )
+                    body.simple_fmt()
+                );
+                
+                for (_, elif_cond, elif_body) in elif_clauses {
+                    result.push_str(&format!(
+                        " elif {} then {}",
+                        elif_cond.simple_fmt(),
+                        elif_body.simple_fmt()
+                    ));
+                }
+                
+                if let Some((_, expr)) = else_clause {
+                    result.push_str(&format!(" else {}", expr.simple_fmt()));
+                }
+                
+                result
             }
             Expr::If {
                 cond,
