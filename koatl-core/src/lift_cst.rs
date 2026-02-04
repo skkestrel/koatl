@@ -637,7 +637,7 @@ impl<'src, 'tok> Lift<ast::ImportTree<'src>> for cst::ImportTree<cst::STree<'src
                 .iter()
                 .map(|(ident, _)| ident.lift_as_ident())
                 .collect(),
-            leaf: self.leaf.value.lift().spanned(self.leaf.span),
+            leaf: self.leaf.value.lift().spanned(self.leaf.span).indirect(),
         }
     }
 }

@@ -135,7 +135,7 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
         let scope = &self.scopes[decl.scope];
 
         // Some idents must not be mangled.
-        if scope.is_class || scope.is_global || decl.is_fn_arg || decl.is_import {
+        if scope.is_class || scope.is_global || decl.is_fn_arg {
             return Ok(decl.name.escape());
         }
 
@@ -144,7 +144,11 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
             let count = self.ident_counts.entry(decl.name.clone()).or_default();
             *count += 1;
 
-            let ident = format!("let_{}_{}", base_ident, count);
+            let ident = if decl.is_import {
+                format!("let_{}_{}", base_ident, count)
+            } else {
+                format!("import_{}_{}", base_ident, count)
+            };
 
             PyDecl {
                 ident: ident.into(),
@@ -1792,7 +1796,8 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
             Stmt::Break => pre.push(a.break_()),
             Stmt::Continue => pre.push(a.continue_()),
             Stmt::Import(tree, reexport) => {
-                fn traverse_import_tree<'src>(
+                fn traverse_import_tree<'src, 'ast>(
+                    ctx: &mut TlCtx<'src, 'ast>,
                     tree: &ImportTree<'src>,
                     mut trunk_accum: Vec<SIdent<'src>>,
                     mut level: usize,
@@ -1818,35 +1823,43 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                             vec![a.import_alias("*", None)],
                             level,
                         )])),
-                        ImportLeaf::This(alias) => {
+                        ImportLeaf::This(_alias) => {
                             if trunk_accum.len() == 0 {
                                 Err(simple_err(
                                     "Cannot use `this` import without a base module",
                                     tree.leaf.span,
                                 ))
                             } else {
+                                let decl = ctx
+                                    .resolutions
+                                    .get(&tree.leaf.as_ref().into())
+                                    .ok_or_else(|| {
+                                        simple_err(
+                                            "Internal: Unresolved identifier",
+                                            tree.leaf.span,
+                                        )
+                                    })?;
+
                                 let full_module = trunk_accum
                                     .iter()
                                     .map(|ident| ident.value.0.as_ref())
                                     .collect::<Vec<_>>()
                                     .join(".");
 
-                                let last_name = trunk_accum.last().unwrap().value.escape();
-                                let asname = alias
-                                    .as_ref()
-                                    .map(|a| a.value.escape())
-                                    .unwrap_or(last_name);
-
-                                let aliases = vec![a.import_alias(full_module, Some(asname))];
+                                let aliases =
+                                    vec![a.import_alias(full_module, ctx.decl_py_ident(*decl)?)];
 
                                 Ok(PyBlock(vec![a.import(aliases)]))
                             }
                         }
-                        ImportLeaf::Single(name, alias) => {
-                            let aliases = vec![a.import_alias(
-                                name.value.escape(),
-                                alias.as_ref().map(|a| a.value.escape()),
-                            )];
+                        ImportLeaf::Single(name, _alias) => {
+                            let decl = ctx.resolutions.get(&tree.leaf.as_ref().into()).ok_or_else(
+                                || simple_err("Internal: Unresolved identifier", tree.leaf.span),
+                            )?;
+
+                            let aliases = vec![
+                                a.import_alias(name.value.escape(), ctx.decl_py_ident(*decl)?),
+                            ];
 
                             if trunk_accum.len() == 0 && level == 0 {
                                 Ok(PyBlock(vec![a.import(aliases)]))
@@ -1863,6 +1876,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                             for leaf in leaves {
                                 stmts.extend(traverse_import_tree(
+                                    ctx,
                                     leaf,
                                     trunk_accum.clone(),
                                     level,
@@ -1881,7 +1895,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     }
                 }
 
-                pre.extend(traverse_import_tree(tree, vec![], 0, *reexport)?);
+                pre.extend(traverse_import_tree(ctx, tree, vec![], 0, *reexport)?);
             }
         };
 

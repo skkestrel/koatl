@@ -1712,6 +1712,10 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 
                             state.declarations[decl].is_import = true;
 
+                            state
+                                .resolutions
+                                .insert(tree.leaf.as_ref().into(), decl.clone());
+
                             scope.locals.push(decl);
                         }
                         ImportLeaf::This(alias) => {
@@ -1739,9 +1743,20 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 
                             state.declarations[decl].is_import = true;
 
+                            state
+                                .resolutions
+                                .insert(tree.leaf.as_ref().into(), decl.clone());
+
                             scope.locals.push(decl);
                         }
                         ImportLeaf::Star => {
+                            if state.scope_stack.len() > 1 {
+                                state.errors.extend(simple_err(
+                                    "Wildcard imports are only allowed in the global scope",
+                                    tree.leaf.span,
+                                ));
+                            }
+
                             if reexport {
                                 state
                                     .export_stars

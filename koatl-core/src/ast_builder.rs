@@ -231,7 +231,7 @@ impl AstBuilder {
                 .into_iter()
                 .map(|t| t.into().spanned(self.span))
                 .collect(),
-            leaf: ImportLeaf::Star.spanned(self.span),
+            leaf: ImportLeaf::Star.spanned(self.span).indirect(),
             level,
         }
     }

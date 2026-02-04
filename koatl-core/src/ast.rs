@@ -74,7 +74,7 @@ pub enum ImportLeaf<'a> {
 #[derive(Debug, Clone)]
 pub struct ImportTree<'a> {
     pub trunk: Vec<SIdent<'a>>,
-    pub leaf: Spanned<ImportLeaf<'a>>,
+    pub leaf: Indirect<Spanned<ImportLeaf<'a>>>,
 
     // number of dots prepending the trunk
     pub level: usize,
