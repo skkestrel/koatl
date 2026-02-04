@@ -38,6 +38,7 @@ pub struct ResolveState<'src> {
     pub export_stars: Vec<SIdent<'src>>,
 
     pub resolutions: HashMap<RefHash, DeclarationKey>,
+    pub scope_refs: HashMap<RefHash, ScopeKey>,
     pub patterns: HashMap<RefHash, PatternInfo>,
 
     // TODO: these should all be collapsed into the same thing...
@@ -99,6 +100,7 @@ impl<'src> ResolveState<'src> {
             source,
 
             resolutions: HashMap::new(),
+            scope_refs: HashMap::new(),
             functions: HashMap::new(),
             patterns: HashMap::new(),
             memo_fninfo: HashMap::new(),
@@ -989,6 +991,15 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
         let t = match self.value {
             Expr::Literal(_) => return self,
             Expr::Ident(ident) => {
+                // Check for special __locals__ identifier
+                if ident.value.0.as_ref() == "__locals__" {
+                    let expr = Expr::Ident(ident).spanned(span).indirect();
+                    // Store the current scope for __locals__
+                    let current_scope = *state.scope_stack.last().unwrap();
+                    state.scope_refs.insert(expr.as_ref().into(), current_scope);
+                    return expr;
+                }
+
                 let decl = match state.resolve(&ident, false) {
                     Ok(decl) => decl,
                     Err(errs) => {
@@ -1341,7 +1352,9 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     (n_fndef_lifted, n_classdef_lifted)
                 };
 
-                let body = state.scoped(scope, |state| body.traverse(state)).value;
+                let body = state
+                    .scoped(scope, |state| body.traverse_expecting_scope(state))
+                    .value;
 
                 {
                     // put back

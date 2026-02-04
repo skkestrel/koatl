@@ -1,5 +1,6 @@
 import functools
 import importlib
+import builtins
 from types import SimpleNamespace
 
 from koatl.runtime.record import Record
@@ -33,6 +34,13 @@ def set_exports(package_name, globals_dict, exports, module_star_exports):
     globals_dict["__all__"] = tuple(set(globals_dict["__all__"]) | exports)
 
 
+def redirect_locals(locals_name_map, py_locals_dict):
+    new_locals = {}
+    for tl_name, py_name in locals_name_map.items():
+        new_locals[tl_name] = py_locals_dict[py_name]
+    return new_locals
+
+
 __tl__ = SimpleNamespace(
     Exception=Exception,
     slice=slice,
@@ -42,6 +50,8 @@ __tl__ = SimpleNamespace(
     record_literal=Record.from_dict_ref,
     #
     set_exports=set_exports,
+    redirect_locals=redirect_locals,
+    builtins=builtins,
     #
     vget=vget,
     vhas=vhas,

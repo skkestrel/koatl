@@ -252,7 +252,11 @@ impl PyAstBuilder {
     }
 
     pub fn py_builtin<'src>(&self, name: &'static str) -> SPyExpr<'src> {
-        self.attribute(self.load_ident("__builtins__"), name, PyAccessCtx::Load)
+        self.attribute(
+            self.attribute(self.load_ident("__tl__"), "builtins", PyAccessCtx::Load),
+            name,
+            PyAccessCtx::Load,
+        )
     }
 
     pub fn subscript<'src>(
