@@ -145,9 +145,9 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
             *count += 1;
 
             let ident = if decl.is_import {
-                format!("let_{}_{}", base_ident, count)
-            } else {
                 format!("import_{}_{}", base_ident, count)
+            } else {
+                format!("let_{}_{}", base_ident, count)
             };
 
             PyDecl {

@@ -221,19 +221,16 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
             } => {
                 // Convert elif chain into nested if-else
                 let mut result_else = else_clause.as_ref().map(|(_, expr)| expr.lift());
-                
+
                 // Process elif clauses in reverse order to build nested structure
                 for (_, elif_cond, elif_body) in elif_clauses.iter().rev() {
                     let elif_body_lifted = elif_body.lift();
                     let span = elif_body_lifted.span;
-                    let elif_expr = ast::Expr::If(
-                        elif_cond.lift(),
-                        elif_body_lifted,
-                        result_else,
-                    ).spanned(span);
+                    let elif_expr = ast::Expr::If(elif_cond.lift(), elif_body_lifted, result_else)
+                        .spanned(span);
                     result_else = Some(elif_expr.indirect());
                 }
-                
+
                 ast::Expr::If(cond.lift(), body.lift(), result_else)
             }
             cst::Expr::Parenthesized { expr, .. } => return expr.lift(),

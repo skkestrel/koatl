@@ -253,9 +253,9 @@ struct TokenizeCtx<'src> {
 impl<'src> TokenizeCtx<'src> {
     fn new(input: &'src str) -> Self {
         static KEYWORDS: &[&str] = &[
-            "if", "elif", "then", "else", "import", "export", "as", "class", "while", "for", "in", "break",
-            "continue", "with", "yield", "global", "return", "raise", "try", "except", "finally",
-            "and", "or", "not", "await", "let", "const", "with",
+            "if", "elif", "then", "else", "import", "export", "as", "class", "while", "for", "in",
+            "break", "continue", "with", "yield", "global", "return", "raise", "try", "except",
+            "finally", "and", "or", "not", "await", "let", "const", "with",
         ];
 
         let keywords = HashSet::<String>::from_iter(KEYWORDS.iter().map(|s| s.to_string()));
