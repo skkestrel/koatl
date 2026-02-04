@@ -20,9 +20,9 @@ let greet = name => "Hello, " + name | print
 
 **Unary functions** (single pattern argument):
 
--   `x => body` - Single expression
--   `[a, b] => a + b` - Pattern-matched argument
--   `[x, *rest] => ...` - With spread operator
+- `x => body` - Single expression
+- `[a, b] => a + b` - Pattern-matched argument
+- `[x, *rest] => ...` - With spread operator
 
 **Parenthesized functions** (multiple arguments with Python-like syntax):
 
@@ -54,9 +54,9 @@ Parenthesized function arguments support pattern matching (but not guards):
 
 **Block vs. Inline**:
 
--   Single expression: `x => x + 1`
--   Inline block: `x => let y = 1; y + x`
--   Multi-line block:
+- Single expression: `x => x + 1`
+- Inline block: `x => let y = 1; y + x`
+- Multi-line block:
     ```koatl
     x =>
         let y = 1
@@ -685,6 +685,7 @@ outer = () =>
 ```
 
 **Key behaviors**:
+
 - Only available inside functions (error if used at module level)
 - Includes variables from parent function scopes
 - Excludes global scope variables
@@ -762,11 +763,11 @@ let a = 1; let b = 2; a + b
 
 ### Indentation Rules
 
--   Opening `(` at end of line starts a block on next line
--   Indented code continues the block
--   Dedent ends the block
--   Optional commas in multiline lists, records, and function calls
--   No commas needed in multiline indented code
+- Opening `(` at end of line starts a block on next line
+- Indented code continues the block
+- Dedent ends the block
+- Optional commas in multiline lists, records, and function calls
+- No commas needed in multiline indented code
 
 ```koatl
 my_list = [
@@ -793,10 +794,10 @@ function_call(
 
 ### **Records** (Enhanced Dicts)
 
--   Javascript-like syntax with attribute access
--   Auto-forwarding attribute lookup to indexing
--   Support for methods, properties, and computed fields
--   Multiline records without commas:
+- Javascript-like syntax with attribute access
+- Auto-forwarding attribute lookup to indexing
+- Support for methods, properties, and computed fields
+- Multiline records without commas:
     ```koatl
     obj = {
         a: 1
@@ -807,8 +808,8 @@ function_call(
 
 ### **Lists**
 
--   Python lists with improved syntax
--   Multiline lists without commas:
+- Python lists with improved syntax
+- Multiline lists without commas:
     ```koatl
     items = [
         1
@@ -819,12 +820,12 @@ function_call(
 
 ### **Tuples**
 
--   Standard Python tuples: `(1, 2, 3)`
--   Comma creates tuples: `a, b = 1, 2`
+- Standard Python tuples: `(1, 2, 3)`
+- Comma creates tuples: `a, b = 1, 2`
 
 ### **Sets**
 
--   Use constructor: `set([1, 2, 3])`
+- Use constructor: `set([1, 2, 3])`
 
 ## Prelude & Standard Library
 
@@ -846,8 +847,8 @@ mod.numpy.array([1, 2, 3]) + 2 | print
 
 ### **Built-in Extensions**
 
--   `.iter` - Makes objects iterable (delegates to `.items()` for dicts)
--   `Iterable` trait - Common methods for iterators
+- `.iter` - Makes objects iterable (delegates to `.items()` for dicts)
+- `Iterable` trait - Common methods for iterators
 
 ## Common Patterns & Examples
 
@@ -1020,9 +1021,9 @@ When you mark a method with `Trait.abstract!`, it becomes a requirement that typ
 
 The virtual dispatch system is implemented in Rust for performance:
 
--   **`fast_vset(type, name, value)`**: Register a method/property for a specific type
--   **`fast_vset_trait(trait_name, requirements, name, value)`**: Register a trait method
--   **`fast_vget(obj, name)`**: Look up method/property via vtables
+- **`fast_vset(type, name, value)`**: Register a method/property for a specific type
+- **`fast_vset_trait(trait_name, requirements, name, value)`**: Register a trait method
+- **`fast_vget(obj, name)`**: Look up method/property via vtables
 
 When you call `obj.method()`, the transpiled code uses `vget(obj, "method")` which:
 
@@ -1092,8 +1093,8 @@ config.?debug_mode ?? False  # Get debug_mode if it exists, otherwise False
 
 **Important distinction** - `.?` and `?.` check different things:
 
--   `obj.?attr` (MaybeAttribute) - Checks if `attr` exists on `obj`. Returns None if the attribute doesn't exist (no AttributeError), otherwise returns the attribute value. The object `obj` itself must not be None.
--   `obj?.attr` (Safe Navigation) - Checks if `obj` is None/Err first. If `obj` is None/Err, returns None. Otherwise, accesses `attr` normally (which must exist or will raise AttributeError).
+- `obj.?attr` (MaybeAttribute) - Checks if `attr` exists on `obj`. Returns None if the attribute doesn't exist (no AttributeError), otherwise returns the attribute value. The object `obj` itself must not be None.
+- `obj?.attr` (Safe Navigation) - Checks if `obj` is None/Err first. If `obj` is None/Err, returns None. Otherwise, accesses `attr` normally (which must exist or will raise AttributeError).
 
 ### Raw Attribute Access
 
@@ -1127,14 +1128,14 @@ The parser processes operators in this precedence order:
 
 **Special operators** (above binary precedence, processed in order):
 
--   `matches` / `not matches` - Pattern matching test
--   `memo` - Memoization
--   `with` - Context manager
--   `if ... then ... else` - Conditional expression
--   `match:` - Pattern matching
--   `try: ... except: ... finally:` - Exception handling
--   `await` / `yield` - Control flow
--   `check` - Error wrapping
+- `matches` / `not matches` - Pattern matching test
+- `memo` - Memoization
+- `with` - Context manager
+- `if ... then ... else` - Conditional expression
+- `match:` - Pattern matching
+- `try: ... except: ... finally:` - Exception handling
+- `await` / `yield` - Control flow
+- `check` - Error wrapping
 
 ### Postfix Operators (highest precedence within expressions)
 
