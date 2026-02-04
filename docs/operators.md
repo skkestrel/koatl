@@ -160,7 +160,7 @@ for i in ..10:
 
 ## Primitive operators
 
-Use `<>` (or `!=`) instead of Python's `!=`, and `===` and `<=>` (or `!==`) instead of `is` and `is not`.
+Use `===` or `!==` instead of `is` and `is not`.
 
 ## Decorators
 

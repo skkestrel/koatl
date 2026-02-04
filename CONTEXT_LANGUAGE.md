@@ -509,7 +509,7 @@ else:
 # Can be chained
 z = if a:
     1
-else if b:
+elif b:
     2
 else:
     3
@@ -652,6 +652,47 @@ print(a)            # Prints: 1
 ```
 
 Unlike Python, `nonlocal` is never needed—Koatl's scoping rules prevent binding conflicts.
+
+### **Special Identifiers for Introspection**
+
+Koatl provides special identifiers for runtime introspection:
+
+#### **`__locals__`**
+
+Returns a dictionary mapping Koatl variable names to their Python runtime values in the current scope:
+
+```koatl
+test_locals = (arg1, arg2) =>
+    let local = 100
+    __locals__
+    # Returns: {local: 100, arg1: <value>, arg2: <value>}
+```
+
+This is useful for debugging, metaprogramming, or passing local context to dynamic code.
+
+#### **`__captures__`**
+
+Returns a dictionary of variables captured from outer scopes (excluding globals):
+
+```koatl
+outer = () =>
+    let x = 1
+    let y = 2
+    inner = () =>
+        let z = 3
+        __captures__  # Returns: {x: 1, y: 2} (not z or globals)
+    inner()
+```
+
+**Key behaviors**:
+- Only available inside functions (error if used at module level)
+- Includes variables from parent function scopes
+- Excludes global scope variables
+- Excludes variables from the current function scope (use `__locals__` for those)
+- Uses `globals() | locals()` to access captured values at runtime
+- Handles shadowing correctly (inner scope variables override outer ones)
+
+Both `__locals__` and `__captures__` translate Koatl names (like `x`) to their mangled Python equivalents (like `let_x_1`), making them safe for use with Python's runtime introspection.
 
 ### **Block Comments**
 
