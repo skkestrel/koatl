@@ -62,10 +62,12 @@ struct TlCtx<'src, 'ast> {
     functions: &'ast HashMap<RefHash, FnInfo>,
     patterns: &'ast HashMap<RefHash, PatternInfo>,
     resolutions: &'ast HashMap<RefHash, DeclarationKey>,
-    scope_refs: &'ast HashMap<RefHash, ScopeKey>,
+    locals_scope_refs: &'ast HashMap<RefHash, ScopeKey>,
     memo_fninfo: &'ast HashMap<RefHash, FnInfo>,
     mapped_fninfo: &'ast HashMap<RefHash, FnInfo>,
     coal_fninfo: &'ast HashMap<RefHash, FnInfo>,
+
+    function_stack: Vec<&'ast FnInfo>,
 
     scopes: &'ast SlotMap<ScopeKey, Scope>,
     declarations: &'ast SlotMap<DeclarationKey, Declaration<'src>>,
@@ -94,10 +96,12 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
             functions: &resolve_state.functions,
             patterns: &resolve_state.patterns,
             resolutions: &resolve_state.resolutions,
-            scope_refs: &resolve_state.scope_refs,
+            locals_scope_refs: &resolve_state.locals_scope_refs,
             memo_fninfo: &resolve_state.memo_fninfo,
             mapped_fninfo: &resolve_state.mapped_fninfo,
             coal_fninfo: &resolve_state.coal_fninfo,
+
+            function_stack: Vec::new(),
 
             scopes: &resolve_state.scopes,
             declarations: &resolve_state.declarations,
@@ -177,40 +181,74 @@ impl<'src, 'ast> TlCtx<'src, 'ast> {
         &mut self,
         expr: &SExpr<'src>,
         span: &Span,
+        capture_mode: bool,
     ) -> TlResult<SPyExprWithPre<'src>> {
         let a = PyAstBuilder::new(*span);
 
-        // Find the current scope by looking up this identifier in scope_refs
-        let scope_key = self
-            .scope_refs
-            .get(&expr.into())
-            .ok_or_else(|| simple_err("Internal: Unresolved __locals__ identifier", expr.span))?;
-
-        let scope = &self.scopes[*scope_key];
-
         // Build a mapping dict from koatl names to Python mangled names
+        // Use a HashMap to track by name, keeping only the last (innermost) one for shadowing
+        let mut mapping_map: HashMap<String, String> = HashMap::new();
+
+        if capture_mode {
+            let fn_info = self.function_stack.last().ok_or_else(|| {
+                simple_err(
+                    "__captures__ may only be used inside function context",
+                    *span,
+                )
+            })?;
+
+            for capture_decl_key in fn_info.captures.iter() {
+                let local_decl = &self.declarations[*capture_decl_key];
+                let koatl_name = local_decl.name.escape();
+                let py_name = self.decl_py_ident(*capture_decl_key)?;
+                // Always insert/overwrite (keeping the innermost one)
+                mapping_map.insert(koatl_name.to_string(), py_name.to_string());
+            }
+        } else {
+            // Find the current scope by looking up this identifier in locals_scope_refs
+            let scope_key = self.locals_scope_refs.get(&expr.into()).ok_or_else(|| {
+                simple_err("Internal: Unresolved __locals__ identifier", expr.span)
+            })?;
+            let scope = &self.scopes[*scope_key];
+
+            // Include only current scope locals
+            for local_decl_key in &scope.locals {
+                let local_decl = &self.declarations[*local_decl_key];
+                let koatl_name = local_decl.name.escape();
+                let py_name = self.decl_py_ident(*local_decl_key)?;
+
+                // Include all locals, even if not mangled (function args, etc.)
+                // The mapping is needed to translate from Koatl names to Python names
+                // Always insert/overwrite to handle shadowing (keep last one)
+                mapping_map.insert(koatl_name.to_string(), py_name.to_string());
+            }
+        }
+
+        // Convert the HashMap to dict items
         let mut mapping_items = Vec::new();
-
-        for local_decl_key in &scope.locals {
-            let local_decl = &self.declarations[*local_decl_key];
-            let koatl_name = local_decl.name.escape();
-            let py_name = self.decl_py_ident(*local_decl_key)?;
-
-            // Include all locals, even if not mangled (function args, etc.)
-            // The mapping is needed to translate from Koatl names to Python names
-            mapping_items.push(a.dict_item(a.str(koatl_name.clone()), a.str(py_name)));
+        for (koatl_name, py_name) in mapping_map {
+            mapping_items.push(a.dict_item(a.str(koatl_name), a.str(py_name)));
         }
 
         // Create the dict literal for the mapping
         let mapping_dict = a.dict(mapping_items);
 
-        // Get Python's locals()
-        let py_locals_call = a.call(a.py_builtin("locals"), vec![]);
+        // For captures mode, use globals() | locals() to get all available variables
+        // For locals mode, just use locals()
+        let py_scope_dict = if capture_mode {
+            // globals() | locals()
+            let py_globals_call = a.call(a.py_builtin("globals"), vec![]);
+            let py_locals_call = a.call(a.py_builtin("locals"), vec![]);
+            a.binary(PyBinaryOp::BitOr, py_globals_call, py_locals_call)
+        } else {
+            // locals()
+            a.call(a.py_builtin("locals"), vec![])
+        };
 
-        // Call __tl__.redirect_locals(mapping_dict, locals())
+        // Call __tl__.redirect_locals(mapping_dict, scope_dict)
         let redirect_call = a.call(
             a.tl_builtin("redirect_locals"),
-            vec![a.call_arg(mapping_dict), a.call_arg(py_locals_call)],
+            vec![a.call_arg(mapping_dict), a.call_arg(py_scope_dict)],
         );
 
         Ok(SPyExprWithPre {
@@ -1248,7 +1286,11 @@ fn prepare_py_fn<'src, 'ast>(
             pre.extend(arg_pre);
             py_body_pre.extend(post);
 
+            ctx.function_stack.push(fn_info);
+
             let body = body.transform(ctx)?;
+
+            ctx.function_stack.pop();
 
             if fn_info.is_async {
                 async_ = true;
@@ -2087,7 +2129,10 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 // Check for special __locals__ identifier
                 if ident.value.0.as_ref() == "__locals__" {
                     // Build the mapping dictionary for the current scope
-                    pre.bind(ctx.build_locals_mapping(self, &span)?)
+                    pre.bind(ctx.build_locals_mapping(self, &span, false)?)
+                } else if ident.value.0.as_ref() == "__captures__" {
+                    // Build the mapping dictionary for captured variables
+                    pre.bind(ctx.build_locals_mapping(self, &span, true)?)
                 } else {
                     let ident = ctx.py_ident(self);
                     a.ident(ident?, access_ctx)

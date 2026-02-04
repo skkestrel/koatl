@@ -38,7 +38,7 @@ pub struct ResolveState<'src> {
     pub export_stars: Vec<SIdent<'src>>,
 
     pub resolutions: HashMap<RefHash, DeclarationKey>,
-    pub scope_refs: HashMap<RefHash, ScopeKey>,
+    pub locals_scope_refs: HashMap<RefHash, ScopeKey>,
     pub patterns: HashMap<RefHash, PatternInfo>,
 
     // TODO: these should all be collapsed into the same thing...
@@ -63,7 +63,7 @@ pub struct ResolveState<'src> {
     errors: TlErrs,
 
     placeholder_stack: Vec<PlaceholderGuard>,
-    fn_stack: Vec<FnInfo>,
+    phantom_fn_stack: Vec<FnInfo>,
     scope_stack: Vec<ScopeKey>,
 }
 
@@ -100,7 +100,7 @@ impl<'src> ResolveState<'src> {
             source,
 
             resolutions: HashMap::new(),
-            scope_refs: HashMap::new(),
+            locals_scope_refs: HashMap::new(),
             functions: HashMap::new(),
             patterns: HashMap::new(),
             memo_fninfo: HashMap::new(),
@@ -116,7 +116,7 @@ impl<'src> ResolveState<'src> {
             errors: TlErrs::new(),
 
             placeholder_stack: Vec::new(),
-            fn_stack: Vec::new(),
+            phantom_fn_stack: Vec::new(),
             scope_stack: Vec::new(),
         }
     }
@@ -139,14 +139,14 @@ impl<'src> ResolveState<'src> {
                 return Ok(found.decl);
             }
 
-            let Some(fn_ctx) = self.fn_stack.last_mut() else {
+            let Some(fn_ctx) = self.phantom_fn_stack.last_mut() else {
                 // This should never happen since if not fn_local, there must be at least one function context
                 return Err(simple_err("Internal error: no function context", ident.span).into());
             };
 
             fn_ctx.captures.insert(found.decl.clone().into());
 
-            for fn_ctx in self.fn_stack.iter_mut().rev().skip(1) {
+            for fn_ctx in self.phantom_fn_stack.iter_mut().rev().skip(1) {
                 if fn_ctx.decls.contains(&found.decl) {
                     break;
                 }
@@ -162,7 +162,7 @@ impl<'src> ResolveState<'src> {
         if lhs {
             if scope.is_class || scope.is_global {
                 let decl = self.declarations.insert_declaration(
-                    &mut self.fn_stack,
+                    &mut self.phantom_fn_stack,
                     ident.clone(),
                     scope_key,
                     DeclType::Let,
@@ -176,7 +176,7 @@ impl<'src> ResolveState<'src> {
 
         if !lhs {
             let decl = self.declarations.insert_declaration(
-                &mut self.fn_stack,
+                &mut self.phantom_fn_stack,
                 ident.clone(),
                 self.root_scope,
                 DeclType::Let,
@@ -229,7 +229,7 @@ impl<'src> ResolveState<'src> {
         let temp_scope_key = self.scopes.insert(dummy_scope);
 
         let ph_decl = self.declarations.insert_declaration(
-            &mut self.fn_stack,
+            &mut self.phantom_fn_stack,
             Ident("x".into()).spanned(span),
             temp_scope_key,
             DeclType::Let,
@@ -244,11 +244,11 @@ impl<'src> ResolveState<'src> {
         self.placeholder_stack
             .push(PlaceholderGuard::new(ph_decl, span));
 
-        self.fn_stack.push(FnInfo::new());
+        self.phantom_fn_stack.push(FnInfo::new());
 
         let result = f(self);
 
-        let mut ph_fn_ctx = self.fn_stack.pop().unwrap();
+        let mut ph_fn_ctx = self.phantom_fn_stack.pop().unwrap();
         let placeholder_ctx = self.placeholder_stack.pop().unwrap();
 
         if placeholder_ctx.activated {
@@ -294,7 +294,7 @@ impl<'src> ResolveState<'src> {
                 self.set_generator(span);
             }
 
-            if let Some(cur_fn_ctx) = self.fn_stack.last_mut() {
+            if let Some(cur_fn_ctx) = self.phantom_fn_stack.last_mut() {
                 cur_fn_ctx.captures.extend(ph_fn_ctx.captures);
             }
 
@@ -354,9 +354,12 @@ impl<'src> ResolveState<'src> {
 
         let key = *self.scope_stack.last().unwrap();
 
-        let decl =
-            self.declarations
-                .insert_declaration(&mut self.fn_stack, name.clone(), key, modifier);
+        let decl = self.declarations.insert_declaration(
+            &mut self.phantom_fn_stack,
+            name.clone(),
+            key,
+            modifier,
+        );
 
         if lifted {
             self.scopes[key].lifted_decls.push(decl.clone());
@@ -368,7 +371,7 @@ impl<'src> ResolveState<'src> {
     }
 
     fn set_async(&mut self, span: Span) -> () {
-        if let Some(fn_ctx) = self.fn_stack.last_mut() {
+        if let Some(fn_ctx) = self.phantom_fn_stack.last_mut() {
             fn_ctx.is_async = true;
         } else if !self.allow_top_level_await {
             self.errors.extend(simple_err(
@@ -379,7 +382,7 @@ impl<'src> ResolveState<'src> {
     }
 
     fn set_do(&mut self, span: Span) -> () {
-        if let Some(fn_ctx) = self.fn_stack.last_mut() {
+        if let Some(fn_ctx) = self.phantom_fn_stack.last_mut() {
             fn_ctx.is_do = true;
         } else {
             self.errors.extend(simple_err(
@@ -390,7 +393,7 @@ impl<'src> ResolveState<'src> {
     }
 
     fn set_generator(&mut self, span: Span) -> () {
-        if let Some(fn_ctx) = self.fn_stack.last_mut() {
+        if let Some(fn_ctx) = self.phantom_fn_stack.last_mut() {
             fn_ctx.is_generator = true;
         } else {
             self.errors.extend(simple_err(
@@ -652,7 +655,7 @@ fn error_ident_and_decl<'src>(
     let expr = Expr::Ident(ident.clone()).spanned(span).indirect();
 
     let decl = state.declarations.insert_declaration(
-        &mut state.fn_stack,
+        &mut state.phantom_fn_stack,
         ident.clone(),
         state.err_scope,
         DeclType::Let,
@@ -903,7 +906,7 @@ fn pattern_scoped<'src>(
         .iter()
         .map(|x| {
             state.declarations.insert_declaration(
-                &mut state.fn_stack,
+                &mut state.phantom_fn_stack,
                 x.clone().spanned(pattern.span),
                 scope_key,
                 DeclType::Let,
@@ -930,11 +933,11 @@ where
 {
     let fn_ctx = FnInfo::new();
 
-    state.fn_stack.push(fn_ctx);
+    state.phantom_fn_stack.push(fn_ctx);
 
     let ret = f(state);
 
-    let fn_ctx = state.fn_stack.pop().unwrap();
+    let fn_ctx = state.phantom_fn_stack.pop().unwrap();
 
     if fn_ctx.is_async {
         state.set_async(span);
@@ -996,7 +999,13 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     let expr = Expr::Ident(ident).spanned(span).indirect();
                     // Store the current scope for __locals__
                     let current_scope = *state.scope_stack.last().unwrap();
-                    state.scope_refs.insert(expr.as_ref().into(), current_scope);
+                    state
+                        .locals_scope_refs
+                        .insert(expr.as_ref().into(), current_scope);
+                    return expr;
+                } else if ident.value.0.as_ref() == "__captures__" {
+                    let expr = Expr::Ident(ident).spanned(span).indirect();
+
                     return expr;
                 }
 
@@ -1251,7 +1260,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                                 let cap = capture.spanned(pattern.span);
 
                                 let decl = state.declarations.insert_declaration(
-                                    &mut state.fn_stack,
+                                    &mut state.phantom_fn_stack,
                                     cap,
                                     scope,
                                     DeclType::Let,
@@ -1275,7 +1284,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                         }
                         ArgDefItem::ArgSpread(arg) => {
                             let decl = state.declarations.insert_declaration(
-                                &mut state.fn_stack,
+                                &mut state.phantom_fn_stack,
                                 arg.clone(),
                                 scope,
                                 DeclType::Let,
@@ -1287,7 +1296,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                         }
                         ArgDefItem::KwargSpread(arg) => {
                             let decl = state.declarations.insert_declaration(
-                                &mut state.fn_stack,
+                                &mut state.phantom_fn_stack,
                                 arg.clone(),
                                 scope,
                                 DeclType::Let,
@@ -1323,7 +1332,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 state.scopes[scope].locals.extend(decls);
 
-                state.fn_stack.push(fn_info);
+                state.phantom_fn_stack.push(fn_info);
 
                 let n_scopes = state.scope_stack.len();
 
@@ -1375,7 +1384,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     }
                 }
 
-                let fn_ctx = state.fn_stack.pop().unwrap();
+                let fn_ctx = state.phantom_fn_stack.pop().unwrap();
                 let expr = Expr::Fn(items, body).spanned(span).indirect();
 
                 state.functions.insert(expr.as_ref().into(), fn_ctx);
@@ -1713,7 +1722,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                             let scope = &mut state.scopes[scope_key];
 
                             let decl = state.declarations.insert_declaration(
-                                &mut state.fn_stack,
+                                &mut state.phantom_fn_stack,
                                 alias.clone().unwrap_or(ident.clone()),
                                 scope_key,
                                 if reexport {
@@ -1744,7 +1753,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                             }
 
                             let decl = state.declarations.insert_declaration(
-                                &mut state.fn_stack,
+                                &mut state.phantom_fn_stack,
                                 alias.clone().unwrap_or(trunk_accum.last().unwrap().clone()),
                                 scope_key,
                                 if reexport {
@@ -1805,7 +1814,7 @@ pub fn resolve_names<'src>(
         })
         .value;
 
-    if !state.fn_stack.is_empty() {
+    if !state.phantom_fn_stack.is_empty() {
         panic!("Function context stack is not empty after resolving names");
     }
 
