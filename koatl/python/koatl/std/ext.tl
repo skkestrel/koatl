@@ -2,12 +2,18 @@ import koatl._rs.(fast_vset, fast_vset_trait)
 
 ext_prop = (type, name) => value =>
     value::_property = True
-    fast_vset(type, name, value)
+    if hasattr(type, "_trait_reqs"):
+        fast_vset_trait(type::__name__, type::_trait_reqs, name, value)
+    else:
+        fast_vset(type, name, value)
     value
 
 
 ext_method = (type, name) => value =>
-    fast_vset(type, name, value)
+    if hasattr(type, "_trait_reqs"):
+        fast_vset_trait(type::__name__, type::_trait_reqs, name, value)
+    else:
+        fast_vset(type, name, value)
     value
 
 

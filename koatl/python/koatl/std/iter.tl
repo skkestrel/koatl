@@ -8,6 +8,10 @@ import .control.(Traversable, Ok, Err, Memo, Async, AsyncMemo, Result)
 export Iterable = class(Traversable, Trait):
     iter = Trait.abstract! self => None
 
+    debug_iter = (self, **kwargs) =>
+        import .debug_iter.(DebugIterator)
+        DebugIterator(self.iter, **kwargs)
+
     skip = (self, n) =>
         let it = self.iter
         for _ in ..n:
@@ -94,8 +98,6 @@ export Iterable = class(Traversable, Trait):
 
     sorted = (self, key=None, reverse=False) =>
         sorted(self.iter, key=key, reverse=reverse)
-
-    copy = self => itertools.tee(self.iter)
 
     tally = (self, f=None) =>
         let acc = 0
