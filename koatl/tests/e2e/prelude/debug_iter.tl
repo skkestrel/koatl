@@ -272,7 +272,7 @@ assert_eq(caught, True)
 # The error wraps the original exception and includes the grid
 assert_eq(caught_err.cause matches ZeroDivisionError(), True)
 assert_eq("ZeroDivisionError" in str(caught_err), True)
-assert_eq(caught_err.grid matches str(), True)
+assert_eq(isinstance(caught_err.iterator, DebugIterator), True)
 
 # =============================================================================
 # debug_iter from iterable trait

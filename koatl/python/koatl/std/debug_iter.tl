@@ -28,8 +28,8 @@ _ERROR = "error"
 
 _Cell = class:
     __init__ = (self, kind, text="") =>
-        self::kind = kind
-        self::text = text
+        self.kind = kind
+        self.text = text
 
     is_protected = property! self =>
         """Cells that should not be overwritten by skip/repeat logic."""
@@ -84,14 +84,14 @@ _DebugGrid = class:
     """
 
     __init__ = (self, history, stages, tap_stages, flat_map_stages, consumed_count, history_limit, max_width=20) =>
-        self::_history = history
-        self::_stages = stages
-        self::_n = len(stages)
-        self::_tap_stages = tap_stages
-        self::_flat_map_stages = flat_map_stages
-        self::_consumed_count = consumed_count
-        self::_history_limit = history_limit
-        self::_max_width = max_width
+        self._history = history
+        self._stages = stages
+        self._n = len(stages)
+        self._tap_stages = tap_stages
+        self._flat_map_stages = flat_map_stages
+        self._consumed_count = consumed_count
+        self._history_limit = history_limit
+        self._max_width = max_width
 
     # --- Phase 1: build rows of _Cell objects from lineage data ---
 
@@ -326,10 +326,10 @@ _DebugGrid = class:
 # is an int position in DebugIterator._stages, or None for unknown provenance.
 export DebugIteratorValue = class:
     __init__ = (self, value=None, lineage=None, is_skipped=False, index_path=None) =>
-        self::value = value
-        self::lineage = lineage ?? []
-        self::is_skipped = is_skipped
-        self::index_path = index_path
+        self.value = value
+        self.lineage = lineage ?? []
+        self.is_skipped = is_skipped
+        self.index_path = index_path
 
     with_value = (self, new_value) =>
         DebugIteratorValue(new_value, self.lineage, self.is_skipped, self.index_path)
@@ -353,6 +353,38 @@ export DebugIterator = class:
     """
     Lazily wraps an iterator pipeline, tracking the lineage of each value
     through transformation stages. Renders an ASCII grid for introspection.
+
+    How it works:
+        Each value flowing through the pipeline is wrapped in a
+        DebugIteratorValue that carries a lineage — a list of
+        (value, stage_index) pairs recording the value at each stage.
+
+        Transform methods (.map, .filter, etc.) don't consume values
+        eagerly. They create a new DebugIterator whose _source is a
+        generator pulling from the parent's _source, transforming each
+        DebugIteratorValue and appending a lineage step. This means
+        the pipeline is a chain of nested generators.
+
+        Only the outermost iterator's __next__ is called (by the
+        consumer, e.g. list(di)). Each call pulls one value through
+        the entire generator chain, then records the resulting
+        DebugIteratorValue into _history and increments
+        _consumed_count. Skipped values (filtered out, errors in
+        checked mode, etc.) are recorded in history but not returned
+        to the consumer — __next__ loops until it finds a non-skipped
+        value.
+
+        _history is a bounded list (controlled by the history
+        parameter). When history=N, only the last N entries are kept;
+        older entries are evicted. When history=None, all entries are
+        kept. The grid is rendered from whatever is in _history at the
+        time of display.
+
+        All internal state (_stages, _checked, _history_limit,
+        _tap_stages, _flat_map_stages, _error_cell) is shared across
+        the entire chain via _wrap_transform, so the outermost
+        iterator has access to the full stage list and can render the
+        complete grid.
 
     Constructor parameters:
         source      The iterable to wrap.
@@ -388,27 +420,25 @@ export DebugIterator = class:
                          state (checked, history, tap/flat_map sets, error_cell).
         _each            Shared helper for transforms that process each value
                          independently (map, filter, enumerate, unique, tap).
-        _counted_limit   Shared helper for take/skip (count-based limiting).
-        _predicate_limit Shared helper for take_while/skip_while.
     """
 
     __init__ = (self, source, stages=None, checked=False, history=5, _raw=False, _tap_stages=None, _error_cell=None, _flat_map_stages=None) =>
         if _raw:
-            self::_source = source
-            self::_stages = stages ?? []
+            self._source = source
+            self._stages = stages ?? []
         else:
             let wrap_source = () =>
                 for value in source:
                     yield DebugIteratorValue(value, [(value, 0)])
-            self::_source = wrap_source()
-            self::_stages = ["source"]
-        self::_checked = checked
-        self::_history_limit = history
-        self::_history = []
-        self::_consumed_count = 0
-        self::_tap_stages = _tap_stages ?? set()
-        self::_error_cell = _error_cell ?? [None]
-        self::_flat_map_stages = _flat_map_stages ?? set()
+            self._source = wrap_source()
+            self._stages = ["source"]
+        self._checked = checked
+        self._history_limit = history
+        self._history = []
+        self._consumed_count = 0
+        self._tap_stages = _tap_stages ?? set()
+        self._error_cell = _error_cell ?? [None]
+        self._flat_map_stages = _flat_map_stages ?? set()
 
     # --- Iteration protocol ---
 
@@ -437,7 +467,7 @@ export DebugIterator = class:
             raise e
 
     _record = (self, dbv) =>
-        self::_consumed_count = self._consumed_count + 1
+        self._consumed_count = self._consumed_count + 1
         if self._history_limit === None:
             self._history.append(dbv)
         else:
@@ -486,58 +516,7 @@ export DebugIterator = class:
                     yield out
         self._wrap_transform(gen(), name, is_tap)
 
-    _counted_limit = (self, name, n, pass_first) =>
-        """Limit by count. pass_first=True → take(n), pass_first=False → skip(n)."""
-        let si = len(self._stages)
-        let gen = () =>
-            let count = 0
-            for dbv in self._source:
-                if dbv.is_skipped:
-                    yield dbv
-                    continue
-                let should_pass = pass_first then (count < n) else (count >= n)
-                if should_pass:
-                    yield dbv.add_lineage_step(dbv.value, si)
-                else:
-                    yield dbv.add_lineage_step(dbv.value, si).skip()
-                    if pass_first:
-                        return None
-                count = count + 1
-        self._wrap_transform(gen(), name)
 
-    _predicate_limit = (self, name, f, pass_while) =>
-        """Limit by predicate. pass_while=True → take_while(f), pass_while=False → skip_while(f)."""
-        let si = len(self._stages)
-        let gen = () =>
-            let active = True
-            for dbv in self._source:
-                if dbv.is_skipped:
-                    yield dbv
-                    continue
-                if not active:
-                    if pass_while:
-                        yield dbv.add_lineage_step(dbv.value, si).skip()
-                    else:
-                        yield dbv.add_lineage_step(dbv.value, si)
-                    continue
-                let result = self._apply_fn(f, dbv.value, name, dbv, si)
-                if result matches Ok(passed):
-                    if passed:
-                        if pass_while:
-                            yield dbv.add_lineage_step(dbv.value, si)
-                        else:
-                            yield dbv.add_lineage_step(dbv.value, si).skip()
-                    else:
-                        active = False
-                        if pass_while:
-                            yield dbv.add_lineage_step(dbv.value, si).skip()
-                        else:
-                            yield dbv.add_lineage_step(dbv.value, si)
-                else:
-                    active = False
-                    let err = result.value
-                    yield dbv.add_lineage_step(Err(err), si).skip()
-        self._wrap_transform(gen(), name)
 
     # --- Transformation methods ---
 
@@ -617,10 +596,82 @@ export DebugIterator = class:
                 parent_idx = parent_idx + 1
         self._wrap_transform(gen(), "flat_map", is_flat_map=True)
 
-    take = (self, n) => self._counted_limit("take", n, True)
-    take_while = (self, f) => self._predicate_limit("take_while", f, True)
-    skip = (self, n) => self._counted_limit("skip", n, False)
-    skip_while = (self, f) => self._predicate_limit("skip_while", f, False)
+    take = (self, n) =>
+        let si = len(self._stages)
+        let gen = () =>
+            let count = 0
+            for dbv in self._source:
+                if dbv.is_skipped:
+                    yield dbv
+                    continue
+                if count < n:
+                    yield dbv.add_lineage_step(dbv.value, si)
+                else:
+                    yield dbv.add_lineage_step(dbv.value, si).skip()
+                    return None
+                count = count + 1
+        self._wrap_transform(gen(), "take")
+
+    skip = (self, n) =>
+        let si = len(self._stages)
+        let gen = () =>
+            let count = 0
+            for dbv in self._source:
+                if dbv.is_skipped:
+                    yield dbv
+                    continue
+                if count >= n:
+                    yield dbv.add_lineage_step(dbv.value, si)
+                else:
+                    yield dbv.add_lineage_step(dbv.value, si).skip()
+                count = count + 1
+        self._wrap_transform(gen(), "skip")
+
+    take_while = (self, f) =>
+        let si = len(self._stages)
+        let gen = () =>
+            let done = False
+            for dbv in self._source:
+                if dbv.is_skipped:
+                    yield dbv
+                    continue
+                if done:
+                    yield dbv.add_lineage_step(dbv.value, si).skip()
+                    continue
+                let result = self._apply_fn(f, dbv.value, "take_while", dbv, si)
+                if result matches Ok(passed):
+                    if passed:
+                        yield dbv.add_lineage_step(dbv.value, si)
+                    else:
+                        done = True
+                        yield dbv.add_lineage_step(dbv.value, si).skip()
+                else:
+                    done = True
+                    yield dbv.add_lineage_step(Err(result.value), si).skip()
+        self._wrap_transform(gen(), "take_while")
+
+    skip_while = (self, f) =>
+        let si = len(self._stages)
+        let gen = () =>
+            let skipping = True
+            for dbv in self._source:
+                if dbv.is_skipped:
+                    yield dbv
+                    continue
+                if not skipping:
+                    yield dbv.add_lineage_step(dbv.value, si)
+                    continue
+                let result = self._apply_fn(f, dbv.value, "skip_while", dbv, si)
+                if result matches Ok(passed):
+                    if passed:
+                        yield dbv.add_lineage_step(dbv.value, si).skip()
+                    else:
+                        skipping = False
+                        yield dbv.add_lineage_step(dbv.value, si)
+                else:
+                    skipping = False
+                    yield dbv.add_lineage_step(Err(result.value), si).skip()
+        self._wrap_transform(gen(), "skip_while")
 
     chain = (self, *others) =>
         let stage_idx = len(self._stages)
