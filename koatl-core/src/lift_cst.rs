@@ -559,6 +559,18 @@ impl<'src, 'tok> Lift<ast::MatchCase<ast::STree<'src>>> for cst::MatchCase<cst::
     }
 }
 
+impl<'src, 'tok> Lift<ast::DelegateArgItem<'src, ast::STree<'src>>>
+    for cst::DelegateArgItem<cst::STree<'src, 'tok>>
+{
+    fn lift(&self) -> ast::DelegateArgItem<'src, ast::STree<'src>> {
+        ast::DelegateArgItem {
+            name: self.name.lift_as_ident(),
+            alias: self.alias.as_ref().map(|(_, alias)| alias.lift_as_ident()),
+            default: self.default.as_ref().map(|(_, expr)| expr.lift()),
+        }
+    }
+}
+
 impl<'src, 'tok> Lift<ast::ArgDefItem<'src, ast::STree<'src>>>
     for cst::ArgDefItem<cst::STree<'src, 'tok>>
 {
@@ -580,6 +592,16 @@ impl<'src, 'tok> Lift<ast::ArgDefItem<'src, ast::STree<'src>>>
             cst::ArgDefItem::KwOnlyMarker { star } => {
                 ast::ArgDefItem::KwOnlyMarker(().spanned(star.span))
             }
+            cst::ArgDefItem::Delegate {
+                target,
+                items,
+                kwarg_spread,
+                ..
+            } => ast::ArgDefItem::Delegate {
+                target: target.lift(),
+                items: items.lift(),
+                kwarg_spread: kwarg_spread.as_ref().map(|(_, name)| name.lift_as_ident()),
+            },
         }
     }
 }

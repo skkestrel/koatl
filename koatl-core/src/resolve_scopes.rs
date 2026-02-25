@@ -1308,6 +1308,55 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                         }
                         ArgDefItem::PosOnlyMarker(spanned) => ArgDefItem::PosOnlyMarker(spanned),
                         ArgDefItem::KwOnlyMarker(spanned) => ArgDefItem::KwOnlyMarker(spanned),
+                        ArgDefItem::Delegate {
+                            target,
+                            items,
+                            kwarg_spread,
+                        } => {
+                            let target = target.traverse(state);
+                            // Delegate items introduce new argument names
+                            let new_items = items
+                                .into_iter()
+                                .map(|item| {
+                                    // The local name is alias if present, otherwise name
+                                    let local_name = item.alias.as_ref().unwrap_or(&item.name);
+                                    let decl = state.declarations.insert_declaration(
+                                        &mut state.phantom_fn_stack,
+                                        local_name.clone(),
+                                        scope,
+                                        DeclType::Let,
+                                    );
+                                    state.declarations[decl].is_fn_arg = true;
+                                    decls.push(decl);
+
+                                    let default = item.default.map(|d| d.traverse(state));
+                                    DelegateArgItem {
+                                        name: item.name,
+                                        alias: item.alias,
+                                        default,
+                                    }
+                                })
+                                .collect();
+
+                            // Handle kwarg_spread
+                            let kwarg_spread = kwarg_spread.map(|name| {
+                                let decl = state.declarations.insert_declaration(
+                                    &mut state.phantom_fn_stack,
+                                    name.clone(),
+                                    scope,
+                                    DeclType::Let,
+                                );
+                                state.declarations[decl].is_fn_arg = true;
+                                decls.push(decl);
+                                name
+                            });
+
+                            ArgDefItem::Delegate {
+                                target,
+                                items: new_items,
+                                kwarg_spread,
+                            }
+                        }
                     })
                     .collect::<Vec<_>>();
 

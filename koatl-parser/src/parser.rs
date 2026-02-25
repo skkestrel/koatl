@@ -1272,6 +1272,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     fn postfix_expr(
         &mut self,
         atom: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
+        allow_calls: bool,
     ) -> ParseResult<SExpr<'src, 'tok>> {
         let mut expr = self.parse(atom)?;
 
@@ -1325,6 +1326,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             );
 
             let call = |ctx: &mut Self| {
+                if !allow_calls {
+                    return Err(());
+                }
                 let args = ctx.listing("(", ")", Token::Symbol(","), |ctx| ctx.call_item())?;
                 Ok(Postfix::Call { args })
             };
@@ -1362,6 +1366,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     ctx,
                     "attribute",
                     |ctx| {
+                        if !allow_calls {
+                            return Err(());
+                        }
                         let method = ctx.any_ident()?;
                         let args =
                             ctx.listing("(", ")", Token::Symbol(","), |ctx| ctx.call_item())?;
@@ -1724,7 +1731,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         self.set_error(self.cursor, ErrMsg::Expected("expression".into()));
 
         let atom = |ctx: &mut Self| ctx.atom();
-        let postfix = |ctx: &mut Self| ctx.postfix_expr(&atom);
+        let postfix = |ctx: &mut Self| ctx.postfix_expr(&atom, true);
         let unary = |ctx: &mut Self| ctx.unary_expr(&postfix);
         let control = |ctx: &mut Self| {
             ctx.set_error(ctx.cursor, ErrMsg::Expected("expression".into()));
@@ -1987,6 +1994,109 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 first_of!(
                     ctx,
                     "argument definition",
+                    |ctx| {
+                        let delegate_kw = ctx.ident("delegate")?;
+                        let target = ctx.postfix_expr(&Self::atom, false)?.boxed();
+
+                        // Parse items inside delegate(...), which can be:
+                        // - name, name as alias, name=default (DelegateArgItem)
+                        // - **kwargs (kwarg spread)
+                        enum DelegateEntry<'s, 't> {
+                            Arg(DelegateArgItem<STree<'s, 't>>),
+                            KwargSpread(&'t SToken<'s>, &'t SToken<'s>), // stars, name
+                        }
+
+                        impl<'s, 't> std::fmt::Debug for DelegateEntry<'s, 't> {
+                            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                                match self {
+                                    Self::Arg(item) => f.debug_tuple("Arg").field(item).finish(),
+                                    Self::KwargSpread(s, n) => f.debug_tuple("KwargSpread").field(s).field(n).finish(),
+                                }
+                            }
+                        }
+
+                        impl<'s, 't> Clone for DelegateEntry<'s, 't> {
+                            fn clone(&self) -> Self {
+                                match self {
+                                    Self::Arg(item) => Self::Arg(item.clone()),
+                                    Self::KwargSpread(s, n) => Self::KwargSpread(s, n),
+                                }
+                            }
+                        }
+
+                        let entries = ctx.listing("(", ")", Token::Symbol(","), |ctx| {
+                            first_of!(
+                                ctx,
+                                "delegate argument",
+                                |ctx| {
+                                    let stars = ctx.symbol("**")?;
+                                    let name = ctx.any_ident()?;
+                                    Ok(DelegateEntry::KwargSpread(stars, name))
+                                },
+                                |ctx| {
+                                    let name = ctx.any_ident()?;
+                                    let alias = optional!(ctx, |ctx: &mut Self| {
+                                        let as_kw = ctx.keyword("as")?;
+                                        let alias = ctx.any_ident()?;
+                                        Ok((as_kw, alias))
+                                    })?;
+                                    let default = optional!(ctx, |ctx: &mut Self| {
+                                        let eq = ctx.symbol("=")?;
+                                        let expr = ctx.expr()?.boxed();
+                                        Ok((eq, expr))
+                                    })?;
+                                    Ok(DelegateEntry::Arg(DelegateArgItem { name, alias, default }))
+                                }
+                            )
+                        })?;
+
+                        // Separate DelegateArgItems from the kwarg spread
+                        let mut kwarg_spread = None;
+                        let items = match entries {
+                            Listing::Inline { begin, items: raw_items, newline, end } => {
+                                let mut arg_items = Vec::new();
+                                for li in raw_items {
+                                    match li.item {
+                                        DelegateEntry::Arg(item) => {
+                                            if kwarg_spread.is_some() {
+                                                return Err(ctx.set_error(ctx.cursor, ErrMsg::Custom("No arguments are allowed after **kwargs in a delegate".into())));
+                                            }
+                                            arg_items.push(ListingItem { item, separator: li.separator, newline: li.newline });
+                                        }
+                                        DelegateEntry::KwargSpread(stars, name) => {
+                                            if kwarg_spread.is_some() {
+                                                return Err(ctx.set_error(ctx.cursor, ErrMsg::Custom("Only one **kwargs is allowed in a delegate".into())));
+                                            }
+                                            kwarg_spread = Some((stars, name));
+                                        }
+                                    }
+                                }
+                                Listing::Inline { begin, items: arg_items, newline, end }
+                            }
+                            Listing::Block { begin, indent, items: raw_items, dedent, newline, end } => {
+                                let mut arg_items = Vec::new();
+                                for li in raw_items {
+                                    match li.item {
+                                        DelegateEntry::Arg(item) => {
+                                            if kwarg_spread.is_some() {
+                                                return Err(ctx.set_error(ctx.cursor, ErrMsg::Custom("No arguments are allowed after **kwargs in a delegate".into())));
+                                            }
+                                            arg_items.push(ListingItem { item, separator: li.separator, newline: li.newline });
+                                        }
+                                        DelegateEntry::KwargSpread(stars, name) => {
+                                            if kwarg_spread.is_some() {
+                                                return Err(ctx.set_error(ctx.cursor, ErrMsg::Custom("Only one **kwargs is allowed in a delegate".into())));
+                                            }
+                                            kwarg_spread = Some((stars, name));
+                                        }
+                                    }
+                                }
+                                Listing::Block { begin, indent, items: arg_items, dedent, newline, end }
+                            }
+                        };
+
+                        Ok(ArgDefItem::Delegate { delegate_kw, target, items, kwarg_spread })
+                    },
                     |ctx| {
                         let stars = ctx.symbol("**")?;
                         let name = ctx.any_ident()?;

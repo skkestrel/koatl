@@ -3,8 +3,9 @@ import importlib
 import builtins
 from types import SimpleNamespace
 
-from koatl.runtime.record import Record
 from . import meta_finder
+from .record import Record
+from .delegate import delegate_args
 from .vattr import vhas, vget
 
 meta_finder.install_hook()
@@ -51,6 +52,7 @@ __tl__ = SimpleNamespace(
     #
     set_exports=set_exports,
     redirect_locals=redirect_locals,
+    delegate_args=delegate_args,
     builtins=builtins,
     #
     vget=vget,

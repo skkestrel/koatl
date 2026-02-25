@@ -216,6 +216,17 @@ pub enum CallItem<TTree: Tree> {
     },
 }
 
+/// An item inside a `delegate other_fn(...)` argument spec.
+/// Represents `name`, `name as alias`, or `name=default`.
+#[derive(Debug, Clone)]
+pub struct DelegateArgItem<TTree: Tree> {
+    pub name: TTree::Token,
+    /// `as alias` - optional rename
+    pub alias: Option<(TTree::Token, TTree::Token)>, // as_kw, alias
+    /// `=default` - optional default override
+    pub default: Option<(TTree::Token, TTree::Expr)>, // eq, expr
+}
+
 #[derive(Debug, Clone)]
 pub enum ArgDefItem<TTree: Tree> {
     Arg {
@@ -235,6 +246,14 @@ pub enum ArgDefItem<TTree: Tree> {
     },
     KwOnlyMarker {
         star: TTree::Token,
+    },
+    /// `delegate other_fn(arg, other_arg as new_name, **kwargs)`
+    Delegate {
+        delegate_kw: TTree::Token,
+        target: TTree::Expr,
+        items: Listing<DelegateArgItem<TTree>, TTree>,
+        /// Optional `**kwargs` spread inside the delegate
+        kwarg_spread: Option<(TTree::Token, TTree::Token)>, // stars, name
     },
 }
 

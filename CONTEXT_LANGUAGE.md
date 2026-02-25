@@ -35,6 +35,44 @@ let greet = name => "Hello, " + name | print
 (a, /) => ...  # Positional-only arguments
 ```
 
+**Argument Delegation**:
+
+The `delegate` keyword copies argument definitions (names and defaults) from another function's signature. It must appear after `*` or `*args`. The target can be any expression (identifier, dotted path, subscript, etc.):
+
+```koatl
+let target = (*, x=10, y=20) => x + y
+
+# Copy x's name and default from target
+let f = (a, *, delegate target(x)) => (a, x)
+f(1)        # (1, 10)
+f(1, x=5)   # (1, 5)
+
+# Delegate multiple args
+let g = (*, delegate target(x, y)) => (x, y)
+g()          # (10, 20)
+
+# Alias: expose target's arg under a different name
+let h = (*, delegate target(x as local_x)) => local_x
+h(local_x=99)  # 99
+
+# Override defaults
+let j = (*, delegate target(x=42)) => x
+j()          # 42
+
+# **kwargs spread: remaining target args collected into a dict
+let k = (*, delegate target(x, **kw)) => (x, kw)
+k()          # (1, {"y": 20})
+
+# Dotted target (attribute access)
+let ns = {func: (*, x=10, y=20) => x + y}
+let m = (*, delegate ns.func(x, y)) => (x, y)
+
+# Multiple delegates from different targets
+let n = (*, delegate target_a(p, q), delegate target_b(r, s)) => (p, q, r, s)
+```
+
+`delegate` is a contextual keyword — it can still be used as a regular identifier outside of argument lists.
+
 **Pattern Matching in Arguments**:
 
 Parenthesized function arguments support pattern matching (but not guards):

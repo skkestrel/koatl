@@ -935,7 +935,32 @@ impl ToElements for ArgDefItem<STree<'_, '_>> {
             ArgDefItem::KwargSpread { stars, name } => line!(attached_next_token(stars), name),
             ArgDefItem::PosOnlyMarker { slash } => line!(attached_next_token(slash)),
             ArgDefItem::KwOnlyMarker { star } => line!(attached_next_token(star)),
+            ArgDefItem::Delegate {
+                delegate_kw,
+                target,
+                items,
+                kwarg_spread: _,
+            } => {
+                let elems = line!(delegate_kw, (&**target), items);
+                elems
+            }
         }
+    }
+}
+
+impl ToElements for DelegateArgItem<STree<'_, '_>> {
+    fn to_elements(&self) -> Vec<Element> {
+        let mut elems = line!((&self.name));
+        if let Some((as_kw, alias)) = &self.alias {
+            elems.extend(line!(as_kw, alias));
+        }
+        if let Some((eq, default)) = &self.default {
+            elems.extend(line!(
+                special_token_to_elements(eq, TokenContext::DoublyAttached),
+                default
+            ));
+        }
+        elems
     }
 }
 

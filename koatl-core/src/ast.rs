@@ -133,6 +133,17 @@ pub enum CallItem<'a, TTree: Tree> {
     KwargSpread(TTree::Expr),
 }
 
+/// An item inside a `delegate other_fn(...)` argument spec.
+/// Represents `name`, `name as alias`, or `name=default`.
+#[derive(Debug, Clone)]
+pub struct DelegateArgItem<'a, TTree: Tree> {
+    pub name: SIdent<'a>,
+    /// `as alias` - optional rename
+    pub alias: Option<SIdent<'a>>,
+    /// `=default` - optional default override
+    pub default: Option<TTree::Expr>,
+}
+
 #[derive(Debug, Clone)]
 pub enum ArgDefItem<'a, TTree: Tree> {
     Arg(TTree::Pattern, Option<TTree::Expr>),
@@ -140,6 +151,13 @@ pub enum ArgDefItem<'a, TTree: Tree> {
     KwargSpread(SIdent<'a>),
     PosOnlyMarker(Spanned<()>),
     KwOnlyMarker(Spanned<()>),
+    /// `delegate other_fn(arg, other_arg as new_name, **kwargs)`
+    Delegate {
+        target: TTree::Expr,
+        items: Vec<DelegateArgItem<'a, TTree>>,
+        /// Optional `**kwargs` spread inside the delegate
+        kwarg_spread: Option<SIdent<'a>>,
+    },
 }
 
 #[derive(Debug, Clone)]

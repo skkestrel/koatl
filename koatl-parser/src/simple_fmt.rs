@@ -597,6 +597,21 @@ impl<'src, 'tok> SimpleFmt for ArgDefItem<STree<'src, 'tok>> {
             }
             ArgDefItem::PosOnlyMarker { .. } => "/".to_string(),
             ArgDefItem::KwOnlyMarker { .. } => "*".to_string(),
+            ArgDefItem::Delegate { target, items, kwarg_spread, .. } => {
+                let items_str = match items {
+                    Listing::Block { items, .. } | Listing::Inline { items, .. } => {
+                        items.iter().map(|li| {
+                            let item = &li.item;
+                            let base = item.name.simple_fmt();
+                            let alias_str = item.alias.as_ref().map(|(_, a)| format!(" as {}", a.simple_fmt())).unwrap_or_default();
+                            let default_str = item.default.as_ref().map(|(_, e)| format!("={}", e.simple_fmt())).unwrap_or_default();
+                            format!("{}{}{}", base, alias_str, default_str)
+                        }).collect::<Vec<_>>().join(", ")
+                    }
+                };
+                let kwarg_str = kwarg_spread.as_ref().map(|(_, n)| format!(", **{}", n.simple_fmt())).unwrap_or_default();
+                format!("delegate {}({}{})", target.simple_fmt(), items_str, kwarg_str)
+            },
         }
     }
 }

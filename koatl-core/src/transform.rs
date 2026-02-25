@@ -1034,6 +1034,7 @@ struct PyArgListWithPre<'src> {
     pre: PyBlock<'src>,
     post: PyBlock<'src>,
     arglist: PyArgList<'src>,
+    decorators: PyDecorators<'src>,
 }
 
 fn make_arglist<'src, 'ast>(
@@ -1051,6 +1052,16 @@ fn make_arglist<'src, 'ast>(
         let mut after_kwonly_marker = false;
 
         for arg in args.iter() {
+            if seen_kwarg {
+                let span = match arg {
+                    ArgDefItem::Arg(pat, _) => pat.span,
+                    ArgDefItem::ArgSpread(name) | ArgDefItem::KwargSpread(name) => name.span,
+                    ArgDefItem::PosOnlyMarker(s) | ArgDefItem::KwOnlyMarker(s) => s.span,
+                    ArgDefItem::Delegate { target, .. } => target.span,
+                };
+                return Err(simple_err("No arguments are allowed after **kwargs", span));
+            }
+
             match arg {
                 ArgDefItem::Arg(arg_pattern, default) => {
                     if after_kwonly_marker {
@@ -1115,11 +1126,16 @@ fn make_arglist<'src, 'ast>(
                     after_kwonly_marker = true;
                     seen_default = false;
                 }
-                ArgDefItem::KwargSpread(name) => {
-                    if seen_kwarg {
-                        return Err(simple_err("Only one **kwargs is allowed", name.span));
-                    }
+                ArgDefItem::KwargSpread(_) => {
                     seen_kwarg = true;
+                }
+                ArgDefItem::Delegate { target, .. } => {
+                    if !after_kwonly_marker {
+                        return Err(simple_err(
+                            "delegate must appear after * or *args",
+                            target.span,
+                        ));
+                    }
                 }
             }
         }
@@ -1127,6 +1143,7 @@ fn make_arglist<'src, 'ast>(
 
     let mut pre = PyBlock::new();
     let mut post = PyBlock::new();
+    let mut delegate_decorators = PyDecorators::new();
 
     let mut posonlyargs = vec![];
     let mut regular_args = vec![];
@@ -1203,6 +1220,119 @@ fn make_arglist<'src, 'ast>(
 
                 kwarg = Some(kwarg_name);
             }
+            ArgDefItem::Delegate {
+                target,
+                items,
+                kwarg_spread,
+            } => {
+                let a = PyAstBuilder::new(target.span);
+
+                let mut delegate_arg_names: Vec<PyCallItem<'src>> = vec![];
+                let mut delegate_kwarg_name: Option<Cow<'src, str>> = None;
+                let mut delegate_renames: Vec<PyCallItem<'src>> = vec![];
+                let mut delegate_defaults: Vec<PyCallItem<'src>> = vec![];
+
+                for item in items.iter() {
+                    match item {
+                        DelegateArgItem {
+                            name,
+                            alias,
+                            default: item_default,
+                        } => {
+                            let local_name = alias.as_ref().unwrap_or(name);
+                            let decl = info
+                                .arg_names
+                                .iter()
+                                .find(|key| ctx.declarations[**key].name == local_name.value)
+                                .ok_or_else(|| {
+                                    simple_err("Internal: missing arg name", local_name.span)
+                                })?;
+
+                            let py_name = ctx.decl_py_ident(*decl)?;
+                            kwonlyargs.push((py_name.clone(), None));
+                            delegate_arg_names.push(PyCallItem::Arg(a.str(py_name.clone())));
+
+                            // If renamed, record the mapping
+                            if alias.is_some() {
+                                delegate_renames.push(PyCallItem::Kwarg(
+                                    py_name.clone(),
+                                    a.str(name.value.0.clone()),
+                                ));
+                            }
+
+                            // If default overridden, record it
+                            if let Some(default_expr) = item_default {
+                                let default_val = pre.bind(default_expr.transform(ctx)?);
+                                delegate_defaults.push(PyCallItem::Kwarg(py_name, default_val));
+                            }
+                        }
+                    }
+                }
+
+                // Handle **kwargs spread
+                if let Some(kwarg_name_ident) = kwarg_spread {
+                    let decl = info
+                        .arg_names
+                        .iter()
+                        .find(|key| ctx.declarations[**key].name == kwarg_name_ident.value)
+                        .ok_or_else(|| {
+                            simple_err("Internal: missing arg name", kwarg_name_ident.span)
+                        })?;
+
+                    let py_name = ctx.decl_py_ident(*decl)?;
+                    delegate_kwarg_name = Some(py_name.clone());
+                    kwonlyargs.push((py_name, None));
+                }
+
+                // Build the @delegate_args(target_fn, args=[...], kwargs="...", renames={...}, defaults={...}) decorator
+                let mut deco_args: Vec<PyCallItem<'src>> = vec![];
+                deco_args.push(a.call_arg(pre.bind(target.transform(ctx)?)));
+
+                // args=[...]
+                let args_list = a.list(
+                    delegate_arg_names
+                        .into_iter()
+                        .map(|item| match item {
+                            PyCallItem::Arg(expr) => PyListItem::Item(expr),
+                            _ => unreachable!(),
+                        })
+                        .collect(),
+                    PyAccessCtx::Load,
+                );
+                deco_args.push(a.call_kwarg("args", args_list));
+
+                // kwargs="name" (if present)
+                if let Some(kwarg_name) = &delegate_kwarg_name {
+                    deco_args.push(a.call_kwarg("kwargs", a.str(kwarg_name.clone())));
+                }
+
+                // renames={alias: orig} (if any)
+                if !delegate_renames.is_empty() {
+                    let rename_items: Vec<PyDictItem<'src>> = delegate_renames
+                        .into_iter()
+                        .map(|item| match item {
+                            PyCallItem::Kwarg(k, v) => PyDictItem::Item(a.str(k), v),
+                            _ => unreachable!(),
+                        })
+                        .collect();
+                    deco_args.push(a.call_kwarg("renames", a.dict(rename_items)));
+                }
+
+                // defaults={name: expr} (if any)
+                if !delegate_defaults.is_empty() {
+                    let default_items: Vec<PyDictItem<'src>> = delegate_defaults
+                        .into_iter()
+                        .map(|item| match item {
+                            PyCallItem::Kwarg(k, v) => PyDictItem::Item(a.str(k), v),
+                            _ => unreachable!(),
+                        })
+                        .collect();
+                    deco_args.push(a.call_kwarg("defaults", a.dict(default_items)));
+                }
+
+                let deco = a.call(a.tl_builtin("delegate_args"), deco_args);
+                delegate_decorators.push(deco);
+            }
         };
     }
 
@@ -1216,6 +1346,7 @@ fn make_arglist<'src, 'ast>(
             kwonlyargs,
             kwarg,
         },
+        decorators: delegate_decorators,
     })
 }
 
@@ -1279,9 +1410,11 @@ fn prepare_py_fn<'src, 'ast>(
                 pre: arg_pre,
                 post,
                 arglist: args_,
+                decorators: delegate_decos,
             } = make_arglist(ctx, arglist, fn_info)?;
 
             args = args_;
+            decorators.0.extend(delegate_decos.0);
 
             pre.extend(arg_pre);
             py_body_pre.extend(post);
