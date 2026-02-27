@@ -864,7 +864,7 @@ impl ToElements for SExpr<'_, '_> {
                 op,
                 decorator,
             } => {
-                line!(expr, attached_token(op), decorator)
+                line!(decorator, attached_token(op), expr)
             }
             Expr::Fstr {
                 begin,

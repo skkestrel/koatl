@@ -509,9 +509,9 @@ impl<'src, 'tok> Lift<Indirect<ast::SStmt<'src>>> for cst::SStmt<'src, 'tok> {
             }
             cst::Stmt::While { cond, body, .. } => match cond {
                 cst::IfCondition::Expr(expr) => ast::Stmt::While(expr.lift(), body.lift()),
-                cst::IfCondition::Let {
-                    pattern, value, ..
-                } => ast::Stmt::WhileLet(pattern.lift(), value.lift(), body.lift()),
+                cst::IfCondition::Let { pattern, value, .. } => {
+                    ast::Stmt::WhileLet(pattern.lift(), value.lift(), body.lift())
+                }
             },
             cst::Stmt::For {
                 pattern,

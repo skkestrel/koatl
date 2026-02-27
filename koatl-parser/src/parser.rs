@@ -829,10 +829,10 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
     fn colon_or_then_block(&mut self) -> ParseResult<InducedBlock<STree<'src, 'tok>>> {
         // Try `then` keyword — if present, parse a bare inline statement (no `:` allowed after `then`)
-        if optional!(self, |ctx: &mut Self| ctx.keyword("then"))?.is_some() {
+        if let Some(then_kw) = optional!(self, |ctx: &mut Self| ctx.keyword("then"))? {
             let stmt = self.stmt(true)?;
             return Ok(InducedBlock::Inline {
-                inducer: None,
+                inducer: Some(then_kw),
                 stmt: Box::new(stmt),
             });
         }

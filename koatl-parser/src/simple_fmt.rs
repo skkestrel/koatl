@@ -112,23 +112,39 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
             } => {
                 let cond_str = match cond {
                     IfCondition::Expr(expr) => expr.simple_fmt(),
-                    IfCondition::Let { not_kw, pattern, value, .. } => {
+                    IfCondition::Let {
+                        not_kw,
+                        pattern,
+                        value,
+                        ..
+                    } => {
                         let not_str = if not_kw.is_some() { "not " } else { "" };
-                        format!("{}let {} = {}", not_str, pattern.simple_fmt(), value.simple_fmt())
+                        format!(
+                            "{}let {} = {}",
+                            not_str,
+                            pattern.simple_fmt(),
+                            value.simple_fmt()
+                        )
                     }
                 };
-                let mut result = format!(
-                    "if {} then {}",
-                    cond_str,
-                    body.simple_fmt()
-                );
-                
+                let mut result = format!("if {} then {}", cond_str, body.simple_fmt());
+
                 for (_, elif_cond, elif_body) in elif_clauses {
                     let elif_cond_str = match elif_cond {
                         IfCondition::Expr(expr) => expr.simple_fmt(),
-                        IfCondition::Let { not_kw, pattern, value, .. } => {
+                        IfCondition::Let {
+                            not_kw,
+                            pattern,
+                            value,
+                            ..
+                        } => {
                             let not_str = if not_kw.is_some() { "not " } else { "" };
-                            format!("{}let {} = {}", not_str, pattern.simple_fmt(), value.simple_fmt())
+                            format!(
+                                "{}let {} = {}",
+                                not_str,
+                                pattern.simple_fmt(),
+                                value.simple_fmt()
+                            )
                         }
                     };
                     result.push_str(&format!(
@@ -137,11 +153,11 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                         elif_body.simple_fmt()
                     ));
                 }
-                
+
                 if let Some((_, expr)) = else_clause {
                     result.push_str(&format!(" else {}", expr.simple_fmt()));
                 }
-                
+
                 result
             }
             Expr::Parenthesized { expr, .. } => expr.simple_fmt(),
@@ -400,9 +416,19 @@ impl<'src, 'tok> SimpleFmt for SStmtInner<'src, 'tok> {
             Stmt::While { cond, body, .. } => {
                 let cond_str = match cond {
                     IfCondition::Expr(expr) => expr.simple_fmt(),
-                    IfCondition::Let { not_kw, pattern, value, .. } => {
+                    IfCondition::Let {
+                        not_kw,
+                        pattern,
+                        value,
+                        ..
+                    } => {
                         let not_str = if not_kw.is_some() { "not " } else { "" };
-                        format!("{}let {} = {}", not_str, pattern.simple_fmt(), value.simple_fmt())
+                        format!(
+                            "{}let {} = {}",
+                            not_str,
+                            pattern.simple_fmt(),
+                            value.simple_fmt()
+                        )
                     }
                 };
                 format!("while {}: {}", cond_str, body.simple_fmt())
@@ -600,21 +626,44 @@ impl<'src, 'tok> SimpleFmt for ArgDefItem<STree<'src, 'tok>> {
             }
             ArgDefItem::PosOnlyMarker { .. } => "/".to_string(),
             ArgDefItem::KwOnlyMarker { .. } => "*".to_string(),
-            ArgDefItem::Delegate { target, items, kwarg_spread, .. } => {
+            ArgDefItem::Delegate {
+                target,
+                items,
+                kwarg_spread,
+                ..
+            } => {
                 let items_str = match items {
-                    Listing::Block { items, .. } | Listing::Inline { items, .. } => {
-                        items.iter().map(|li| {
+                    Listing::Block { items, .. } | Listing::Inline { items, .. } => items
+                        .iter()
+                        .map(|li| {
                             let item = &li.item;
                             let base = item.name.simple_fmt();
-                            let alias_str = item.alias.as_ref().map(|(_, a)| format!(" as {}", a.simple_fmt())).unwrap_or_default();
-                            let default_str = item.default.as_ref().map(|(_, e)| format!("={}", e.simple_fmt())).unwrap_or_default();
+                            let alias_str = item
+                                .alias
+                                .as_ref()
+                                .map(|(_, a)| format!(" as {}", a.simple_fmt()))
+                                .unwrap_or_default();
+                            let default_str = item
+                                .default
+                                .as_ref()
+                                .map(|(_, e)| format!("={}", e.simple_fmt()))
+                                .unwrap_or_default();
                             format!("{}{}{}", base, alias_str, default_str)
-                        }).collect::<Vec<_>>().join(", ")
-                    }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 };
-                let kwarg_str = kwarg_spread.as_ref().map(|(_, n)| format!(", **{}", n.simple_fmt())).unwrap_or_default();
-                format!("delegate {}({}{})", target.simple_fmt(), items_str, kwarg_str)
-            },
+                let kwarg_str = kwarg_spread
+                    .as_ref()
+                    .map(|(_, n)| format!(", **{}", n.simple_fmt()))
+                    .unwrap_or_default();
+                format!(
+                    "delegate {}({}{})",
+                    target.simple_fmt(),
+                    items_str,
+                    kwarg_str
+                )
+            }
         }
     }
 }

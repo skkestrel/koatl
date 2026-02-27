@@ -509,11 +509,11 @@ fn test_comment_in_block() {
 
 #[test]
 fn test_mixed_inline_and_block() {
-    let input = r#"result = condition1 then value1 else condition2 then:
+    let input = r#"result = if condition1 then value1 else if condition2:
     complex_value()
 else:
     default_value()"#;
-    let expected = r#"result = condition1 then value1 else condition2 then:
+    let expected = r#"result = if condition1 then value1 else if condition2:
     complex_value()
 else:
     default_value()"#;
