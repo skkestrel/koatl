@@ -178,9 +178,6 @@ class Record:
     def __repr__(self):
         return self._repr_with_visited(set())
 
-    def __hash__(self):
-        return hash(tuple(sorted(self.items())))
-
     def __eq__(self, other):
         if isinstance(other, Record):
             return self.__dict__ == other.__dict__
