@@ -57,7 +57,7 @@ export Memo = class(MonadOnce):
         If the value is not cached, it will compute the value using f and cache it.
         """
         Memo(ctx =>
-            if ctx.try_get(id, tuple(deps)) matches Ok(value):
+            if let Ok(value) = ctx.try_get(id, tuple(deps)):
                 return value
 
             let inner = f()
@@ -129,7 +129,7 @@ export AsyncMemo = class(MonadOnce):
             # deferring the cache lookup until we are in an async context.
             @Async.pure(None)
 
-            if ctx.try_get(id, tuple(deps)) matches Ok(value):
+            if let Ok(value) = ctx.try_get(id, tuple(deps)):
                 return value
 
             let inner = f()

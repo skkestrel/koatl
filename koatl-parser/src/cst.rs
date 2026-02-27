@@ -83,7 +83,7 @@ pub enum Stmt<TTree: Tree> {
 
     While {
         while_kw: TTree::Token,
-        cond: TTree::Expr,
+        cond: IfCondition<TTree>,
         body: InducedBlock<TTree>,
     },
 
@@ -339,6 +339,18 @@ pub enum InducedBlock<TTree: Tree> {
 }
 
 #[derive(Debug, Clone)]
+pub enum IfCondition<TTree: Tree> {
+    Expr(TTree::Expr),
+    Let {
+        not_kw: Option<TTree::Token>,
+        let_kw: TTree::Token,
+        pattern: TTree::Pattern,
+        eq: TTree::Token,
+        value: TTree::Expr,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub enum Expr<TTree: Tree> {
     ParenthesizedBlock {
         lparen: TTree::Token,
@@ -402,16 +414,9 @@ pub enum Expr<TTree: Tree> {
 
     ClassicIf {
         if_kw: TTree::Token,
-        cond: TTree::Expr,
+        cond: IfCondition<TTree>,
         body: InducedBlock<TTree>,
-        elif_clauses: Vec<(TTree::Token, TTree::Expr, InducedBlock<TTree>)>,
-        else_clause: Option<(TTree::Token, InducedBlock<TTree>)>,
-    },
-
-    If {
-        cond: TTree::Expr,
-        then_kw: TTree::Token,
-        body: InducedBlock<TTree>,
+        elif_clauses: Vec<(TTree::Token, IfCondition<TTree>, InducedBlock<TTree>)>,
         else_clause: Option<(TTree::Token, InducedBlock<TTree>)>,
     },
 

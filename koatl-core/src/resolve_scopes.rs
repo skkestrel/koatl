@@ -1079,7 +1079,7 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 let (pattern, meta) = pattern.traverse(state, false);
                 if !meta.captures.is_empty() {
                     state.errors.extend(simple_err(
-                        "Non-'_' capture patterns are not allowed in bare 'matches'-expressions",
+                        "'matches' cannot bind captures; use a '_' or 'if let <pattern> = <expr>' instead",
                         pattern.span,
                     ));
                 }
@@ -1131,75 +1131,48 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                         .value,
                 )
             }
-            Expr::If(cond, then, else_) => 'block: {
-                let cond_span = cond.span;
+            Expr::If(cond, then, else_) => Expr::If(
+                cond.traverse(state),
+                then.traverse(state),
+                else_.map(|else_| else_.traverse(state)),
+            ),
+            Expr::IfLet(negated, pattern, value, then, else_) => {
+                if negated {
+                    // `if not let Pattern = expr:` — captures leak into parent scope
+                    // (guard pattern: `if not let Ok(v) = x: return default`)
+                    let (pattern, else_scope, meta) = pattern_scoped(state, pattern);
 
-                match &cond.value {
-                    Expr::Matches(..) => {
-                        let Expr::Matches(expr, pattern) = cond.value else {
-                            unreachable!();
-                        };
-
-                        let (pattern, then_scope, _meta) = pattern_scoped(state, pattern);
-
-                        let then = state
-                            .scoped(then_scope, |state| then.traverse_expecting_scope(state))
-                            .value;
-
-                        let else_ = else_.map(|else_| else_.traverse(state));
-
-                        break 'block SExprInner::If(
-                            Expr::Matches(expr.traverse(state), pattern)
-                                .spanned(cond_span)
-                                .indirect(),
-                            then,
-                            else_,
-                        );
+                    if meta.captures.is_empty() {
+                        state.errors.extend(simple_err(
+                            "'if not let' with no captures is pointless; use 'if not (expr matches Pattern):' instead",
+                            pattern.span,
+                        ));
                     }
-                    Expr::Unary(UnaryOp::Not, inner) => match &inner.value {
-                        Expr::Matches(_, pattern) => {
-                            let (pattern, else_scope, meta) =
-                                pattern_scoped(state, pattern.clone());
 
-                            if !meta.captures.is_empty() {
-                                let Expr::Unary(UnaryOp::Not, inner) = cond.value else {
-                                    unreachable!();
-                                };
+                    let then = then.traverse(state);
 
-                                let Expr::Matches(expr, _) = inner.value else {
-                                    unreachable!();
-                                };
+                    let else_locals = state.scopes[else_scope].locals.clone();
+                    state.top_scope().locals.extend(else_locals);
 
-                                let then = then.traverse(state);
+                    Expr::IfLet(
+                        true,
+                        pattern,
+                        value.traverse(state),
+                        then,
+                        else_.map(|x| x.traverse(state)),
+                    )
+                } else {
+                    // `if let Pattern = expr:` — captures scoped to then body
+                    let (pattern, then_scope, _meta) = pattern_scoped(state, pattern);
 
-                                let else_locals = state.scopes[else_scope].locals.clone();
+                    let then = state
+                        .scoped(then_scope, |state| then.traverse_expecting_scope(state))
+                        .value;
 
-                                state.top_scope().locals.extend(else_locals);
+                    let else_ = else_.map(|else_| else_.traverse(state));
 
-                                break 'block SExprInner::If(
-                                    SExprInner::Unary(
-                                        UnaryOp::Not,
-                                        SExprInner::Matches(expr.traverse(state), pattern)
-                                            .spanned(cond_span)
-                                            .indirect(),
-                                    )
-                                    .spanned(cond_span)
-                                    .indirect(),
-                                    then,
-                                    else_.map(|x| x.traverse(state)),
-                                );
-                            }
-                        }
-                        _ => {}
-                    },
-                    _ => {}
+                    Expr::IfLet(false, pattern, value.traverse(state), then, else_)
                 }
-
-                Expr::If(
-                    cond.traverse(state),
-                    then.traverse(state),
-                    else_.map(|else_| else_.traverse(state)),
-                )
             }
             Expr::Match(subject, cases) => {
                 let subject = subject.traverse(state);
@@ -1709,6 +1682,15 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
             Stmt::Return(expr) => Stmt::Return(expr.traverse_guarded(state)),
             Stmt::While(cond, body) => {
                 Stmt::While(cond.traverse_guarded(state), body.traverse_guarded(state))
+            }
+            Stmt::WhileLet(pattern, value, body) => {
+                let (pattern, body_scope, _meta) = pattern_scoped(state, pattern);
+
+                let body = state
+                    .scoped(body_scope, |state| body.traverse_guarded(state))
+                    .value;
+
+                Stmt::WhileLet(pattern, value.traverse_guarded(state), body)
             }
             Stmt::For(pattern, iter, body) => {
                 let (pattern, scope, _meta) = pattern_scoped(state, pattern);

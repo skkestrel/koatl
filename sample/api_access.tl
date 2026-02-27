@@ -24,12 +24,12 @@ get_user_details = (data, user_id) =>
 
     let profile = check user.profile
 
-    profile matches Ok(profile) then:
+    if let Ok(profile) = profile:
         print(f"Name: {check profile.name ?? "N/A"}")
 
         let contact = check profile.contact
 
-        contact matches Ok(contact) then:
+        if let Ok(contact) = contact:
             print(f"Email: {check contact.email ?? "N/A"}")
             print(f"Phone: {check contact.phone ?? "N/A"}")
         else:
@@ -42,7 +42,7 @@ get_user_details = (data, user_id) =>
         .(Result).map_err(e => ValueError("Orders is malformed."))
 
     print(
-        n_orders > 0 then:
+        if n_orders > 0:
             f"Number of orders: {n_orders}"
         else:
             "No orders found."

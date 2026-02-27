@@ -64,7 +64,7 @@ f()
 # Recursion should work
 
 a = () =>
-    let fib = n => n < 2 then 1 else fib(n - 1) + fib(n - 2)
+    let fib = n => if n < 2 then 1 else fib(n - 1) + fib(n - 2)
     assert_eq(fib(5), 8)
 a()
 

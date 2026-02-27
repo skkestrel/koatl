@@ -146,7 +146,7 @@ create_scraper = (delay=1.0, max_retries=3, timeout=10) => {
 
     fetch_page: Record.method! (self, url) =>
         Async.from_sync(() =>
-            validate_url(url) then None else:
+            if validate_url(url) then None else:
                 return Err(ValueError(f"Invalid URL: {url}"))
 
             # Check cache first
@@ -161,7 +161,7 @@ create_scraper = (delay=1.0, max_retries=3, timeout=10) => {
 
                     # Retry logic with exponential backoff
                     let fetch_with_retry = attempt =>
-                        attempt > self.max_retries then:
+                        if attempt > self.max_retries:
                             return Err(f"Max retries exceeded for {url}")
                         else:
                             try:
@@ -200,7 +200,7 @@ create_scraper = (delay=1.0, max_retries=3, timeout=10) => {
         let queue = [(start_url, 0)]  # (url, depth)
 
         let crawl_recursive = () =>
-            queue.len == 0 or results.len >= max_pages then:
+            if queue.len == 0 or results.len >= max_pages:
                 results.values().list()
             else:
                 let (current_url, depth) = queue.pop(0)
@@ -211,7 +211,7 @@ create_scraper = (delay=1.0, max_retries=3, timeout=10) => {
                         print(f"✅ Crawled: {current_url} (depth {depth})")
 
                         # Add internal links to queue if within depth limit
-                        depth < max_depth then:
+                        if depth < max_depth:
                             let new_links = page.internal_links()
                                 .map(link => urljoin(current_url, link.url))
                                 .filter(url => url not in visited and validate_url(url))
@@ -234,7 +234,7 @@ create_scraper = (delay=1.0, max_retries=3, timeout=10) => {
 
 # Content analysis pipeline
 analyze_content = pages =>
-    pages.len == 0 then:
+    if pages.len == 0:
         {error: "No pages to analyze"}
     else:
         let total_words = pages.map($.word_count()).sum()
@@ -248,13 +248,13 @@ analyze_content = pages =>
             })
         ).group_by(item =>
             let domain = urlparse(urljoin(item.page_url, item.link.url)).netloc
-            domain <> "" then domain else "internal"
+            if domain <> "" then domain else "internal"
         )
 
         {
             page_count: pages.len
             total_words: total_words
-            avg_words_per_page: pages.len > 0 then total_words / pages.len else 0
+            avg_words_per_page: if pages.len > 0 then total_words / pages.len else 0
             total_reading_time: pages.map($.reading_time()).sum()
 
             # Top keywords across all pages
@@ -407,7 +407,7 @@ run_crawling_demo = () =>
 
     let pages = scraper.crawl_site(target_url, max_depth=2, max_pages=5)
 
-    pages.len > 0 then:
+    if pages.len > 0:
         print(f"\n✅ Successfully crawled {pages.len} pages")
 
         let analysis = analyze_content(pages)

@@ -98,6 +98,7 @@ pub enum Stmt<'a, TTree: Tree> {
 
     Return(TTree::Expr),
     While(TTree::Expr, TTree::Expr),
+    WhileLet(TTree::Pattern, TTree::Expr, TTree::Expr),
     For(TTree::Pattern, TTree::Expr, TTree::Expr),
     Import(ImportTree<'a>, bool),
     Raise(Option<TTree::Expr>),
@@ -195,6 +196,7 @@ pub enum Expr<'a, TTree: Tree> {
     Memo(TTree::Expr, bool),
 
     If(TTree::Expr, TTree::Expr, Option<TTree::Expr>),
+    IfLet(bool, TTree::Pattern, TTree::Expr, TTree::Expr, Option<TTree::Expr>),
     Match(TTree::Expr, Vec<MatchCase<TTree>>),
     Matches(TTree::Expr, TTree::Pattern),
     Class(Vec<CallItem<'a, TTree>>, TTree::Expr),

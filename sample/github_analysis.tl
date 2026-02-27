@@ -27,7 +27,7 @@ create_repo = data =>
         activity_score: Record.method! self =>
             # Simple activity heuristic
             let days_old = self.age_days() + 1
-            let recent_factor = days_old <= 30 then 1. else 365. / days_old
+            let recent_factor = if days_old <= 30 then 1. else 365. / days_old
             (self.stars + self.forks * 2 + (100 - self.issues) * 0.1) * recent_factor
     }
 

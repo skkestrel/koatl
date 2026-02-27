@@ -102,7 +102,7 @@ assert_eq(di_cf.history[2].value, 3)
 
 let vals_cfm, di_cfm = consume(
     DebugIterator([1, 0, 3], checked=True, history=None)
-        .filter_map(x => x > 1 then 100 / x else None)
+        .filter_map(x => if x > 1 then 100 / x else None)
 )
 assert_eq(len(vals_cfm), 1)
 # x=1 → None → skipped (not error)
@@ -377,7 +377,7 @@ let err_hist = None
 try:
     list(
         DebugIterator((..20), history=3)
-            .map(x => x == 15 then 1 / 0 else x)
+            .map(x => if x == 15 then 1 / 0 else x)
     )
 except DebugIteratorError() as e =>
     err_hist = e

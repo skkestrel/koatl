@@ -9,7 +9,7 @@
 >>> # |         |
 >>> # |         |       Convenient pattern matching expressions
 >>> # v         v       v
->>> let fib = x => x matches 0 | 1 then 1 else fib(x-1) + fib(x-2)
+>>> let fib = x => if x matches 0 | 1 then 1 else fib(x-1) + fib(x-2)
 
 >>> # Painlessly define slices and ranges
 >>> # |
@@ -32,7 +32,7 @@
 >>> ["key0", "key1"].map(x => check { key0: "Queried value" }[x] ?? "Default").list()
 ["Queried value", "Default"]
 
->>> let fib = x => x < 2 then @Memo.pure(1) else memo @fib(x - 1) + @fib(x - 2)
+>>> let fib = x => if x < 2 then @Memo.pure(1) else memo @fib(x - 1) + @fib(x - 2)
 >>> #                                            ^    ^             ^
 >>> #                                            |    use monadic bind to nest
 >>> #           Memoize arbitrary expressions    |              memo functions

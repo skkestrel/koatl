@@ -95,29 +95,59 @@ x = check a except NameError() # caught
 y = check a except ValueError() # exception will be raised!
 ```
 
-## Matches-expressions and guards
+## If Let and While Let
 
-Matches-expressions resolve to either True or False depending on whether the value matches the provided pattern,
-and the bound names are available in the following block:
+`if let` destructures a value with pattern matching, entering the then-block only if the pattern matches.
+Captured variables are scoped to the then-block:
 
 ```koatl
 >>> x = [1, 2, 3]
->>> if x matches [a, *b]:
+>>> if let [a, *b] = x:
 >>>    print(a, b)
 1 [2, 3]
 ```
 
-`not matches` is the inverse; and bound names are available afterwards, but only if the type of the next block is Never (i.e., it raises, returns, breaks, or continues at the end)
+`if not let` is the inverse; captured variables leak to the surrounding scope, but the then-block
+must be of Never type (i.e., it raises, returns, breaks, or continues at the end):
 
 ```koatl
->>> if [1, 2] not matches [x, y]:
+>>> if not let [x, y] = [1, 2]:
 >>>     raise
 >>> print(x, y)
 1 2
 ```
 
-These restrictions can be avoided by making sure to not bind any names in the pattern:
+### While Let
+
+`while let` loops while the pattern continues to match:
 
 ```koatl
->>> x = [1, 2] not matches [_, _]
+data = [("Some", 1), ("Some", 2), ("Some", 3), ("None", 0)]
+idx = 0
+while let ("Some", val) = data[idx]:
+    print(val)
+    idx = idx + 1
+# prints 1, 2, 3
+```
+
+### Matches operator
+
+The `matches` / `not matches` operator returns a boolean that checks for a pattern match without captures:
+
+```koatl
+>>> x = [1, 2, 3]
+>>> x matches [_, _, _]
+True
+```
+
+Using captures in `matches` is a compile error — use `if let` instead:
+
+```koatl
+# Error: use 'if let' for patterns with captures
+if x matches [a, b]:
+    ...
+
+# Correct:
+if let [a, b] = x:
+    print(a, b)
 ```

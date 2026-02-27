@@ -37,7 +37,7 @@ display_grid = (grid, size) =>
 
     (..size).for_each(y =>
         let row = (..size)
-            .map(x => grid[(x, y)].alive then "██" else "  ")
+            .map(x => if grid[(x, y)].alive then "██" else "  ")
             .join_str("")
         print(f"│{row}│")
     )
@@ -87,8 +87,8 @@ analyze_patterns = (grid, size) =>
         .flat_map(pattern =>
             (..size-2).flat_map(base_x =>
                 (..size-2).map(base_y =>
-                    pattern.map([dx, dy] => (base_x + dx, base_y + dy))
-                        .all(pos => grid[pos]?.alive ?? False) then:
+                    if pattern.map([dx, dy] => (base_x + dx, base_y + dy))
+                        .all(pos => grid[pos]?.alive ?? False):
                             Ok((base_x, base_y))
                         else:
                             Err()
@@ -124,13 +124,13 @@ track_statistics = () => {
             self.generations = self.generations[-10..]
 
     get_trends: Record.method! self =>
-        self.generations.len >= 3 then:
+        if self.generations.len >= 3:
             let recent = self.generations[-3..]
             let densities = recent.map($.density).list()
 
             {
-                trend: densities[-1] > densities[0] then "growing"
-                    else densities[-1] < densities[0] then "shrinking"
+                trend: if densities[-1] > densities[0] then "growing"
+                    else if densities[-1] < densities[0] then "shrinking"
                     else "stable"
                 avg_density: densities.mean()
                 stability_changes: recent.map($.stability).unique().count()
@@ -150,7 +150,7 @@ run_simulation = (size=20, max_generations=100, delay=0.5) =>
 
     # Evolution loop using recursive function
     let simulate_generation = (current_grid, gen) =>
-        gen >= max_generations then:
+        if gen >= max_generations:
             print(f"🏁 Simulation completed after {max_generations} generations")
         else:
             print(f"Generation {gen}")
@@ -163,7 +163,7 @@ run_simulation = (size=20, max_generations=100, delay=0.5) =>
             print(f"Living cells: {analysis.total_alive} ({analysis.density}%)")
             print(f"Status: {analysis.stability}")
 
-            analysis.detected_gliders > 0 then:
+            if analysis.detected_gliders > 0:
                 print(f"🚀 Detected {analysis.detected_gliders} glider(s)!")
 
             # Check for extinction or stability
@@ -180,7 +180,7 @@ run_simulation = (size=20, max_generations=100, delay=0.5) =>
                 _ =>
                     # Show trends if available
                     let trends = stats.get_trends()
-                    trends.trend <> "insufficient_data" then:
+                    if trends.trend <> "insufficient_data":
                         print(f"📈 Trend: {trends.trend} (avg density: {trends.avg_density}%)")
 
                     # Continue evolution
@@ -195,7 +195,7 @@ create_pattern_editor = size => {
     grid: create_grid(size).map([pos, cell] => (pos, create_cell(cell.x, cell.y, False))).dict()
 
     toggle_cell: Record.method! (self, x, y) =>
-        (x >= 0 and y >= 0 and x < size and y < size) then:
+        if (x >= 0 and y >= 0 and x < size and y < size):
             let pos = (x, y)
             let cell = self.grid[pos]
             self.grid = {**self.grid, (pos): create_cell(x, y, not cell.alive)}

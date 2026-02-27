@@ -553,6 +553,23 @@ impl ToElements for ImportLeaf<STree<'_, '_>> {
     }
 }
 
+impl ToElements for IfCondition<STree<'_, '_>> {
+    fn to_elements(&self) -> Vec<Element> {
+        match self {
+            IfCondition::Expr(expr) => expr.to_elements(),
+            IfCondition::Let {
+                not_kw,
+                let_kw,
+                pattern,
+                eq,
+                value,
+            } => {
+                line!(not_kw, let_kw, pattern, eq, value)
+            }
+        }
+    }
+}
+
 impl ToElements for SExpr<'_, '_> {
     fn to_elements(&self) -> Vec<Element> {
         match &self.value {
@@ -674,17 +691,6 @@ impl ToElements for SExpr<'_, '_> {
             } => {
                 line!(expr, question.map(attached_token), attached_listing(args))
             }
-            Expr::If {
-                cond,
-                then_kw,
-                body,
-                else_clause,
-            } => line!(
-                cond,
-                then_kw,
-                body,
-                else_clause.as_ref().map(|(x, y)| line!(x, y))
-            ),
             Expr::Fn { arg, body } => line!(arg, body),
             Expr::ParenthesizedFn { args, body } => line!(args, body),
             Expr::Slice {

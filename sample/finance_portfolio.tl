@@ -21,7 +21,7 @@ create_stock = (symbol, price, shares, purchase_date) => {
 
     annualized_return: Record.method! (self, date) =>
         let days = self.days_held(date)
-        days > 0 then (self.price / self.purchase_price - 1) * (365.0 / days) else 0.0
+        if days > 0 then (self.price / self.purchase_price - 1) * (365.0 / days) else 0.0
 }
 
 # Portfolio management with pattern matching and error handling
@@ -47,7 +47,7 @@ update_portfolio = (portfolio, action, date) =>
         {type: "sell", symbol, shares} =>
             let stock = @(check portfolio[symbol]).map_err(_ => KeyError(f"Stock {symbol} not found"))
 
-            stock.shares >= shares then {
+            if stock.shares >= shares then {
                 **portfolio
                 (symbol): {**stock, shares: stock.shares - shares}
             } else:
@@ -96,9 +96,9 @@ analyze_portfolio = (portfolio, date) =>
     # Sector diversification (simplified)
     let sector_allocation = stocks
         .map(stock => {
-            sector: stock.symbol.startswith("TECH") then "Technology"
-                else stock.symbol.startswith("FIN") then "Finance"
-                else stock.symbol.startswith("HEALTH") then "Healthcare"
+            sector: if stock.symbol.startswith("TECH") then "Technology"
+                else if stock.symbol.startswith("FIN") then "Finance"
+                else if stock.symbol.startswith("HEALTH") then "Healthcare"
                 else "Other"
             value: stock.current_value()
         })

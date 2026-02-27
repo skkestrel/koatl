@@ -59,7 +59,7 @@ export Identity = class(MonadOnce):
 
     __init__ = (self, value) => self.value = value
 
-    bind_once = (self, f) => self matches Identity(value) then f(value) else f(self)
+    bind_once = (self, f) => if let Identity(value) = self then f(value) else f(self)
 
     pure = staticmethod! x => x
 

@@ -30,7 +30,7 @@ export Result = class(MonadOnce):
     __new__ = (cls, value) =>
         if isinstance(value, Result):
             return value
-        infer_ok(value) then Ok(value) else Err(value)
+        if infer_ok(value) then Ok(value) else Err(value)
 
     __init__ = (self, *args, **kwargs) =>
         raise ValueError("Result should not be instantiated directly, use Ok or Err")
@@ -174,7 +174,7 @@ export Err = class(Result):
             return False
         return self.value == other.value
 
-    __repr__ = self => f"Err({self.value === None then "" else repr(self.value)})"
+    __repr__ = self => f"Err({if self.value === None then "" else repr(self.value)})"
 
     __reduce__ = self =>
         Err, (self.value,)

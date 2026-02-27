@@ -48,7 +48,7 @@ assert_eq(f(10, 30).run(ctx), 300)
 assert_eq(f(10, 30).run(ctx), 300)
 assert_eq(counts, 2)
 
-fib = x => x < 2 then @Memo.pure(1) else memo @fib(x - 1) + @fib(x - 2)
+fib = x => if x < 2 then @Memo.pure(1) else memo @fib(x - 1) + @fib(x - 2)
 
 now = time.time()
 fib(35).run()

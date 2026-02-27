@@ -326,7 +326,7 @@ export DebugIteratorValue = class:
         DebugIteratorValue(self.value, self.lineage, True, self.index_path)
 
     add_lineage_step = (self, val, stage_id, is_error=False) =>
-        let entry = is_error then (val, stage_id, True) else (val, stage_id)
+        let entry = if is_error then (val, stage_id, True) else (val, stage_id)
         DebugIteratorValue(self.value, [*self.lineage, entry], self.is_skipped, self.index_path)
 
     __repr__ = self =>
@@ -502,7 +502,7 @@ export DebugIterator = class:
     map = (self, f) =>
         let body = (dbv, si) =>
             let result = self._apply_fn(f, dbv.value, "map", dbv, si)
-            if result matches Ok(new_val):
+            if let Ok(new_val) = result:
                 yield dbv.add_lineage_step(new_val, si).with_value(new_val)
             else:
                 yield dbv.add_lineage_step(result.value, si, is_error=True).skip()
@@ -511,7 +511,7 @@ export DebugIterator = class:
     filter = (self, f) =>
         let body = (dbv, si) =>
             let result = self._apply_fn(f, dbv.value, "filter", dbv, si)
-            if result matches Ok(passed):
+            if let Ok(passed) = result:
                 if passed:
                     yield dbv.add_lineage_step(dbv.value, si)
                 else:
@@ -524,15 +524,15 @@ export DebugIterator = class:
         let body = (dbv, si) =>
             if f === None:
                 let r = Result(dbv.value)
-                if r matches Ok(val):
+                if let Ok(val) = r:
                     yield dbv.add_lineage_step(val, si).with_value(val)
                 else:
                     yield dbv.add_lineage_step(r.value, si, is_error=True).skip()
             else:
                 let result = self._apply_fn(f, dbv.value, "filter_map", dbv, si)
-                if result matches Ok(val):
+                if let Ok(val) = result:
                     let r = Result(val)
-                    if r matches Ok(inner):
+                    if let Ok(inner) = r:
                         yield dbv.add_lineage_step(inner, si).with_value(inner)
                     else:
                         yield dbv.add_lineage_step(r.value, si, is_error=True).skip()
@@ -555,7 +555,7 @@ export DebugIterator = class:
                     items = dbv.value
                 else:
                     let result = self._apply_fn(f, dbv.value, "flat_map", dbv, stage_idx)
-                    if result matches Ok(val):
+                    if let Ok(val) = result:
                         items = val
                     else:
                         let err = result.value
@@ -618,7 +618,7 @@ export DebugIterator = class:
                     yield dbv.add_lineage_step(dbv.value, si).skip()
                     continue
                 let result = self._apply_fn(f, dbv.value, "take_while", dbv, si)
-                if result matches Ok(passed):
+                if let Ok(passed) = result:
                     if passed:
                         yield dbv.add_lineage_step(dbv.value, si)
                     else:
@@ -641,7 +641,7 @@ export DebugIterator = class:
                     yield dbv.add_lineage_step(dbv.value, si)
                     continue
                 let result = self._apply_fn(f, dbv.value, "skip_while", dbv, si)
-                if result matches Ok(passed):
+                if let Ok(passed) = result:
                     if passed:
                         yield dbv.add_lineage_step(dbv.value, si).skip()
                     else:
@@ -770,7 +770,7 @@ export DebugIterator = class:
     tap = (self, f) =>
         let body = (dbv, si) =>
             let result = self._apply_fn(f, dbv.value, "tap", dbv, si)
-            if result matches Ok(tap_val):
+            if let Ok(tap_val) = result:
                 yield dbv.add_lineage_step(tap_val, si)
             else:
                 # On error in tap, record the error but pass value through (no skip)

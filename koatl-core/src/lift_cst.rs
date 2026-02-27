@@ -203,15 +203,6 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                 let finally_expr = finally.as_ref().map(|(_, expr)| expr.lift());
                 ast::Expr::Try(body.lift(), exception_cases, finally_expr)
             }
-            cst::Expr::If {
-                cond,
-                body,
-                else_clause,
-                ..
-            } => {
-                let else_expr = else_clause.as_ref().map(|(_, expr)| expr.lift());
-                ast::Expr::If(cond.lift(), body.lift(), else_expr)
-            }
             cst::Expr::ClassicIf {
                 cond,
                 body,
@@ -226,12 +217,44 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                 for (_, elif_cond, elif_body) in elif_clauses.iter().rev() {
                     let elif_body_lifted = elif_body.lift();
                     let span = elif_body_lifted.span;
-                    let elif_expr = ast::Expr::If(elif_cond.lift(), elif_body_lifted, result_else)
-                        .spanned(span);
+                    let elif_expr = match elif_cond {
+                        cst::IfCondition::Expr(expr) => {
+                            ast::Expr::If(expr.lift(), elif_body_lifted, result_else)
+                        }
+                        cst::IfCondition::Let {
+                            not_kw,
+                            pattern,
+                            value,
+                            ..
+                        } => ast::Expr::IfLet(
+                            not_kw.is_some(),
+                            pattern.lift(),
+                            value.lift(),
+                            elif_body_lifted,
+                            result_else,
+                        ),
+                    }
+                    .spanned(span);
                     result_else = Some(elif_expr.indirect());
                 }
 
-                ast::Expr::If(cond.lift(), body.lift(), result_else)
+                match cond {
+                    cst::IfCondition::Expr(expr) => {
+                        ast::Expr::If(expr.lift(), body.lift(), result_else)
+                    }
+                    cst::IfCondition::Let {
+                        not_kw,
+                        pattern,
+                        value,
+                        ..
+                    } => ast::Expr::IfLet(
+                        not_kw.is_some(),
+                        pattern.lift(),
+                        value.lift(),
+                        body.lift(),
+                        result_else,
+                    ),
+                }
             }
             cst::Expr::Parenthesized { expr, .. } => return expr.lift(),
             cst::Expr::Slice {
@@ -484,7 +507,12 @@ impl<'src, 'tok> Lift<Indirect<ast::SStmt<'src>>> for cst::SStmt<'src, 'tok> {
                 let name_list = names.iter().map(|(name, _)| name.lift_as_ident()).collect();
                 ast::Stmt::Decl(name_list, modifier.lift_as_decl_modifier())
             }
-            cst::Stmt::While { cond, body, .. } => ast::Stmt::While(cond.lift(), body.lift()),
+            cst::Stmt::While { cond, body, .. } => match cond {
+                cst::IfCondition::Expr(expr) => ast::Stmt::While(expr.lift(), body.lift()),
+                cst::IfCondition::Let {
+                    pattern, value, ..
+                } => ast::Stmt::WhileLet(pattern.lift(), value.lift(), body.lift()),
+            },
             cst::Stmt::For {
                 pattern,
                 iter,

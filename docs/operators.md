@@ -65,11 +65,18 @@ x =
         2
 ```
 
-There's also an alternate syntax which looks a bit better inline:
+The `then` keyword can be used as an inline alternative to `:` in `if`/`elif`:
 
 ```koatl
-x = condition then 10 else 20
+x = if condition then 10 else 20
+
+if a then do_something()
+elif b then do_other_thing()
+else:
+    fallback()
 ```
+
+> **Note**: `then` introduces a single inline expression — it cannot be followed by `:`. Use `:` for block bodies. Only valid in `if`/`elif`, not `while`/`for`.
 
 ## With-expressions
 
@@ -80,30 +87,51 @@ x = with f = open("my_file.txt", "r"):
     f.read()
 ```
 
-## Matches-expressions
+## If Let and While Let
 
-Matches-expressions resolve to either True or False, using Python pattern matching (see [Pattern matching](match)).
-When used as the condition in an if-statement, bound variables can be accessed in the then-scope:
+`if let` destructures a value with pattern matching, entering the then-block only if the pattern matches.
+Captured variables are scoped to the then-block:
 
 ```koatl
 >>> x = [1, 2, 3]
->>> if x matches [a, *b]:
+>>> if let [a, *b] = x:
 >>>    print(a, b)
 1 [2, 3]
 ```
 
-This makes regex matching especially convenient:
+`while let` loops while the pattern matches:
 
 ```koatl
->>> if "(\\d+).(\\d+)".match("123.456") matches Ok([a, b]):
+while let ("Some", val) = data[idx]:
+    process(val)
+    idx = idx + 1
+```
+
+See [Pattern matching](match) for more details.
+
+## Matches-expressions
+
+Matches-expressions resolve to either True or False, using Python pattern matching (see [Pattern matching](match)).
+With `matches`, patterns must be capture-free (use `if let` for captures):
+
+```koatl
+>>> x = [1, 2, 3]
+>>> x matches [_, _, _]
+True
+```
+
+This makes regex matching especially convenient with `if let`:
+
+```koatl
+>>> if let Ok([a, b]) = "(\\d+).(\\d+)".match("123.456"):
 >>>    print(a, b)
 123 456
 ```
 
-If-matches-not expressions can also be used to conditionally destructure values:
+If-not-let expressions can be used to conditionally destructure values with a guard:
 
 ```koatl
-if 123 not matches str(x):
+if not let str(x) = 123:
     # this block must be of bottom type, i.e., return, break, continue, or throw
     return None
 

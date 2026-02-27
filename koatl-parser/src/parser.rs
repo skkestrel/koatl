@@ -803,13 +803,51 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         .spanned(self.span_from(start)))
     }
 
+    fn let_condition(&mut self) -> ParseResult<IfCondition<STree<'src, 'tok>>> {
+        let not_kw = optional!(self, |ctx: &mut Self| ctx.keyword("not"))?;
+        let let_kw = self.keyword("let")?;
+        let pattern = self.open_pattern()?;
+        let eq = self.symbol("=")?;
+        let expr = self.expr()?;
+        Ok(IfCondition::Let {
+            not_kw,
+            let_kw,
+            pattern: pattern.boxed(),
+            eq,
+            value: expr.boxed(),
+        })
+    }
+
+    fn if_condition(&mut self) -> ParseResult<IfCondition<STree<'src, 'tok>>> {
+        first_of!(
+            self,
+            "condition",
+            |ctx: &mut Self| ctx.let_condition(),
+            |ctx: &mut Self| Ok(IfCondition::Expr(ctx.expr()?.boxed()))
+        )
+    }
+
+    fn colon_or_then_block(&mut self) -> ParseResult<InducedBlock<STree<'src, 'tok>>> {
+        // Try `then` keyword — if present, parse a bare inline statement (no `:` allowed after `then`)
+        if optional!(self, |ctx: &mut Self| ctx.keyword("then"))?.is_some() {
+            let stmt = self.stmt(true)?;
+            return Ok(InducedBlock::Inline {
+                inducer: None,
+                stmt: Box::new(stmt),
+            });
+        }
+
+        // Otherwise require a colon-induced block (`:` + indented block OR `:` + inline stmt)
+        self.colon_block()
+    }
+
     fn classic_if(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
         let start = self.cursor;
 
         let if_kw = self.keyword("if")?;
-        let cond = self.expr()?.boxed();
+        let cond = self.if_condition()?;
 
-        let body = self.colon_block()?;
+        let body = self.colon_or_then_block()?;
 
         let mut elif_clauses = Vec::new();
         loop {
@@ -817,8 +855,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             let elif_result = optional!(self, |ctx: &mut Self| {
                 optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
                 let elif_kw = ctx.keyword("elif")?;
-                let elif_cond = ctx.expr()?.boxed();
-                let elif_body = ctx.colon_block()?;
+                let elif_cond = ctx.if_condition()?;
+                let elif_body = ctx.colon_or_then_block()?;
                 Ok((elif_kw, elif_cond, elif_body))
             })?;
 
@@ -1756,9 +1794,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let binary10 = |ctx: &mut Self| ctx.binary_expr(10, &slice);
         let memo = |ctx: &mut Self| ctx.memo_expr(&binary10);
         let with_ = |ctx: &mut Self| ctx.with_expr(&memo);
-        let if_ = |ctx: &mut Self| ctx.if_expr(&with_);
 
-        let match_ = |ctx: &mut Self| ctx.match_expr(&if_);
+        let match_ = |ctx: &mut Self| ctx.match_expr(&with_);
         let function = |ctx: &mut Self| ctx.function_expr();
         let function_or_match =
             |ctx: &mut Self| first_of!(ctx, "function or match", &function, &match_);
@@ -1868,41 +1905,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         };
 
         first_of!(self, "expression or block", block, inline_stmt)
-    }
-
-    fn if_expr(
-        &mut self,
-        next_level: &impl Parser<'src, 'tok, SExpr<'src, 'tok>>,
-    ) -> ParseResult<SExpr<'src, 'tok>> {
-        let start = self.cursor;
-
-        let mut expr = next_level(self)?;
-
-        let parsed = optional!(self, |ctx: &mut Self| {
-            let then_kw = ctx.keyword("then")?;
-            let then = ctx.colon_block()?;
-
-            let else_clause = optional!(ctx, |ctx: &mut Self| {
-                optional!(ctx, |ctx| ctx.token(&Token::Eol))?;
-                let else_kw = ctx.keyword("else")?;
-                let else_body = ctx.colon_block()?;
-                Ok((else_kw, else_body))
-            })?;
-
-            Ok((then_kw, then, else_clause))
-        })?;
-
-        if let Some((then_kw, body, else_clause)) = parsed {
-            expr = Expr::If {
-                cond: expr.boxed(),
-                then_kw,
-                body,
-                else_clause,
-            }
-            .spanned(self.span_from(start));
-        }
-
-        Ok(expr)
     }
 
     fn try_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
@@ -2473,12 +2475,12 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let while_stmt = |ctx: &mut Self| {
             let while_kw = ctx.keyword("while")?;
-            let cond = ctx.expr()?;
+            let cond = ctx.if_condition()?;
             let body = ctx.colon_block()?;
 
             Ok(Stmt::While {
                 while_kw,
-                cond: cond.boxed(),
+                cond,
                 body,
             })
         };

@@ -549,18 +549,6 @@ fn transform_if_expr<'src, 'ast>(
     else_block: Option<&'ast SExpr<'src>>,
     span: &Span,
 ) -> TlResult<SPyExprWithPre<'src>> {
-    if let Expr::Unary(UnaryOp::Not, expr) = &cond.value {
-        if let Expr::Matches(expr, pattern) = &expr.value {
-            let info = ctx.pattern_info(pattern)?;
-
-            if !info.decls.is_empty() {
-                return transform_if_matches_not_never_expr(
-                    ctx, expr, pattern, &info, then_block, else_block, span,
-                );
-            }
-        }
-    }
-
     let mut pre = PyBlock::new();
     let cond = pre.bind(cond.transform(ctx)?);
     let a = PyAstBuilder::new(*span);
@@ -590,6 +578,57 @@ fn transform_if_expr<'src, 'ast>(
     })
 }
 
+fn transform_if_let_expr<'src, 'ast>(
+    ctx: &mut TlCtx<'src, 'ast>,
+    pattern: &'ast SPattern<'src>,
+    value: &'ast SExpr<'src>,
+    then_block: &'ast SExpr<'src>,
+    else_block: Option<&'ast SExpr<'src>>,
+    span: &Span,
+) -> TlResult<SPyExprWithPre<'src>> {
+    let mut pre = PyBlock::new();
+    let subject = pre.bind(value.transform(ctx)?);
+
+    let a = PyAstBuilder::new(*span);
+    let var = ctx.create_aux_var("if_let", span.start);
+
+    let meta = ctx.pattern_info(pattern)?;
+    let pattern_span = pattern.span;
+    let pattern_node = pre.bind(pattern.transform(ctx, &meta)?);
+
+    let mut on_match = PyBlock::new();
+    let on_match_expr = on_match.bind(then_block.transform(ctx)?);
+    on_match.push(a.assign(a.ident(var.clone(), PyAccessCtx::Store), on_match_expr));
+
+    let on_no_match = if let Some(else_block) = else_block {
+        let mut py_else = PyBlock::new();
+        let py_else_expr = py_else.bind(else_block.transform(ctx)?);
+        py_else.push(a.assign(a.ident(var.clone(), PyAccessCtx::Store), py_else_expr));
+        py_else
+    } else {
+        PyBlock(vec![
+            a.assign(a.ident(var.clone(), PyAccessCtx::Store), a.none()),
+        ])
+    };
+
+    let mut cases = vec![a.match_case(pattern_node, None, on_match)];
+
+    if !meta.default {
+        cases.push(a.match_case(
+            (PyPattern::As(None, None), pattern_span).into(),
+            None,
+            on_no_match,
+        ));
+    }
+
+    pre.push(a.match_(subject, cases));
+
+    Ok(SPyExprWithPre {
+        value: a.ident(var, PyAccessCtx::Load),
+        pre,
+    })
+}
+
 trait SPatternExt<'src, 'ast> {
     fn transform(
         &'ast self,
@@ -615,6 +654,11 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
             info: &PatternInfo,
         ) -> TlResult<Option<PyToken<'src>>> {
             if ident.value.0 == "_" {
+                Ok(None)
+            } else if info.decls.is_empty() {
+                // No declarations registered (e.g. captures in bare `matches`
+                // already reported as an error in resolve_scopes). Treat as
+                // wildcard to avoid cascading internal errors.
                 Ok(None)
             } else {
                 let found = info
@@ -2016,6 +2060,40 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     pre.push(a.while_(a.bool(true), new_body_block));
                 }
             }
+            Stmt::WhileLet(pattern, value, body) => {
+                // while let Pattern = expr:
+                //   body
+                //
+                // becomes:
+                //   while True:
+                //     match <value>:
+                //       case <pattern>:
+                //         <body>
+                //       case _:
+                //         break
+                let subject = pre.bind(value.transform(ctx)?);
+
+                let meta = ctx.pattern_info(pattern)?;
+                let pattern_span = pattern.span;
+                let pattern_node = pre.bind(pattern.transform(ctx, &meta)?);
+
+                let body_block = body.transform(ctx)?.drop_expr(ctx);
+
+                let mut cases = vec![a.match_case(pattern_node, None, body_block)];
+
+                if !meta.default {
+                    cases.push(a.match_case(
+                        (PyPattern::As(None, None), pattern_span).into(),
+                        None,
+                        PyBlock(vec![a.break_()]),
+                    ));
+                }
+
+                let mut loop_body = PyBlock::new();
+                loop_body.push(a.match_(subject, cases));
+
+                pre.push(a.while_(a.bool(true), loop_body));
+            }
             Stmt::Break => pre.push(a.break_()),
             Stmt::Continue => pre.push(a.continue_()),
             Stmt::Import(tree, reexport) => {
@@ -2340,6 +2418,28 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 else_block.as_ref().map(|x| x.as_ref()),
                 &span,
             )?),
+            Expr::IfLet(negated, pattern, value, then_block, else_block) => {
+                if *negated {
+                    pre.bind(transform_if_matches_not_never_expr(
+                        ctx,
+                        value,
+                        pattern,
+                        ctx.pattern_info(pattern)?,
+                        then_block,
+                        else_block.as_ref().map(|x| x.as_ref()),
+                        &span,
+                    )?)
+                } else {
+                    pre.bind(transform_if_let_expr(
+                        ctx,
+                        pattern,
+                        value,
+                        then_block,
+                        else_block.as_ref().map(|x| x.as_ref()),
+                        &span,
+                    )?)
+                }
+            }
             Expr::Block(block) => pre.bind(block.transform(ctx, &span)?),
             Expr::Match(subject, cases) => pre
                 .bind(transform_match_expr(ctx, MatchSubject::Tl(subject), cases, true, &span)?.0),

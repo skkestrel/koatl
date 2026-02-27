@@ -36,6 +36,11 @@ impl<'src, 'ast> SStmtExt<'src, 'ast> for Indirect<SStmt<'src>> {
                 body.traverse(ctx);
                 Type::NoReturn
             }
+            Stmt::WhileLet(_pattern, value, body) => {
+                value.traverse(ctx);
+                body.traverse(ctx);
+                Type::NoReturn
+            }
             Stmt::For(_pattern, iter, body) => {
                 iter.traverse(ctx);
                 body.traverse(ctx);
@@ -74,6 +79,23 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
             }
             Expr::If(cond, then_, else_) => {
                 cond.traverse(ctx);
+                let then_type = then_.traverse(ctx);
+                let else_type = if let Some(else_) = else_ {
+                    else_.traverse(ctx)
+                } else {
+                    Type::NoReturn
+                };
+
+                if then_type == Type::Bottom && else_type == Type::Bottom {
+                    Type::Bottom
+                } else if then_type == Type::NoReturn || else_type == Type::NoReturn {
+                    Type::NoReturn
+                } else {
+                    Type::Any
+                }
+            }
+            Expr::IfLet(_negated, _pattern, value, then_, else_) => {
+                value.traverse(ctx);
                 let then_type = then_.traverse(ctx);
                 let else_type = if let Some(else_) = else_ {
                     else_.traverse(ctx)

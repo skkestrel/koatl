@@ -335,7 +335,7 @@ let vals21, di21 = consume(DebugIterator([1, None, 3], history=None).filter_map(
 assert_eq(vals21, [1, 3])
 assert_eq(di21.history[1].is_skipped, True)
 
-let vals22, di22 = consume(DebugIterator([1, 2, 3], history=None).filter_map(x => x > 1 then x * 2 else None))
+let vals22, di22 = consume(DebugIterator([1, 2, 3], history=None).filter_map(x => if x > 1 then x * 2 else None))
 assert_eq(vals22, [4, 6])
 assert_eq(di22.history[0].is_skipped, True)
 assert_eq(di22.history[1].value, 4)

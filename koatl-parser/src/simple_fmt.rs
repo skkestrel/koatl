@@ -110,16 +110,30 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                 elif_clauses,
                 else_clause,
             } => {
+                let cond_str = match cond {
+                    IfCondition::Expr(expr) => expr.simple_fmt(),
+                    IfCondition::Let { not_kw, pattern, value, .. } => {
+                        let not_str = if not_kw.is_some() { "not " } else { "" };
+                        format!("{}let {} = {}", not_str, pattern.simple_fmt(), value.simple_fmt())
+                    }
+                };
                 let mut result = format!(
                     "if {} then {}",
-                    cond.simple_fmt(),
+                    cond_str,
                     body.simple_fmt()
                 );
                 
                 for (_, elif_cond, elif_body) in elif_clauses {
+                    let elif_cond_str = match elif_cond {
+                        IfCondition::Expr(expr) => expr.simple_fmt(),
+                        IfCondition::Let { not_kw, pattern, value, .. } => {
+                            let not_str = if not_kw.is_some() { "not " } else { "" };
+                            format!("{}let {} = {}", not_str, pattern.simple_fmt(), value.simple_fmt())
+                        }
+                    };
                     result.push_str(&format!(
                         " elif {} then {}",
-                        elif_cond.simple_fmt(),
+                        elif_cond_str,
                         elif_body.simple_fmt()
                     ));
                 }
@@ -129,24 +143,6 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                 }
                 
                 result
-            }
-            Expr::If {
-                cond,
-                then_kw: _,
-                body,
-                else_clause,
-            } => {
-                let else_str = if let Some((_, expr)) = else_clause {
-                    format!(" else {}", expr.simple_fmt())
-                } else {
-                    String::new()
-                };
-                format!(
-                    "{} then {}{}",
-                    cond.simple_fmt(),
-                    body.simple_fmt(),
-                    else_str
-                )
             }
             Expr::Parenthesized { expr, .. } => expr.simple_fmt(),
             Expr::Subscript {
@@ -402,7 +398,14 @@ impl<'src, 'tok> SimpleFmt for SStmtInner<'src, 'tok> {
                 format!("{} {}", modifier.simple_fmt(), names_str)
             }
             Stmt::While { cond, body, .. } => {
-                format!("while {}: {}", cond.simple_fmt(), body.simple_fmt())
+                let cond_str = match cond {
+                    IfCondition::Expr(expr) => expr.simple_fmt(),
+                    IfCondition::Let { not_kw, pattern, value, .. } => {
+                        let not_str = if not_kw.is_some() { "not " } else { "" };
+                        format!("{}let {} = {}", not_str, pattern.simple_fmt(), value.simple_fmt())
+                    }
+                };
+                format!("while {}: {}", cond_str, body.simple_fmt())
             }
             Stmt::For {
                 pattern,

@@ -76,11 +76,11 @@ export Iterable = class(Traversable, Trait):
         let impl = () =>
             if f === None:
                 for i in self.iter:
-                    if Result(i) matches Ok(value):
+                    if let Ok(value) = Result(i):
                         yield value
             else:
                 for i in self.iter:
-                    if Result(f(i)) matches Ok(value):
+                    if let Ok(value) = Result(f(i)):
                         yield value
 
         impl.__name__ = f"filter_map"
@@ -126,7 +126,7 @@ export Iterable = class(Traversable, Trait):
     group_by = (self, f=None) =>
         let acc = dict()
         for i in self:
-            let key = f === None then i else f(i)
+            let key = if f === None then i else f(i)
             if not acc.__contains__(key):
                 acc[key] = []
             acc[key].append(i)
@@ -135,7 +135,7 @@ export Iterable = class(Traversable, Trait):
     count_by = (self, f=None) =>
         let acc = dict()
         for i in self:
-            let key = f === None then i else f(i)
+            let key = if f === None then i else f(i)
             if not acc.__contains__(key):
                 acc[key] = 0
             acc[key] += 1

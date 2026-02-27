@@ -11,7 +11,7 @@
 Koatl replaces Python's `def` keyword with concise arrow function syntax:
 
 ```koatl
-let fib = x => x matches 0 | 1 then 1 else fib(x-1) + fib(x-2)
+let fib = x => if x matches 0 | 1 then 1 else fib(x-1) + fib(x-2)
 let add = (a, b) => a + b
 let greet = name => "Hello, " + name | print
 ```
@@ -221,19 +221,41 @@ compare = (a, b) if a > b => a
 compare = (a, b) => b
 ```
 
-#### Pattern Matching with If-Expressions
+#### If Let (Pattern Matching in Conditions)
+
+`if let` destructures a value and enters the then-block only if the pattern matches. Captured variables are scoped to the then-block:
 
 ```koatl
-if x matches [a, *b]:
-    print(a, b)  # Variables a and b are available in scope
+if let [a, *b] = x:
+    print(a, b)  # Variables a and b are available in this scope
+else:
+    print("no match")
+```
 
-if x not matches [_, _]:
-    return None
+`if not let` is the inverse — the then-block must be of Never type (return/raise/break/continue), and captures leak to the surrounding scope:
 
-# Inverse matching: must return/raise/break/continue
-if [1, 2] not matches [x, y]:
+```koatl
+if not let [x, y] = value:
     return
 print(x, y)  # x and y are available (safe because we returned otherwise)
+```
+
+#### While Let
+
+`while let` loops while a pattern continues to match:
+
+```koatl
+while let ("Some", val) = data[idx]:
+    process(val)
+    idx = idx + 1
+```
+
+#### Matches (Capture-Free)
+
+The `matches` / `not matches` operator is available for capture-free boolean pattern checks:
+
+```koatl
+let matched = x matches [_, _]:   # no captures — just a boolean test
 ```
 
 ### 3. **Piping & Method Chaining**
@@ -264,9 +286,9 @@ list.filter($ > 5)      # => list.filter(x => x > 5)
 
 ### 5. **If-Expressions**
 
-If statements return values and support two syntaxes:
+If statements return values.
 
-**Classic (Python-style)** - preferred for statements/side effects:
+**Classic (Python-style)**:
 
 ```koatl
 if condition:
@@ -276,14 +298,14 @@ else:
     do_alternative()
 ```
 
-**Postfix (inline)** - preferred for expressions:
+**With `then` keyword** (inline only):
 
 ```koatl
-y = condition then 10 else 20
-x = is_valid then process(data) else default_value
+y = if condition then 10 else 20
+x = if is_valid then process(data) else default_value
 ```
 
-> **Style Note**: Use postfix if (`then`/`else`) for inline expressions where you need the result. Use classic if (`if:`/`else:`) for multi-statement blocks or side effects.
+> **Note**: `then` introduces a single inline expression — it cannot be followed by `:`. Use `:` for block bodies.
 
 ### 6. **Check-Expressions**
 
@@ -534,7 +556,7 @@ These are expressions that return values and control program flow:
 
 ### 1. **If-Expressions**
 
-If can be both expression and statement, with two syntaxes:
+If can be both expression and statement:
 
 **Classic syntax** (Python-style):
 
@@ -553,25 +575,24 @@ else:
     3
 ```
 
-**Postfix syntax** (inline):
+**With `then` keyword** (inline only):
 
 ```koatl
-y = condition then 10 else 20
-
-# Can also chain
-z = a then 1 else b then 2 else 3
+y = if condition then 10 else 20
+x = if is_valid then process(data) else default_value
 ```
 
-**Pattern matching in conditions**:
+> **Note**: `then` introduces a single inline expression — it cannot be followed by `:`. Use `:` for block bodies.
+
+**`if let` (pattern matching in conditions)**:
 
 ```koatl
-if x matches [a, b]:
-    print(a, b)  # a and b are bound here
+if let [a, b] = x:
+    print(a, b)  # a and b are bound in this scope
 
-if x not matches pattern:
-    # Must return/break/continue/raise here
-    return
-# Now safe to use x assuming pattern didn't match
+if not let [x, y] = value:
+    return  # Must return/break/continue/raise here
+print(x, y)  # Safe: captures leak after Never block
 ```
 
 ### 2. **Match-Expressions**
@@ -647,7 +668,7 @@ async_result = async memo:
 
 # In functions
 fib = x =>
-    x < 2 then @Memo.pure(1) else memo @fib(x-1) + @fib(x-2)
+    if x < 2 then @Memo.pure(1) else memo @fib(x-1) + @fib(x-2)
 ```
 
 ### 6. **Await & Yield Expressions**
@@ -767,7 +788,7 @@ Koatl uses Python-style indentation for blocks:
 if True:
     statement1
     statement2
-    let nested_value = inner then:
+    let nested_value = if inner:
         x
     else:
         y
@@ -940,7 +961,7 @@ create_cell = (x, y, alive=False) => {
 display_grid = (grid, size) =>
     (..size).for_each(y =>
         (..size)
-            .map(x => grid[(x, y)].alive then "██" else "  ")
+            .map(x => if grid[(x, y)].alive then "██" else "  ")
             .join_str("")
             |print
     )
@@ -955,7 +976,7 @@ Koatl supports several monadic patterns using the `@` bind operator:
 #### **Memo Monad** (Memoization)
 
 ```koatl
-fib = x => x < 2 then @Memo.pure(1) else memo @fib(x - 1) + @fib(x - 2)
+fib = x => if x < 2 then @Memo.pure(1) else memo @fib(x - 1) + @fib(x - 2)
 
 fib(200).run()  # Cached computation
 ```
@@ -1166,10 +1187,9 @@ The parser processes operators in this precedence order:
 
 **Special operators** (above binary precedence, processed in order):
 
-- `matches` / `not matches` - Pattern matching test
+- `matches` / `not matches` - Pattern matching test (capture-free)
 - `memo` - Memoization
 - `with` - Context manager
-- `if ... then ... else` - Conditional expression
 - `match:` - Pattern matching
 - `try: ... except: ... finally:` - Exception handling
 - `await` / `yield` - Control flow
