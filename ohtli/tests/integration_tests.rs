@@ -173,8 +173,8 @@ fn test_record_literal() {
 
 #[test]
 fn test_if_then_else() {
-    let input = "result = condition then value1 else value2";
-    let expected = "result = condition then value1 else value2";
+    let input = "result = if condition then value1 else value2";
+    let expected = "result = if condition then value1 else value2";
     assert_compare_formatting(input, expected);
 }
 
@@ -719,5 +719,112 @@ let b = 2
 a a
 let b = 2
 "#;
+    assert_compare_formatting(input, expected);
+}
+
+// --- if let / while let / then keyword tests ---
+
+#[test]
+fn test_if_let_block() {
+    let input = r#"if let [a, b] = value:
+    a + b"#;
+    let expected = r#"if let [a, b] = value:
+    a + b"#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_if_let_with_else() {
+    let input = r#"x = if let Some(v) = opt:
+    v
+else:
+    default"#;
+    let expected = r#"x = if let Some(v) = opt:
+    v
+else:
+    default"#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_if_not_let() {
+    let input = r#"if not let [x, y] = value:
+    raise
+else:
+    x + y"#;
+    let expected = r#"if not let [x, y] = value:
+    raise
+else:
+    x + y"#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_while_let_block() {
+    let input = r#"while let (ok, val) = source[i]:
+    total = total + val
+    i = i + 1"#;
+    let expected = r#"while let (ok, val) = source[i]:
+    total = total + val
+    i = i + 1"#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_if_then_inline() {
+    let input = "if condition then do_something()";
+    let expected = "if condition then do_something()";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_if_then_else_inline() {
+    let input = "x = if a then 1 else 2";
+    let expected = "x = if a then 1 else 2";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_elif_with_then() {
+    let input = r#"if a:
+    1
+elif b then 2
+else:
+    3"#;
+    let expected = r#"if a:
+    1
+elif b then 2
+else:
+    3"#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_if_let_then_inline() {
+    let input = "if let [a, b] = pair then a + b";
+    let expected = "if let [a, b] = pair then a + b";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_matches_capture_free() {
+    let input = "x matches [_, _]";
+    let expected = "x matches [_, _]";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_not_matches() {
+    let input = "x not matches 1 | 2";
+    let expected = "x not matches 1 | 2";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_if_matches_condition() {
+    let input = r#"if x matches [_, _]:
+    print("pair")"#;
+    let expected = r#"if x matches [_, _]:
+    print("pair")"#;
     assert_compare_formatting(input, expected);
 }
