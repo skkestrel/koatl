@@ -1,10 +1,10 @@
-# Formatting and Whitespace
+# Formatting & Syntax
 
-Koatl improves program readability and formatting in a few ways:
+Syntactic refinements over Python.
 
 ## Better continuations
 
-Line continuations are automatically inferred with indentation: no more backslashes at the end of every line.
+Line continuations are inferred from indentation — no more trailing backslashes:
 
 ```koatl
 a = 1 +
@@ -18,7 +18,7 @@ a()
 
 ## Scopes
 
-Koatl adds scopes to Python:
+Koatl adds block scoping to Python:
 
 ```koatl
 let a = 1
@@ -32,7 +32,7 @@ print(a)
 # 1
 ```
 
-The `nonlocal` keyword is never needed in Koatl, as declarations later in a scope can never affect previous statements:
+The `nonlocal` keyword is never needed, since declarations later in a scope cannot affect previous statements:
 
 ```koatl
 f = () =>
@@ -50,24 +50,19 @@ f()
 # 3
 ```
 
-## Nesting block comments
+## Nestable block comments
 
-Koatl adds `#- -#` block comments, which can nest inside each other, allowing more commenting flexibility
+Koatl adds `#- -#` block comments that can nest inside each other:
 
 ```koatl
 x = #- this is a #- nested -# comment -# 2
 ```
 
-> Note: The syntax highligher above is broken, but they do work in code.
+> Note: The syntax highlighter does not render these correctly, but they work in code.
 
-## Blocks-in-expressions
+## Block expressions
 
-Blocks-in-expressions allow long inline things in expressions.
-Like Rust, the final expression of a block is treated as its value.
-
-Opening round parentheses at the end of a line starts a block-expression on the next line.
-
-Statements can also be delimited by `;`.
+Parenthesized blocks evaluate to their final expression, like Rust. An opening `(` at the end of a line starts a new block, and statements within a block can also be separated by `;`.
 
 ```koatl
 x = (
@@ -102,9 +97,9 @@ foo = x =>
 foo(1) == 42
 ```
 
-## Optional commas in enumerations
+## Optional commas
 
-Multiline enumerations of lists, records, and function calls can drop commas.
+Multiline lists, records, and function calls can drop commas:
 
 ```koatl
 my_list = [1, 2+2, 3]
@@ -115,7 +110,7 @@ my_list = [
     3
 ]
 
-# {} defines a Record, not a dict - they're a subclass of dict that behaves like Javascript objects
+# {} defines a Record (a dict subclass that behaves like Javascript objects)
 my_record = {
     1: 4
     asdf: 4
@@ -138,21 +133,19 @@ function_call(
 
 ## Strings
 
-Regular strings work as expected, but many escape sequences are not yet supported...
+Regular strings work as expected, though many escape sequences are not yet supported.
 
 ### Raw strings
 
-Unlike Python, `r"..."` and `"""..."""` have the same semantics of "no escape sequences".
-
-The latter version can be extended with arbitrarily many `"` in a row if necessary:
+Unlike Python, `r"..."` and `"""..."""` have identical semantics of not processing escape sequences. The latter can be extended with arbitrarily many `"` characters if needed:
 
 ```koatl
 """""Having up to four """" in this string is possible."""""
 ```
 
-### fstrings
+### f-strings
 
-Like everywhere else, f-strings can contain blocks too:
+Like elsewhere in Koatl, f-strings can contain blocks:
 
 ```koatl
 f"Hello, my name is {
@@ -162,12 +155,12 @@ f"Hello, my name is {
 }"
 ```
 
-For reasons, format specifiers should be separated using `%` instead of `:`:
+Format specifiers use `%` instead of `:`:
 
 ```koatl
 f"{123%.2f}"
 ```
 
-### Verbatim fstrings
+### Verbatim f-strings
 
-Verbatim fstrings are either `rf"..."` or `f"""..."""`.
+Verbatim f-strings are written as `rf"..."` or `f"""..."""`.

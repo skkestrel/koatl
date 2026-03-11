@@ -13,13 +13,15 @@ export do = f => wraps(f)! (*args, **kwargs) =>
                 + "Use `return @MonadType.pure(value)` instead."
         )
 
-    try:
-        # TODO: this is a workaround to avoid recursion.
-        # is it possible to derive bind_gen directly from bind_once?
-
-        return m.bind_gen(gen)
+    let bind_gen = try:
+        m.bind_gen
     except AttributeError() =>
         None
+
+    if bind_gen !== None:
+        # TODO: this is a workaround to avoid recursion.
+        # is it possible to derive bind_gen directly from bind_once?
+        return bind_gen(gen)
 
     let recurse = v =>
         try:
@@ -28,7 +30,12 @@ export do = f => wraps(f)! (*args, **kwargs) =>
         except StopIteration() as e =>
             return m.pure(e.value)
 
-    try:
-        return m.bind_once(recurse)
+    let bind_once = try:
+        m.bind_once
     except AttributeError() =>
+        None
+
+    if bind_once !== None:
+        return bind_once(recurse)
+    else:
         raise ValueError("@ can only be used with an object that has `bind_once`.")

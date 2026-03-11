@@ -1,5 +1,7 @@
 # Troubleshooting
 
+When something goes wrong, inspect the transpiled Python output:
+
 ```koatl
 import ast
 import koatl.transpile

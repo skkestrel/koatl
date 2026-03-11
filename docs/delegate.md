@@ -1,6 +1,6 @@
 # Argument Delegation
 
-The `delegate` keyword copies argument names and defaults from another function's signature into your own. This reduces boilerplate when writing wrapper or forwarding functions.
+`delegate` copies argument names and defaults from another function's signature into your own, reducing boilerplate in wrapper and forwarding functions.
 
 ## Basic Usage
 
@@ -22,7 +22,7 @@ The `delegate` keyword copies argument names and defaults from another function'
 (1, 2)
 ```
 
-The delegated arguments become keyword-only parameters with defaults copied from the target at decoration time.
+Delegated arguments become keyword-only parameters with defaults copied from the target at decoration time.
 
 ## Aliases
 
@@ -68,7 +68,7 @@ Use `**name` inside `delegate(...)` to collect the target's remaining keyword ar
 (10, {'b': 20, 'c': 3})
 ```
 
-The extra args (`b`, `c`) are expanded into the wrapper's signature so callers get autocomplete and type checking. At call time they are collected into the `kw` dict.
+The extra args (`b`, `c`) are expanded into the wrapper's signature so callers get autocomplete and type checking, but at call time they are collected into the `kw` dict.
 
 ### Catch-All Behavior
 
@@ -84,7 +84,7 @@ If the target itself accepts `**kwargs`, the delegate's `**kwargs` acts as a cat
 
 ## Dotted Targets
 
-The delegate target can be any expression (not just an identifier) — attribute access, subscripts, etc.:
+The target can be any expression — attribute access, subscripts, etc.:
 
 ```koatl
 >>> let ns = {func: (*, x=10, y=20) => x + y}

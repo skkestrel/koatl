@@ -1,10 +1,10 @@
-# Operators
+# Operators & Expressions
 
-Koatl adds a number of operators that allow for much greater expressivity and convenience.
+Quick reference for Koatl's operators. See the [Introduction](intro) for motivated examples.
 
 ## Lambdas
 
-Koatl has no need for `def` as all functions can be defined using `=>`:
+Koatl replaces `def` with `=>` for all function definitions:
 
 ```koatl
 let f = (a, b, *args, **kwargs) =>
@@ -13,7 +13,7 @@ let f = (a, b, *args, **kwargs) =>
 
 ## Placeholder variables
 
-The placeholder variable `$` allows constructing a lambda from any expression, making interfacing with external code extremely easy
+The placeholder `$` constructs a lambda from any expression, making interfacing with external code straightforward:
 
 ```koatl
 f(a, $, c)
@@ -31,7 +31,7 @@ Rules:
 
 ## Piping
 
-`x | f` means `f(x)`, and can be chained, for intuitive piping syntax
+`x | f` means `f(x)` and can be chained for intuitive piping syntax:
 
 ```koatl
 data
@@ -44,7 +44,7 @@ data
 
 ## Check-expressions
 
-Check-expressions elegantly interface with the outside world without breaking the flow of a program with a try-catch block, instead returning exceptions as a regular value wrapped in Result:
+Check-expressions interface with the outside world without breaking program flow — instead of a try-catch block, exceptions are returned as a regular `Result` value:
 
 ```koatl
 >>> check a
@@ -55,7 +55,7 @@ Ok(1)
 
 ## If-expressions
 
-Most statements, including ifs, can act as expressions:
+Most statements, including `if`, can act as expressions:
 
 ```koatl
 x =
@@ -80,7 +80,7 @@ else:
 
 ## With-expressions
 
-Similar to above, with also yields a value
+`with` also yields a value:
 
 ```koatl
 x = with f = open("my_file.txt", "r"):
@@ -89,8 +89,7 @@ x = with f = open("my_file.txt", "r"):
 
 ## If Let and While Let
 
-`if let` destructures a value with pattern matching, entering the then-block only if the pattern matches.
-Captured variables are scoped to the then-block:
+`if let` destructures a value with pattern matching, entering the then-block only if the pattern matches. Captured variables are scoped to the then-block:
 
 ```koatl
 >>> x = [1, 2, 3]
@@ -111,8 +110,7 @@ See [Pattern matching](match) for more details.
 
 ## Matches-expressions
 
-Matches-expressions resolve to either True or False, using Python pattern matching (see [Pattern matching](match)).
-With `matches`, patterns must be capture-free (use `if let` for captures):
+The `matches` / `not matches` operator returns a boolean check against a pattern (see [Pattern matching](match)). Patterns must be capture-free — use `if let` for captures:
 
 ```koatl
 >>> x = [1, 2, 3]
@@ -128,7 +126,7 @@ This makes regex matching especially convenient with `if let`:
 123 456
 ```
 
-If-not-let expressions can be used to conditionally destructure values with a guard:
+`if not let` can be used to conditionally destructure values with a guard:
 
 ```koatl
 if not let str(x) = 123:
@@ -141,8 +139,7 @@ x.join(["a", "b"])
 
 ## Coalescing operators
 
-We can use coalescing operators to work with try-expressions and the Result monad.
-They lazily evaluate the RHS default value on Err, None, and Exceptions.
+Coalescing operators work with try-expressions and the Result monad, lazily evaluating the right-hand default on `Err`, `None`, and exceptions:
 
 ```koatl
 config_option = check get_config_value() ?? default_value
@@ -150,7 +147,7 @@ config_option = check get_config_value() ?? default_value
 
 ### Mapping operators
 
-Mapping operators `?.`, `?()`, `?[]`, work as usual, on both Results and regular values.
+The mapping operators `?.`, `?()`, and `?[]` work as usual on both `Result` values and regular values:
 
 ```koatl
 >>> None?.prop
@@ -179,7 +176,7 @@ my_saved_slice = ..5
 some_other_array[my_saved_slice]
 ```
 
-Slices implement the Iterable trait (which is distinct, but related to, `__iter__`), so they can be used as ranges like normal:
+Slices implement the `Iterable` trait (which is distinct from, but related to, `__iter__`), so they can be used as ranges:
 
 ```koatl
 for i in ..10:
@@ -192,11 +189,11 @@ Use `===` or `!==` instead of `is` and `is not`.
 
 ## Decorators
 
-As a synonym for calling a one-argument function, the `!` operator can be used to attach decorators:
+The `!` operator calls a one-argument function, serving as a compact decorator syntax:
 
 ```koatl
 Foo = class:
     do_something = staticmethod! () => ...
 ```
 
-`a! b` is equivalent to `a(b)`.
+`a! b` is equivalent to `a(b)`. See also [Extension methods](extensions) for how this is used with traits and `Record.method`.

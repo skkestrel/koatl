@@ -2,11 +2,7 @@
 
 ## Records
 
-Koatl uses `{}` to define Record literals, instead of Python's dict.
-
-Records are a subclass of dict, with the difference that Record forwards attribute lookup to indexing - just like Javascript!
-
-Also, string keys in Records don't need quotes, making it easy to construct Records. Wrap the key in round brackets `()` to stick an expression in instead.
+Records replace Python dicts with unquoted string keys, JS-style dot access, optional commas, and support for methods and properties. Wrap a key in `()` to compute it.
 
 ```koatl
 x = {a: 1}
@@ -19,7 +15,7 @@ x["my_key"] == 1
 x["key"] == 2
 ```
 
-Multiline records don't need commas - just ensure that the `{` is the last character on the first line, to open a new block:
+Multiline records don't need commas — just ensure the `{` is the last character on the line so it opens a new block:
 
 ```koatl
 x = {
@@ -29,7 +25,7 @@ x = {
 }
 ```
 
-Records can be imbued with 1) functions, 2) methods, and 3) properties:
+Records can hold functions, methods, and properties (the `!` operator is a decorator shorthand — see [Operators](operators)):
 
 ```koatl
 x = {
@@ -46,7 +42,7 @@ x.own_a_prop == 1
 
 ## Lists
 
-Lists are the same as Python, except that multiline lists don't need commas either.
+Lists behave like Python's, except that multiline lists don't need commas.
 
 ```koatl
 x = [
@@ -58,7 +54,7 @@ x = [
 
 ## Tuples
 
-Tuples are the same as Python, except you can't have multiline tuples - those are interpreted as blocks instead.
+Tuples behave like Python's, but multiline parenthesized expressions are interpreted as blocks rather than tuples:
 
 ```koatl
 x = 1, 2

@@ -1,28 +1,17 @@
-# Monads
+# Monads (experimental)
 
-Koatl has very basic support for some common monads.
-Unfortunately, making useful constructions in this area is very difficult without a type system, so there are many lacking features.
+Koatl uses `@` as a bind operator to chain monadic computations. Four monads are built in: **Memo**, **Result**, **Async**, and **Env**.
 
-Koatl uses `@` as a bind-operator to simulate some common and useful monads:
+Inside a function, `@expr` yields-and-binds the monadic value, producing flat, sequential-looking code for inherently nested operations:
 
 ```koatl
 f = () =>
-    @x
-    @y
+    x = @get_value()     # unwraps or short-circuits
+    y = @process(x)
+    x + y
 ```
 
-becomes
-
-```python
-@__tl__.do
-def f():
-    yield x
-    return (yield y)
-```
-
-Due to limitations of generators (they can't be copied), `@` specifically requires `bind_once(self, f)` instead of the usual `bind(self, f)`;
-the difference is that `f` should called at most once in `bind_once(self, f)`.
-This represents a deterministic monad, ruling out the List monad.
+Due to limitations of generators (they cannot be copied), `@` specifically requires `bind_once(self, f)` instead of the usual `bind(self, f)` — the difference is that `f` should be called at most once. This represents a deterministic monad, ruling out the List monad.
 
 ## Memo
 
@@ -45,12 +34,11 @@ g = Memo.fn! x =>
 g().run()
 ```
 
-A Memo instance can be constructed using `Memo.fn(function_to_memoize)`, or `Memo.value(unique_id, dependencies, function)`.
-Using the `memo` keyword automatically constructs a `@Memo.value(id, deps, fn)`, where `deps` is inferred using variables _directly_ captured by the proceeding expression (not including global captures, or captures by inner nested functions).
+A `Memo` instance can be constructed using `Memo.fn(function_to_memoize)` or `Memo.value(unique_id, dependencies, function)`. The `memo` keyword automatically constructs `@Memo.value(id, deps, fn)`, where `deps` is inferred from variables _directly_ captured by the following expression (excluding global captures and captures by inner nested functions).
 
 ## Result
 
-The Result type has two subtypes, Ok and Err. Using the Result constructor will automatically turn a value into one of the two subtypes:
+The Result type has two subtypes, `Ok` and `Err`. The `Result` constructor maps a value to one of them automatically:
 
 ```koatl
 >>> Result(1)
@@ -63,7 +51,7 @@ Err(None)
 Err(ValueError())
 ```
 
-The Result monad represents error handling and early return:
+The Result monad represents error handling with early return:
 
 ```koatl
 f = () =>
@@ -89,7 +77,7 @@ def f():
     return x + y
 ```
 
-or, perhaps more familiarly in Rust,
+or perhaps more familiarly in Rust:
 
 ```rust
 fn f() -> Result<T, E> {
@@ -101,10 +89,9 @@ fn f() -> Result<T, E> {
 
 To explicitly mark an exception or None as an Ok value, simply use `Ok(None)`.
 
-While errors typically aren't returned from functions in Python, the `check` operator (see [Operators](operators)) makes it very easy to use these constructions to interface with external code.
+While errors aren't typically returned from functions in Python, the `check` operator (see [Operators](operators)) makes it straightforward to interface with external code using these constructions.
 
-Important: Result provides a default `bind_once` implementation for ALL types that don't otherwise define it;
-this means that (1).bind_once(...) will work, and therefore, the @ operator will also work with bare non-Result values using Result semantics.
+Result provides a default `bind_once` implementation for ALL types that don't otherwise define it, which means `(1).bind_once(...)` works — and therefore the `@` operator also works with bare non-Result values using Result semantics.
 
 ```koatl
 external_function().(Result) match:
@@ -134,8 +121,7 @@ refreshed!
 
 ## Env
 
-The Env monad allows interfacing with an external context object.
-Instead of having to pass around a context object as an explicit parameter:
+The Env monad provides access to an external context object, replacing the need to thread a parameter through every function. Instead of:
 
 ```koatl
 g = ctx =>
@@ -147,7 +133,7 @@ f = ctx =>
 f(ctx)
 ```
 
-We can use the Env monad:
+you can use the Env monad:
 
 ```koatl
 g = () =>

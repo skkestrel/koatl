@@ -1,8 +1,10 @@
-# Pattern matching
+# Pattern Matching
 
-## Pattern matching in for loops and function arguments
+Pattern matching is available everywhere in Koatl: function arguments, for loops, if/while conditions, and standalone match expressions.
 
-Koatl allows for incredible flexibility in function arguments and for-loops by automatically matching complex constructions:
+## In function arguments and for loops
+
+Function arguments and for-loop variables support full pattern matching:
 
 ```koatl
 f = [x, [y, z]] => x + y + z
@@ -33,28 +35,7 @@ for str(x) in ["x", "y", "z"]:
 
 ## Matching against local values
 
-Koatl uses the same rules as Python pattern matching, with one improvement: matching against unqualified values.
-
-In Python, this won't work:
-
-```python
-y = 2
-match x:
-    case y:
-        # this treats y as a capture
-        # instead of a value to match against!
-```
-
-This is the correct way:
-
-```python
-ns = SimpleNamespace(y=2)
-match x:
-    case ns.y:
-        # this matches correctly
-```
-
-In Koatl, matching against _captures_ versus _values_ is distinguished by a leading `.`:
+Python's `match` can't match against a plain variable — you need a namespace workaround. Koatl uses a leading `.` to distinguish captures from value matches:
 
 ```koatl
 y = 2
@@ -72,9 +53,9 @@ result = x match:
     _ => False
 ```
 
-## Try-catch and check-expressions with pattern matching exceptions
+## Try-catch with pattern matching
 
-Koatl unifies exception blocks with the same syntax as pattern matching:
+Exception handlers use the same pattern syntax:
 
 ```koatl
 try:
@@ -97,8 +78,7 @@ y = check a except ValueError() # exception will be raised!
 
 ## If Let and While Let
 
-`if let` destructures a value with pattern matching, entering the then-block only if the pattern matches.
-Captured variables are scoped to the then-block:
+`if let` enters a block only when a destructuring pattern matches. `if not let` is the inverse — the block must diverge (return/raise/break/continue), and captures leak to the surrounding scope:
 
 ```koatl
 >>> x = [1, 2, 3]
@@ -106,9 +86,6 @@ Captured variables are scoped to the then-block:
 >>>    print(a, b)
 1 [2, 3]
 ```
-
-`if not let` is the inverse; captured variables leak to the surrounding scope, but the then-block
-must be of Never type (i.e., it raises, returns, breaks, or continues at the end):
 
 ```koatl
 >>> if not let [x, y] = [1, 2]:

@@ -1,6 +1,6 @@
 # Koatl
 
-Koatl is a functional-first language transpiling to Python.
+Python, with the features it should have had.
 
 [Get Started](#intro)
 [GitHub](https://github.com/skkestrel/koatl)
