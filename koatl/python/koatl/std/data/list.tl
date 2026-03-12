@@ -15,7 +15,7 @@ export List = class(Monad):
                 + "Wrap in Ok to use the Result monad."
         )
 
-    bind = (self, f) => List(self.flat_map(f))
+    bind = (self, f) => List(self.iter.flat_map(f))
 
     pure = staticmethod! x => [x]
 

@@ -79,8 +79,8 @@ simulate_market_day = portfolio =>
 
 # Portfolio analysis with comprehensive pattern matching
 analyze_portfolio = (portfolio, date) =>
-    let total_value = portfolio.values().map($.current_value()).sum()
-    let stocks = portfolio.values().list()
+    let total_value = portfolio.values().iter.map($.current_value()).sum()
+    let stocks = portfolio.values().iter.list()
 
     # Risk analysis using pattern matching on volatility
     let risk_assessment = stocks
@@ -91,7 +91,7 @@ analyze_portfolio = (portfolio, date) =>
                 x if x < 0.3 => "Medium"
                 _ => "High"
         })
-        .group_by($.risk_level)
+        .iter.group_by($.risk_level)
 
     # Sector diversification (simplified)
     let sector_allocation = stocks
@@ -102,12 +102,12 @@ analyze_portfolio = (portfolio, date) =>
                 else "Other"
             value: stock.current_value()
         })
-        .group_by($.sector)
-        .map([sector, holdings] => {
+        .iter.group_by($.sector)
+        .iter.map([sector, holdings] => {
             sector: sector
-            total_value: holdings.map($.value).sum()
-            percentage: holdings.map($.value).sum() / total_value * 100
-        })
+            total_value: holdings.map($.value).iter.sum()
+            percentage: holdings.map($.value).iter.sum() / total_value * 100
+        }).list()
 
     # Performance metrics
     let performance = stocks.map(stock => {
@@ -115,21 +115,21 @@ analyze_portfolio = (portfolio, date) =>
         return_rate: stock.annualized_return(date)
         days_held: stock.days_held(date)
         profit_loss: stock.current_value() - (stock.purchase_price * stock.shares)
-    }).list()
+    })
 
     {
         total_value: total_value
         stock_count: stocks.len
-        best_performer: performance.max($.return_rate)
-        worst_performer: performance.min($.return_rate)
-        risk_breakdown: risk_assessment.map([level, stocks] => {
+        best_performer: performance.iter.max($.return_rate)
+        worst_performer: performance.iter.min($.return_rate)
+        risk_breakdown: risk_assessment.iter.map([level, stocks] => {
             risk_level: level
             count: stocks.len
-            total_value: stocks.map($.current_value()).sum()
-        })
+            total_value: stocks.map($.current_value()).iter.sum()
+        }).list()
         sector_allocation: sector_allocation
-        avg_return: performance.map($.return_rate).mean()
-        total_profit_loss: performance.map($.profit_loss).sum()
+        avg_return: performance.map($.return_rate).iter.mean()
+        total_profit_loss: performance.map($.profit_loss).iter.sum()
     }
 
 run_portfolio_simulation = () =>
@@ -147,7 +147,7 @@ run_portfolio_simulation = () =>
 
     # Build portfolio with error handling
     let portfolio = initial_actions
-        .fold({}, (portfolio, action) =>
+        .iter.fold({}, (portfolio, action) =>
             update_portfolio(portfolio, action, date) match:
                 Ok(new_portfolio) => new_portfolio
                 Err(error) => (
@@ -159,7 +159,7 @@ run_portfolio_simulation = () =>
     print(f"📊 Initial portfolio created with {portfolio.len} stocks")
 
     # Simulate 30 days of trading
-    let final_portfolio = (..30).fold(portfolio, (current_portfolio, day) =>
+    let final_portfolio = (..30).iter.fold(portfolio, (current_portfolio, day) =>
         print(f"📅 Day {day + 1}")
         date = date + timedelta(days=1)
 

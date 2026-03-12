@@ -25,7 +25,7 @@ f = () =>
     @Async.sleep(0.05)
 
 start = time.time()
-(..20).map(_ => f()) | (Async.gather(*$)) | Async.run
+(..20).iter.map(_ => f()) | (Async.gather(*$)) | Async.run
 end = time.time()
 
 assert_eq(x | len, 40)

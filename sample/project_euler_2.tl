@@ -6,7 +6,7 @@ let fib = n =>
 
 let ctx = Memo.Cache()
 
-let result = (..)
+let result = (..).iter
     .map(i => fib(i).run(ctx))
     .take_while($ <= 4_000_000)
     .filter($ % 2 == 0)

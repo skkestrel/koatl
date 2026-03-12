@@ -35,8 +35,8 @@ Extension.method(str, "sentiment_score")! self =>
     let negative_words = ["bad", "terrible", "awful", "hate", "dislike", "sad", "angry", "frustrated", "annoying"]
 
     let words = self.lower().split()
-    let positive_count = positive_words.filter(words.__contains__).count()
-    let negative_count = negative_words.filter(words.__contains__).count()
+    let positive_count = positive_words.filter(words.__contains__).iter.tally()
+    let negative_count = negative_words.filter(words.__contains__).iter.tally()
 
     positive_count - negative_count
 
@@ -155,7 +155,7 @@ create_conversation_manager = bots => {
 
             text if ("switch" in text or "change" in text) =>
                 # Let user switch bots
-                let available = self.bots.keys().list()
+                let available = self.bots.keys().iter.list()
                 f"Available bots: {", ".join(available)}. Which would you like?"
 
             _ if self.active_bot === None =>
@@ -221,7 +221,7 @@ demo_conversations = () =>
         "Goodbye!"
     ]
 
-    demo_messages.for_each(message =>
+    demo_messages.iter.for_each(message =>
         print(f"User: {message}")
         print(f"Weather Bot: {weather_bot.chat_with(message)}")
         print(f"News Bot: {news_bot.chat_with(message)}")

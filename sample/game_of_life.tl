@@ -27,16 +27,16 @@ create_cell = (x, y, alive=False) => {
 
 # Grid operations using functional composition
 create_grid = size =>
-    (..size).flat_map(y =>
-        (..size).map(x => ((x, y), create_cell(x, y, random.random() < 0.3)))
+    (..size).iter.flat_map(y =>
+        (..size).iter.map(x => ((x, y), create_cell(x, y, random.random() < 0.3)))
     ).dict()
 
 # Display grid using Unicode and pattern matching
 display_grid = (grid, size) =>
     print("\n" + "─" * (size * 2 + 1))
 
-    (..size).for_each(y =>
-        let row = (..size)
+    (..size).iter.for_each(y =>
+        let row = (..size).iter
             .map(x => if grid[(x, y)].alive then "██" else "  ")
             .join_str("")
         print(f"│{row}│")
@@ -52,7 +52,7 @@ count_living_neighbors = (grid, cell, size) =>
 
 # Evolution step using monadic operations and pattern matching
 evolve_grid = (grid, size) =>
-    grid.items()
+    grid.items().iter
         .map([pos, cell] =>
             let living_neighbors = count_living_neighbors(grid, cell, size)
             let new_state = cell.next_state(living_neighbors)
@@ -62,13 +62,13 @@ evolve_grid = (grid, size) =>
 
 # Pattern recognition for common configurations
 analyze_patterns = (grid, size) =>
-    let living_cells = grid.values().filter($.alive).list()
+    let living_cells = grid.values().iter.filter($.alive).list()
     let total_alive = living_cells.len
 
     # Check for still lifes (blocks, beehives, etc.)
     let still_life_candidates = living_cells
-        .group_by(cell => (cell.x // 4, cell.y // 4))  # Group into 4x4 regions
-        .filter([_, cells] => cells.len >= 4 and cells.len <= 6)
+        .iter.group_by(cell => (cell.x // 4, cell.y // 4))  # Group into 4x4 regions
+        .iter.filter([_, cells] => cells.len >= 4 and cells.len <= 6)
 
     # Check for oscillators by looking at neighbor patterns
     let potential_oscillators = living_cells
@@ -84,9 +84,9 @@ analyze_patterns = (grid, size) =>
     ]
 
     let detected_gliders = glider_patterns
-        .flat_map(pattern =>
-            (..size-2).flat_map(base_x =>
-                (..size-2).map(base_y =>
+        .iter.flat_map(pattern =>
+            (..size-2).iter.flat_map(base_x =>
+                (..size-2).iter.map(base_y =>
                     if pattern.map([dx, dy] => (base_x + dx, base_y + dy))
                         .all(pos => grid[pos]?.alive ?? False):
                             Ok((base_x, base_y))
@@ -100,9 +100,9 @@ analyze_patterns = (grid, size) =>
     {
         total_alive: total_alive
         density: total_alive / (size * size) * 100
-        still_life_regions: still_life_candidates.count()
-        oscillator_candidates: potential_oscillators.count()
-        detected_gliders: detected_gliders.count()
+        still_life_regions: still_life_candidates.tally()
+        oscillator_candidates: potential_oscillators.tally()
+        detected_gliders: detected_gliders.tally()
 
         # Stability analysis
         stability: total_alive match:
@@ -126,14 +126,14 @@ track_statistics = () => {
     get_trends: Record.method! self =>
         if self.generations.len >= 3:
             let recent = self.generations[-3..]
-            let densities = recent.map($.density).list()
+            let densities = recent.map($.density)
 
             {
                 trend: if densities[-1] > densities[0] then "growing"
                     else if densities[-1] < densities[0] then "shrinking"
                     else "stable"
-                avg_density: densities.mean()
-                stability_changes: recent.map($.stability).unique().count()
+                avg_density: densities.iter.mean()
+                stability_changes: recent.map($.stability).iter.unique().tally()
             }
         else:
             {trend: "insufficient_data", avg_density: 0, stability_changes: 0}
@@ -204,7 +204,7 @@ create_pattern_editor = size => {
             False
 
     load_pattern: Record.method! (self, pattern, offset_x=0, offset_y=0) =>
-        pattern.for_each([x, y] =>
+        pattern.iter.for_each([x, y] =>
             self.toggle_cell(x + offset_x, y + offset_y)
         )
 
@@ -224,7 +224,7 @@ PATTERNS = {
 run_pattern_demo = () =>
     print("🎭 Running Pattern Demonstrations\n")
 
-    PATTERNS.items().for_each([name, pattern] =>
+    PATTERNS.items().iter.for_each([name, pattern] =>
         print(f"Demonstrating: {name.upper()}")
 
         let editor = create_pattern_editor(10)
@@ -234,7 +234,7 @@ run_pattern_demo = () =>
         display_grid(grid, 10)
 
         # Show evolution for a few steps
-        (..5).fold(grid, (current_grid, step) =>
+        (..5).iter.fold(grid, (current_grid, step) =>
             time.sleep(0.8)
             let next_grid = evolve_grid(current_grid, 10)
             print(f"Step {step + 1}:")

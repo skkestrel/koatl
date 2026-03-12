@@ -61,42 +61,41 @@ analyze_repos = query =>
                 category: classify_language(repo.language)
                 activity: repo.activity_score()
             })
-            .sorted(repo => repo.activity, reverse=True)
+            .iter.sorted(repo => repo.activity, reverse=True)
     )
 
 compute_stats = repos =>
-    let by_language = repos.group_by($.language)
-    let by_category = repos.group_by($.category)
+    let by_language = repos.iter.group_by($.language)
+    let by_category = repos.iter.group_by($.category)
 
     {
         total_repos: repos.len
-        total_stars: repos.map($.stars).sum()
-        avg_stars: repos.map($.stars).mean()
+        total_stars: repos.map($.stars).iter.sum()
+        avg_stars: repos.map($.stars).iter.mean()
 
         top_languages: by_language
-            .map([lang, repos] => {
+            .iter.map([lang, repos] => {
                 language: lang
                 count: repos.len
-                total_stars: repos.map($.stars).sum()
-                avg_activity: repos.map($.activity).mean()
+                total_stars: repos.map($.stars).iter.sum()
+                avg_activity: repos.map($.activity).iter.mean()
             })
-            .sorted($.total_stars, reverse=True)
-            .take(5),
+            .iter.sorted($.total_stars, reverse=True)[..5],
 
         categories: by_category
-            .map([cat, repos] => {
+            .iter.map([cat, repos] => {
                 category: cat
                 count: repos.len
-                languages: repos.map($.language).unique().take(3)
+                languages: repos.map($.language).iter.unique().take(3).list()
             })
-            .sorted($.count, reverse=True),
+            .iter.sorted($.count, reverse=True),
 
-        most_active: repos.take(3).map(repo => {
+        most_active: repos.iter.take(3).map(repo => {
             name: repo.name
             language: repo.language
             stars: repo.stars
             activity_score: repo.activity
-        })
+        }).list()
     }
 
 display_results = (query, result) =>
@@ -123,7 +122,7 @@ display_results = (query, result) =>
             )
 
             print(f"\n⭐ Most Active:")
-            stats.most_active.for_each(repo =>
+            stats.most_active.iter.for_each(repo =>
                 print(f"  {repo.name} ({repo.language}): {repo.stars} stars, score: {repo.activity_score}")
             )
 

@@ -35,4 +35,4 @@ Virtual resolution order is as follows:
 
 The `iter` extension attribute is built in to the Koatl runtime and is used in `for .. in` loops as well as `yield from`. It delegates to `items()` when available (making dict iteration more predictable) and also provides an implementation for slices.
 
-The `Iterable` trait from `koatl.prelude.iterable` (see [Prelude](prelude)) is automatically registered as an extension for all types with an `iter`, providing common methods for working with iterators.
+The `Iterable` trait from `koatl.prelude.iterable` (see [Prelude](prelude)) marks any type with an `iter` property. The `Iterator` trait is automatically registered as an extension for all types with `__next__`, providing common methods for working with iterators.

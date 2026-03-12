@@ -11,7 +11,8 @@ word_count = url =>
         .text
         .split()
         .map(re.sub("[^a-zA-Z]", "", $))
-        .count_by($.lower())
+        .iter.count_by($.lower())
+        .items().iter
         .sorted([_, value] => value, reverse=True)
         .take(10)
         .list()
@@ -26,4 +27,4 @@ books = {
 let rec = books.map([key, value] => (key, @word_count(value))).traverse().run()
     | Record
 
-rec.for_each(print)
+rec.iter.for_each(print)

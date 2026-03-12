@@ -46,7 +46,7 @@ extract_content = (soup, content_type="text") =>
 
         "headings" =>
             # Extract heading hierarchy
-            ["h1", "h2", "h3", "h4", "h5", "h6"].flat_map(tag =>
+            ["h1", "h2", "h3", "h4", "h5", "h6"].iter.flat_map(tag =>
                 soup.find_all(tag).map(heading => {
                     level: int(tag[1])
                     text: heading.get_text().strip()
@@ -107,8 +107,8 @@ create_page = (url, html_content) => {
         ]
 
         words.filter(word => word not in stop_words)
-            .count_by()  # Count frequency
-            .items()
+            .iter.count_by()  # Count frequency
+            .items().iter
             .sorted($[1], reverse=True)  # Sort by frequency
             .take(top_n)
             .map($[0])  # Get just the words
@@ -201,7 +201,7 @@ create_scraper = (delay=1.0, max_retries=3, timeout=10) => {
 
         let crawl_recursive = () =>
             if queue.len == 0 or results.len >= max_pages:
-                results.values().list()
+                results.values().iter.list()
             else:
                 let (current_url, depth) = queue.pop(0)
 
@@ -213,7 +213,7 @@ create_scraper = (delay=1.0, max_retries=3, timeout=10) => {
                         # Add internal links to queue if within depth limit
                         if depth < max_depth:
                             let new_links = page.internal_links()
-                                .map(link => urljoin(current_url, link.url))
+                                .iter.map(link => urljoin(current_url, link.url))
                                 .filter(url => url not in visited and validate_url(url))
                                 .take(5)  # Limit links per page
 
@@ -237,11 +237,11 @@ analyze_content = pages =>
     if pages.len == 0:
         {error: "No pages to analyze"}
     else:
-        let total_words = pages.map($.word_count()).sum()
-        let all_keywords = pages.flat_map(page => page.extract_keywords(5))
+        let total_words = pages.map($.word_count()).iter.sum()
+        let all_keywords = pages.iter.flat_map(page => page.extract_keywords(5))
         let keyword_freq = all_keywords.count_by()
 
-        let link_analysis = pages.flat_map(page =>
+        let link_analysis = pages.iter.flat_map(page =>
             page.get_links().map(link => {
                 link: link,
                 page_url: page.url
@@ -255,41 +255,37 @@ analyze_content = pages =>
             page_count: pages.len
             total_words: total_words
             avg_words_per_page: if pages.len > 0 then total_words / pages.len else 0
-            total_reading_time: pages.map($.reading_time()).sum()
+            total_reading_time: pages.map($.reading_time()).iter.sum()
 
             # Top keywords across all pages
-            top_keywords: keyword_freq.items()
-                .sorted($[1], reverse=True)
-                .take(10)
-                .map([keyword, count] => {keyword: keyword, frequency: count})
-                .list()
+            top_keywords: keyword_freq.items().iter
+                .sorted($[1], reverse=True)[..10]
+                .iter.map([keyword, count] => {keyword: keyword, frequency: count})
 
             # Page analysis
-            pages_by_size: pages.sorted($.word_count(), reverse=True).map(page => {
+            pages_by_size: pages.iter.sorted($.word_count(), reverse=True).map(page => {
                 url: page.url
                 title: page.get_metadata().title
                 word_count: page.word_count()
                 reading_time: page.reading_time()
-                internal_links: page.internal_links().count()
-                external_links: page.external_links().count()
-            }).list()
+                internal_links: page.internal_links().len
+                external_links: page.external_links().len
+            })
 
             # Link analysis
-            link_domains: link_analysis.map([domain, links] => {
+            link_domains: link_analysis.iter.map([domain, links] => {
                 domain: domain
                 link_count: links.len
-                unique_texts: links.map($.link.text).unique().count()
-            }).sorted($.link_count, reverse=True).list()
+                unique_texts: links.map($.link.text).iter.unique().tally()
+            }).iter.sorted($.link_count, reverse=True)
 
             # Content patterns
-            common_headings: pages.flat_map($.get_headings())
+            common_headings: pages.iter.flat_map($.get_headings())
                 .map($.text.lower())
                 .count_by()
-                .items()
+                .items().iter
                 .filter($[1] > 1)  # Appear on multiple pages
-                .sorted($[1], reverse=True)
-                .take(5)
-                .list()
+                .sorted($[1], reverse=True)[..5]
         }
 
 # Report generation with pattern matching
@@ -310,12 +306,12 @@ generate_report = (analysis, format="text") =>
 {analysis.top_keywords.map(kw => f"  • {kw.keyword} ({kw.frequency} times)").join_str("\n")}
 
 📄 Pages by Size:
-{analysis.pages_by_size.take(5).map(page =>
+{analysis.pages_by_size.iter.take(5).map(page =>
     f"  • {page.title or page.url} - {page.word_count} words ({page.reading_time}min read)"
 ).join_str("\n")}
 
 🔗 Link Analysis:
-{analysis.link_domains.take(5).map(domain =>
+{analysis.link_domains.iter.take(5).map(domain =>
     f"  • {domain.domain}: {domain.link_count} links"
 ).join_str("\n")}
 
@@ -376,7 +372,7 @@ run_single_page_demo = () =>
         "https://httpbin.org/robots.txt"
     ]
 
-    demo_urls.for_each(url =>
+    demo_urls.iter.for_each(url =>
         print(f"\n🌐 Analyzing: {url}")
 
         scraper.fetch_page(url).run() match:
@@ -385,8 +381,8 @@ run_single_page_demo = () =>
                 print(f"📄 Title: {metadata.title}")
                 print(f"📝 Words: {page.word_count()}")
                 print(f"⏱️  Reading time: {page.reading_time()} minutes")
-                print(f"🔗 Links: {page.get_links().count()}")
-                print(f"🖼️  Images: {page.get_images().count()}")
+                print(f"🔗 Links: {page.get_links().len}")
+                print(f"🖼️  Images: {page.get_images().len}")
 
                 let keywords = page.extract_keywords(5)
                 print(f"🔑 Keywords: {keywords.join_str(", ")}")

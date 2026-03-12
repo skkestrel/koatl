@@ -17,6 +17,7 @@ export mod = RootModulesProxy()
 # Extensions
 
 Extension.trait(Iterable)
+Extension.trait(Iterator)
 
 Extension.method(str, "match")! (regex, str) => Pattern(regex).match(str)
 Extension.method(str, "matches")! (str, regex) => Pattern(regex).match(str)
@@ -24,6 +25,12 @@ Extension.method(str, "matches")! (str, regex) => Pattern(regex).match(str)
 Extension.property(list, "len")! List.len.fget
 Extension.method(list, "map")! (self, f) => self.iter.map(f).list()
 Extension.method(list, "filter")! (self, f) => self.iter.filter(f).list()
+
+Extension.method(set, "map")! (self, f) => self.iter.map(f).set()
+Extension.method(set, "filter")! (self, f) => self.iter.filter(f).set()
+
+Extension.method(tuple, "map")! (self, f) => self.iter.map(f).tuple()
+Extension.method(tuple, "filter")! (self, f) => self.iter.filter(f).tuple()
 
 Extension.method(dict, "map")! (self, f) => self.iter.map(f).dict()
 Extension.method(dict, "map_values")! (self, f) => self.iter.map([k, v] => [k, f(v)]).dict()

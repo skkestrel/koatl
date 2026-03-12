@@ -57,4 +57,3 @@ get_user_details = (data, user_id) =>
             Err(e) => print(f"Error fetching details: {repr(e)}")
             Ok() => print("Details fetched successfully.")
         print("-" * 20))
-    .list()

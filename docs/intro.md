@@ -36,16 +36,16 @@ In Koatl:
 
 ```koatl
 orders
+    .iter
     .filter($.status == "pending")
     .group_by($.customer_id)
-    .map([id, items] => {id, total: items.map($.price).sum()})
+    .iter
+    .map([id, items] => {id, total: items.iter.map($.price).sum()})
     .filter($.total > 100)
-    .sorted($.total, reverse=True)
-    .take(10)
-    .list()
+    .sorted($.total, reverse=True)[..10]
 ```
 
-Each step occupies one line, with no temporary variables and no `setdefault` incantations. Records use unquoted keys with dot access, and iterables gain `.filter`, `.map`, `.group_by`, and the rest through Koatl's [extension system](extensions). That directness extends to error handling, scoping, and function definitions:
+Each step occupies one line, with no temporary variables and no `setdefault` incantations. Records use unquoted keys with dot access, and iterators gain `.filter`, `.map`, `.group_by`, and the rest through Koatl's [extension system](extensions). That directness extends to error handling, scoping, and function definitions:
 
 ```koatl
 # One-line fallback instead of a four-line try/except
@@ -107,7 +107,7 @@ save_to(db, transform(do_something(data)), format="json")
 `$` works anywhere you would otherwise reach for `lambda`:
 
 ```koatl
-users.filter($.age > 18).map($.name.upper()).sorted()
+users.iter.filter($.age > 18).map($.name.upper()).sorted()
 ```
 
 <details>
@@ -130,7 +130,7 @@ let add = (a, b) => a + b
 # Multi-line: just indent
 let process = (data, threshold) =>
     let filtered = data.filter($ > threshold)
-    filtered.map($ * 2).list()
+    filtered.map($ * 2)
 
 # Pattern-matched argument
 let head = [first, *rest] => first
@@ -410,8 +410,8 @@ except (AttributeError, TypeError):
 Extension methods attach new methods to any type, including builtins, without modifying class definitions — and [traits](extensions) are applied automatically to any type that satisfies their requirements:
 
 ```koatl
-[1, 2, 3].map($ * 2).filter($ > 3).list()   # [4, 6]
-"hello".map($.upper()).join_str("")           # "HELLO"
+[1, 2, 3].map($ * 2).filter($ > 3)          # [4, 6]
+"hello".iter.map($.upper()).join("")          # "HELLO"
 {a: 1, b: 2}.map_values($ * 10)              # {a: 10, b: 20}
 
 # Define your own
@@ -426,10 +426,10 @@ Extension.method(int, "factorial")! self =>
 The `..` operator creates slices as first-class values that compose naturally with the rest of the language:
 
 ```koatl
-(..10).map($ ** 2).list()         # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
+(..10).iter.map($ ** 2).list()         # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
 [1, 2, 3, 4, 5][2..]              # [3, 4, 5]
 
-(1..100)
+(1..100).iter
     .filter($ %% 7 == 0)
     .map($ ** 2)
     .take(5)

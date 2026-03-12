@@ -176,7 +176,7 @@ my_saved_slice = ..5
 some_other_array[my_saved_slice]
 ```
 
-Slices implement the `Iterable` trait (which is distinct from, but related to, `__iter__`), so they can be used as ranges:
+Slices implement the `Iterable` trait (which is distinct from, but related to, `__iter__`), so they can be used as ranges. Call `.iter` to enter the `Iterator` pipeline:
 
 ```koatl
 for i in ..10:

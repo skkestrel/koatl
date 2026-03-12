@@ -1,7 +1,7 @@
 import itertools
 import builtins
 
-import koatl.std.iter.Iterable
+import koatl.std.iter.(Iterable, Iterator)
 import .control.(Ok, Err, Result)
 
 
@@ -709,10 +709,10 @@ export DebugIterator = class:
         self._each("unique", body)
 
     reversed = (self) =>
-        DebugIterator(Iterable.reversed(self), checked=self._checked, history=self._history_limit).label("reversed")
+        DebugIterator(Iterator.reversed(self), checked=self._checked, history=self._history_limit).label("reversed")
 
     sorted = (self, key=None, reverse=False) =>
-        DebugIterator(Iterable.sorted(self, key=key, reverse=reverse), checked=self._checked, history=self._history_limit).label("sorted")
+        DebugIterator(Iterator.sorted(self, key=key, reverse=reverse), checked=self._checked, history=self._history_limit).label("sorted")
 
     cycle = (self) =>
         let values = []

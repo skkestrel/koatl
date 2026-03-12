@@ -10,7 +10,7 @@ assert_eq(
         @Async.sleep(0.1)
         x
     ).run()
-    (..10).list()
+    (..10).iter.list()
 )
 
 assert_eq(time.time() - now < 0.3, True)
@@ -21,7 +21,7 @@ assert_eq(time.time() - now < 0.3, True)
 
 assert_eq(
     [1, 2, 3].traverse(x => Ok(x + 1))
-    [2, 3, 4].map(Ok).list()
+    [2, 3, 4].map(Ok)
 )
 
 counts = 0
@@ -42,6 +42,6 @@ assert_eq(
         counts += 1
         Ok(x)
     )
-    (..10).map(Ok).list()
+    (..10).iter.map(Ok).list()
 )
 assert_eq(counts, 10)

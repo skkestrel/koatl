@@ -7,6 +7,7 @@
 - [Formatting & syntax](formatting)
 - [Prelude & runtime](prelude)
 - [Extension methods](extensions)
+- [Iterators](iterators)
 - [Monads](monads)
 - [Troubleshooting](troubleshooting)
 - **Links**

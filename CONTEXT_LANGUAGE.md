@@ -270,7 +270,7 @@ data
     | pass_into_second_arg(a, $, option="yes")
 
 # Using .(f) for higher precedence
-(..10).map($ + 1).(filter $ > 5).(print)
+(..10).iter.map($ + 1).(filter $ > 5).(print)
 ```
 
 ### 4. **Placeholder Variables ($)**
@@ -907,14 +907,14 @@ mod.numpy.array([1, 2, 3]) + 2 | print
 ### **Built-in Extensions**
 
 - `.iter` - Makes objects iterable (delegates to `.items()` for dicts)
-- `Iterable` trait - Common methods for iterators
+- `Iterable` trait - Marks types with `iter`; `Iterator` trait - Methods for iterators (`map`, `filter`, `fold`, etc.)
 
 ## Common Patterns & Examples
 
 ### Data Processing Pipeline
 
 ```koatl
-(..10)
+(..10).iter
     .map(fib)
     .filter($ % 2 == 0)
     .map($ * 2)
@@ -930,7 +930,7 @@ users = [
 ]
 
 users
-    .filter($.age > 26)
+    .iter.filter($.age > 26)
     .map({**$, adult: True})
     .for_each(print)
 ```
@@ -941,10 +941,10 @@ users
 fetch_repos("python") match:
     Ok(response) =>
         response["items"]
-            .map(create_repo)
+            .iter.map(create_repo)
             .filter($.stars > 10)
             .sorted($.activity, reverse=True)
-            .for_each(print)
+            .iter.for_each(print)
     Err(e) =>
         print(f"Error: {e}")
 ```
@@ -959,8 +959,8 @@ create_cell = (x, y, alive=False) => {
 }
 
 display_grid = (grid, size) =>
-    (..size).for_each(y =>
-        (..size)
+    (..size).iter.for_each(y =>
+        (..size).iter
             .map(x => if grid[(x, y)].alive then "██" else "  ")
             .join_str("")
             |print
@@ -1065,13 +1065,20 @@ export Iterable = Extension.trait! class:
     iter = Trait.abstract! self => ()
 
     # Concrete methods are only available if requirements are met
-    map = self => f => self.iter().map(f)
-    filter = self => f => self.iter().filter(f)
-    list = self => list(self.iter())
+    traverse = (self, f) => self.iter.for_each(f)
 
-# Now any type with an 'iter' method gets these trait methods automatically
-[1, 2, 3].map(x => x * 2)  # Works because list has iter
-"hello".map(x => x.upper())  # Works because str has iter (via extension)
+# Iterator trait applies to anything with __next__
+export Iterator = Extension.trait! class:
+    __next__ = Trait.abstract! self => ()
+
+    map = (self, f) => map(f, self)
+    filter = (self, f) => filter(f, self)
+    list = self => list(self)
+    # ... plus fold, sum, take, skip, etc.
+
+# Now any type with 'iter' gets Iterable, any with '__next__' gets Iterator
+[1, 2, 3].iter.map(x => x * 2)  # .iter returns iterator, Iterator trait applies
+[1, 2, 3].map(x => x * 2)       # Eager list.map override returns a list
 ```
 
 When you mark a method with `Trait.abstract!`, it becomes a requirement that types must satisfy to use the trait's other methods.
@@ -1099,8 +1106,9 @@ The prelude adds many useful extensions:
 # String pattern matching
 "hello world".matches(r"w\w+")  # Uses Extension.method(str, "matches")
 
-# List operations
-[1, 2, 3].map(x => x * 2)  # Uses Iterable trait extension
+# List operations (eager map/filter return lists)
+[1, 2, 3].map(x => x * 2)  # Eager list.map returns [2, 4, 6]
+[1, 2, 3].iter.sum()        # Iterator methods require .iter
 
 # Dict operations
 {a: 1, b: 2}.map_values(x => x * 10)  # Extension.method(dict, "map_values")
