@@ -1,8 +1,8 @@
 # Koatl
 
-Python's strength was never its syntax — it was the ecosystem, the libraries, the sheer momentum of a language everyone already knows. Koatl compiles to that same Python but lets you write what you mean.
+Python's strength was never its syntax. It was the ecosystem, the libraries, the sheer momentum of a language everyone already knows. Koatl compiles to that same Python but lets you write what you mean.
 
-Same runtime, same `pip install`, same deployment — just without the ceremony that creeps into daily work: nesting calls three deep where a pipe would do, quoting every dictionary key, writing four-line `try`/`except` blocks for simple fallbacks, and fighting scope rules that leak variables where they don't belong.
+Same runtime, same `pip install`, same deployment, but without the ceremony: nesting calls three deep where a pipe would do, quoting every dictionary key, writing four-line `try`/`except` blocks for simple fallbacks, and fighting scope rules that leak variables where they don't belong.
 
 Filtering and sorting a collection in Python reads inside out:
 
@@ -16,7 +16,7 @@ In Koatl, the same pipeline reads left to right:
 users.filter($.age > 18).map($.name.upper()).sorted()
 ```
 
-`$` lets you easily express lambdas (`$.age > 18` means `x => x.age > 18`), and the chain flows in the order you think about it. The advantage compounds with more involved work — consider filtering, grouping, and ranking a list of orders in Python:
+`$` lets you easily express lambdas (`$.age > 18` means `x => x.age > 18`), and the chain flows in the order you think about it. The advantage compounds with more involved work. Consider filtering, grouping, and ranking a list of orders in Python:
 
 ```python
 pending = [o for o in orders if o["status"] == "pending"]
