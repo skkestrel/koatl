@@ -66,23 +66,47 @@ print(x)  # 1
 data | do_something | transform | save_to(db, $, format="json")
 ```
 
-> Koatl is under active development.
+> Koatl is under active development. Features might change.
 
-## What Python gets wrong
+## Quick Start
 
-None of these issues are fatal on their own — which is precisely why Koatl transpiles _to_ Python rather than replacing it. But over the course of a large project, the friction accumulates.
+```bash
+pip install koatl koatl-kernel
+```
 
-Python's `lambda` is limited to a single expression, so anything beyond a trivial callback forces you to define a named function somewhere else and jump back. There is no pipe operator — PEP 638 proposed one and was rejected — so composing transforms means either nesting calls inside-out (`f(g(h(x)))`) or scattering throwaway variables across the page. Koatl's `=>` handles both one-liners and multiline bodies, and `x | f | g | h` reads in the order you think about it.
+Optionally install the `quetzal-koatl` extension on VSCode for syntax highlighting.
 
-Scoping is another long-standing sore point. Variables assigned inside `if`, `for`, or `with` leak into the enclosing function; mutating a captured variable demands `nonlocal`. Koatl's `let` introduces proper lexical scope — inner bindings stay inner, loop closures capture per-iteration values, and `nonlocal` is never needed.
+```koatl
+# hello_world.tl
+"hello world" | print
+```
 
-Error handling is perhaps the most ceremonial part of daily Python. A simple "try this, fall back to that" costs four lines at minimum; chaining several fallible steps produces nested `try`/`except` towers; and there is no null-coalescing operator, so guarding against `None` means writing `if x is not None` or a ternary for every occurrence. Koatl's `check` and `??` collapse the common case to a single expression, and the `@` operator chains fallible steps with automatic short-circuiting.
+```bash
+koatl hello_world.tl
+```
 
-Dict syntax carries more noise than it should. Every key must be a quoted string, every line needs a trailing comma, and values are accessed with brackets — unless you turn to `SimpleNamespace` or `dataclass`. Koatl records use unquoted keys, dot access, and optional commas.
+### Jupyter
 
-The rest of this page shows how each feature works.
+Select the Koatl kernel in Jupyter, or start an interactive session with `koatl` in the terminal.
+
+From an existing IPython kernel:
+
+```python
+%load_ext koatl.notebook
+```
+
+### Using Koatl from Python
+
+`.tl` files can be imported directly by importing the runtime first:
+
+```python
+import koatl.runtime
+import hello_world
+```
 
 ## Features
+
+The sections below address Python's main paper cuts: limited lambdas, leaky scoping, ceremonial error handling, and noisy dict syntax. None are fatal on their own — which is precisely why Koatl transpiles _to_ Python rather than replacing it — but over the course of a large project, the friction accumulates.
 
 ### Piping & placeholders
 
@@ -200,7 +224,7 @@ The pattern of initializing a variable to `None` above a block and assigning ins
 
 ### Error handling
 
-`check` wraps a call into `Ok(value)` or `Err(exception)` instead of raising, `??` provides a fallback for `None` and `Err` values, and the `@` operator ([monadic bind](monads)) chains fallible steps so that any failure short-circuits without nested `try`/`except` blocks:
+`check` wraps a call into `Ok(value)` or `Err(exception)` instead of raising, and `??` provides a fallback for `None` and `Err` values. The `@` operator ([monadic bind](monads)) unwraps `Ok` values and short-circuits on `Err`, so chaining fallible steps stays flat instead of producing nested `try`/`except` blocks:
 
 ```koatl
 let config = check load_config() ?? default_config
@@ -454,9 +478,12 @@ list(islice(
 
 ### Small things that add up
 
-These features are modest on their own, but in combination they remove much of the line noise that clutters Python: no commas needed in multiline collections, a unified `import a.b.(c, d)` syntax, nestable `#- block -#` comments, and unquoted dict keys (see [Formatting & syntax](formatting) and [Modules](modules) for details).
+Koatl unifies Python's `import` and `from ... import` into dot-separated paths, adds nestable `#- block -#` comments, and drops the commas that multiline collections don't need (see [Formatting & syntax](formatting) and [Modules](modules) for details).
 
 ```koatl
+import os.path.join              # from os.path import join
+import collections.(Counter, defaultdict)
+
 let config = {
     host: "localhost"
     port: 8080
@@ -466,8 +493,8 @@ let config = {
     ]
 }
 
-import os.path.join              # from os.path import join
-import collections.(Counter, defaultdict)
+#- This is a block comment.
+   They nest: #- like this -# and continue. -#
 ```
 
 ## Putting it together
@@ -545,39 +572,3 @@ main()
 ```
 
 </details>
-
-## Quick Start
-
-```bash
-pip install koatl koatl-kernel
-```
-
-Optionally install the `quetzal-koatl` extension on VSCode for syntax highlighting.
-
-```koatl
-# hello_world.tl
-"hello world" | print
-```
-
-```bash
-koatl hello_world.tl
-```
-
-### Jupyter
-
-Select the Koatl kernel in Jupyter, or start an interactive session with `koatl` in the terminal.
-
-From an existing IPython kernel:
-
-```python
-%load_ext koatl.notebook
-```
-
-### Using Koatl from Python
-
-`.tl` files can be imported directly by importing the runtime first:
-
-```python
-import koatl.runtime
-import hello_world
-```
