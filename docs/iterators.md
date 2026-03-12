@@ -39,12 +39,12 @@ Ranges always require `.iter`:
 
 Most lazy Iterator methods return iterators, so they chain freely. A few collect into concrete types:
 
-| Returns iterator | Returns concrete |
-|-----------------|-----------------|
-| `map`, `filter`, `flat_map`, `filter_map` | `sorted` → list |
-| `take`, `skip`, `take_while`, `skip_while` | `reversed` → list_reverseiterator |
-| `chain`, `zip`, `enumerate`, `product` | `list`, `set`, `tuple`, `dict`, `record` |
-| `cycle`, `unique` | `associate`, `group_by`, `count_by` → dict |
+| Returns iterator                           | Returns concrete                           |
+| ------------------------------------------ | ------------------------------------------ |
+| `map`, `filter`, `flat_map`, `filter_map`  | `sorted` → list                            |
+| `take`, `skip`, `take_while`, `skip_while` | `reversed` → list_reverseiterator          |
+| `chain`, `zip`, `enumerate`, `product`     | `list`, `set`, `tuple`, `dict`, `record`   |
+| `cycle`, `unique`                          | `associate`, `group_by`, `count_by` → dict |
 
 When a method returns a concrete type, you may need `.iter` again to continue chaining Iterator methods:
 
@@ -77,65 +77,65 @@ All methods below are available on iterators (the result of `.iter`, or any lazy
 
 ### Transformations
 
-| Method | Description |
-|--------|-------------|
-| `.map(f)` | Apply `f` to each element |
-| `.filter(f)` | Keep elements where `f` returns true |
-| `.filter_map(f?)` | Map then filter out `Err` results. Without `f`, filters `Ok` values from a Result iterator |
-| `.flat_map(f?)` | Map then flatten one level. Without `f`, just flattens |
-| `.enumerate(start=0)` | Yield `(index, value)` pairs |
-| `.zip(*others)` | Pair elements with other iterables (shortest wins) |
-| `.chain(*others)` | Concatenate with other iterables |
-| `.product(*others)` | Cartesian product |
-| `.cycle()` | Repeat infinitely |
-| `.unique()` | Deduplicate (preserving order) |
-| `.reversed()` | Reverse (materializes into a list first) |
-| `.sorted(key?, reverse?)` | Sort (materializes into a list) |
+| Method                    | Description                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------ |
+| `.map(f)`                 | Apply `f` to each element                                                                  |
+| `.filter(f)`              | Keep elements where `f` returns true                                                       |
+| `.filter_map(f?)`         | Map then filter out `Err` results. Without `f`, filters `Ok` values from a Result iterator |
+| `.flat_map(f?)`           | Map then flatten one level. Without `f`, just flattens                                     |
+| `.enumerate(start=0)`     | Yield `(index, value)` pairs                                                               |
+| `.zip(*others)`           | Pair elements with other iterables (shortest wins)                                         |
+| `.chain(*others)`         | Concatenate with other iterables                                                           |
+| `.product(*others)`       | Cartesian product                                                                          |
+| `.cycle()`                | Repeat infinitely                                                                          |
+| `.unique()`               | Deduplicate (preserving order)                                                             |
+| `.reversed()`             | Reverse (materializes into a list first)                                                   |
+| `.sorted(key?, reverse?)` | Sort (materializes into a list)                                                            |
 
 ### Slicing
 
-| Method | Description |
-|--------|-------------|
-| `.take(n)` | First `n` elements |
-| `.skip(n)` | Drop first `n` elements |
-| `.take_while(f)` | Take while `f` is true, then stop |
+| Method           | Description                                 |
+| ---------------- | ------------------------------------------- |
+| `.take(n)`       | First `n` elements                          |
+| `.skip(n)`       | Drop first `n` elements                     |
+| `.take_while(f)` | Take while `f` is true, then stop           |
 | `.skip_while(f)` | Drop while `f` is true, then yield the rest |
 
 ### Aggregations
 
 These consume the iterator and return a single value.
 
-| Method | Description |
-|--------|-------------|
-| `.fold(init, f)` | Reduce with initial value |
-| `.sum()` | Sum of elements |
-| `.mean()` | Arithmetic mean |
-| `.min(key?)` | Minimum element |
-| `.max(key?)` | Maximum element |
-| `.tally(f?)` | Count elements (optionally only those matching `f`) |
-| `.join(sep="")` | Join as string |
-| `.all(f)` | True if `f` holds for every element |
-| `.any(f)` | True if `f` holds for at least one element |
-| `.find(f)` | `Ok(first match)` or `Err()` |
-| `.first()` | `Ok(first element)` or `Err()` |
-| `.last(f)` | Last element matching `f` |
-| `.at(index)` | Element at position |
-| `.for_each(f)` | Execute `f` on each element (for side effects) |
+| Method           | Description                                         |
+| ---------------- | --------------------------------------------------- |
+| `.fold(init, f)` | Reduce with initial value                           |
+| `.sum()`         | Sum of elements                                     |
+| `.mean()`        | Arithmetic mean                                     |
+| `.min(key?)`     | Minimum element                                     |
+| `.max(key?)`     | Maximum element                                     |
+| `.tally(f?)`     | Count elements (optionally only those matching `f`) |
+| `.join(sep="")`  | Join as string                                      |
+| `.all(f)`        | True if `f` holds for every element                 |
+| `.any(f)`        | True if `f` holds for at least one element          |
+| `.find(f)`       | `Ok(first match)` or `Err()`                        |
+| `.first()`       | `Ok(first element)` or `Err()`                      |
+| `.last(f)`       | Last element matching `f`                           |
+| `.at(index)`     | Element at position                                 |
+| `.for_each(f)`   | Execute `f` on each element (for side effects)      |
 
 ### Collectors
 
 These consume the iterator and return a container.
 
-| Method | Description |
-|--------|-------------|
-| `.list()` | Collect into a list |
-| `.set()` | Collect into a set |
-| `.tuple()` | Collect into a tuple |
-| `.dict()` | Collect into a dict (expects `[key, value]` pairs) |
-| `.record()` | Collect into a Record (expects `[key, value]` pairs) |
-| `.associate(f)` | Build a dict mapping each element to `f(element)` |
-| `.group_by(f)` | Group into a dict by key function |
-| `.count_by(f?)` | Count occurrences by key function |
+| Method          | Description                                          |
+| --------------- | ---------------------------------------------------- |
+| `.list()`       | Collect into a list                                  |
+| `.set()`        | Collect into a set                                   |
+| `.tuple()`      | Collect into a tuple                                 |
+| `.dict()`       | Collect into a dict (expects `[key, value]` pairs)   |
+| `.record()`     | Collect into a Record (expects `[key, value]` pairs) |
+| `.associate(f)` | Build a dict mapping each element to `f(element)`    |
+| `.group_by(f)`  | Group into a dict by key function                    |
+| `.count_by(f?)` | Count occurrences by key function                    |
 
 ## Dict-specific extensions
 
@@ -185,10 +185,10 @@ Every row is one value from the source. Columns show its state at each pipeline 
 {a: 1, b: 2}.debug_iter()
 ```
 
-| Argument | Default | Description |
-|----------|---------|-------------|
+| Argument  | Default | Description                                             |
+| --------- | ------- | ------------------------------------------------------- |
 | `checked` | `False` | Error handling mode (see [Checked mode](#checked-mode)) |
-| `history` | `5` | Max rows to retain. `None` for unbounded. |
+| `history` | `5`     | Max rows to retain. `None` for unbounded.               |
 
 ### Using the pipeline
 
@@ -286,14 +286,14 @@ di.show()   # grid shows ZeroDivisionError for value 0
 
 ### Grid cell reference
 
-| Cell | Meaning |
-|------|---------|
-| `42` | Actual value (truncated to 20 chars) |
-| `[skip]` | Rejected by filter, take, skip, etc. |
-| `---` | Value didn't reach this stage |
-| `...` | Repeated parent (flat_map/product children) |
-| `[?]` | Unknown provenance (from a chained iterable) |
-| `[ERR: ...]` | Exception (checked mode) |
+| Cell         | Meaning                                      |
+| ------------ | -------------------------------------------- |
+| `42`         | Actual value (truncated to 20 chars)         |
+| `[skip]`     | Rejected by filter, take, skip, etc.         |
+| `---`        | Value didn't reach this stage                |
+| `...`        | Repeated parent (flat_map/product children)  |
+| `[?]`        | Unknown provenance (from a chained iterable) |
+| `[ERR: ...]` | Exception (checked mode)                     |
 
 ### Flat map output
 
