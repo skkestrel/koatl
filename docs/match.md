@@ -39,7 +39,7 @@ Python's `match` can't match against a plain variable — you need a namespace w
 
 ```koatl
 y = 2
-x match:
+match x:
     .y => print("matched the constant y")
     .module.value => print("matched a module constant")
     y => print("capture any value to a new variable y")
@@ -48,7 +48,7 @@ x match:
 Like if-expressions, matches are also expressions in Koatl:
 
 ```koatl
-result = x match:
+result = match x:
     [_] => True
     _ => False
 ```

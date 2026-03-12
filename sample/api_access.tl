@@ -53,7 +53,7 @@ get_user_details = (data, user_id) =>
 ["user_a", "user_b", "user_c", "user_d"]
     .map(id =>
         print(f"Searching for id: {id}")
-        get_user_details(API_RESPONSE, id).(Result) match:
+        match get_user_details(API_RESPONSE, id).(Result):
             Err(e) => print(f"Error fetching details: {repr(e)}")
             Ok() => print("Details fetched successfully.")
         print("-" * 20))

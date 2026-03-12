@@ -187,7 +187,7 @@ let result = try:
 except ValueError(msg=m) => f"bad input: {m}"
 except _ => default_value
 
-let label = status match:
+let label = match status:
     200 | 201 => "ok"
     404 => "not found"
     code if code >= 500 => f"server error: {code}"
@@ -236,7 +236,7 @@ let result = () =>
     let parsed = @parse(data)
     transform(parsed)
 
-result() match:
+match result():
     Ok(value) => use(value)
     Err(e) => log(e)
 ```
@@ -326,7 +326,7 @@ Python 3.10 added `match`/`case`. Koatl extends that foundation with `if let` an
 
 ```koatl
 let expected = 200
-status match:
+match status:
     .expected => "ok"
     404 => "not found"
     code if code >= 500 => f"server error: {code}"
@@ -510,7 +510,7 @@ let load_config = path =>
     check loads(raw)
 
 let get_port = config =>
-    config match:
+    match config:
         {port} if port > 0 and port < 65536 => port
         {port} => raise ValueError(f"invalid port: {port}")
         _ => check int(environ["PORT"]) ?? 8080

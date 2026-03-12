@@ -40,7 +40,7 @@ fetch_repos = query =>
     )
 
 classify_language = lang =>
-    lang.lower() match:
+    match lang.lower():
         "python" | "javascript" | "typescript" | "java" | "c#" | "go" | "rust" => "Backend/System"
         "html" | "css" | "vue" | "react" | "angular" => "Frontend"
         "jupyter notebook" | "r" | "matlab" => "Data Science"
@@ -102,7 +102,7 @@ display_results = (query, result) =>
     print(f"\n📊 Analysis Results for '{query}'")
     print("=" * 50)
 
-    result match:
+    match result:
         Ok(repos) if repos.len > 0 =>
             let stats = compute_stats(repos)
 

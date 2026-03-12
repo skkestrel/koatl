@@ -41,7 +41,7 @@ Extension.method(str, "sentiment_score")! self =>
     positive_count - negative_count
 
 Extension.method(str, "classify_intent")! self =>
-    self.lower() match:
+    match self.lower():
         text if "weather" in text => "weather_query"
         text if ("time" in text or "clock" in text) => "time_query"
         text if ("joke" in text or "funny" in text) => "joke_request"
@@ -74,7 +74,7 @@ create_weather_bot = () => {
         })
 
         # Pattern match on intent and entities
-        (intent, entities) match:
+        match (intent, entities):
             ("weather_query", {numbers: [location_code]}) =>
                 f"The weather in location {location_code} is sunny with 22°C! 🌞"
 
@@ -125,7 +125,7 @@ create_news_bot = () => {
         let intent = message.classify_intent()
         let entities = message.extract_entities()
 
-        intent match:
+        match intent:
             "question" if "news" in message.lower() =>
                 "Here are today's top stories: Tech stocks surge, new scientific discovery announced! 📰"
 
@@ -146,7 +146,7 @@ create_conversation_manager = bots => {
 
     route_message: Record.method! (self, message) =>
         # Smart routing based on message content
-        message.lower() match:
+        match message.lower():
             text if "weather" in text =>
                 self.active_bot = self.bots.weather
 
@@ -182,7 +182,7 @@ run_chat_session = () =>
     let chat_loop = () =>
         let user_input = input("You: ").strip()
 
-        user_input.lower() match:
+        match user_input.lower():
             "quit" | "exit" | "bye" =>
                 print("🤖: Goodbye! Thanks for chatting! 👋")
 

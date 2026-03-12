@@ -2,7 +2,7 @@ import functools.wraps
 import .base.(Identity, MonadOnce)
 
 infer_ok = x =>
-    x match:
+    match x:
         None => False
         BaseException() => False
         _ => True

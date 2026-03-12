@@ -1,5 +1,5 @@
 let fib = n =>
-    n match:
+    match n:
         0 => @Memo.pure(0)
         1 => @Memo.pure(1)
         _ => memo @fib(n - 1) + @fib(n - 2)

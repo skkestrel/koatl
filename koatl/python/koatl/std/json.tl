@@ -4,14 +4,14 @@ import koatl.std.data.Record
 
 export JSONEncoder = class(json.JSONEncoder):
     default = (self, o) =>
-        o match:
+        match o:
             Record() => o.__dict__
             default => super().default(o)
 
 export JSONDecoder = class(json.JSONDecoder):
     __init__ = (self, **kwargs) =>
         let object_hook = d =>
-            d match:
+            match d:
                 dict() => Record(d)
                 default => d
 

@@ -26,10 +26,10 @@ create_stock = (symbol, price, shares, purchase_date) => {
 
 # Portfolio management with pattern matching and error handling
 update_portfolio = (portfolio, action, date) =>
-    @Ok(action match:
+    @Ok(match action:
         {type: "buy", symbol, shares, price} =>
             let existing = check portfolio[symbol]
-            existing match:
+            match existing:
                 Ok(stock) => {
                     **portfolio
                     (symbol): {
@@ -86,7 +86,7 @@ analyze_portfolio = (portfolio, date) =>
     let risk_assessment = stocks
         .map(stock => {
             **stock
-            risk_level: stock.annualized_return(date).(abs) match:
+            risk_level: match stock.annualized_return(date).(abs):
                 x if x < 0.1 => "Low"
                 x if x < 0.3 => "Medium"
                 _ => "High"
@@ -148,7 +148,7 @@ run_portfolio_simulation = () =>
     # Build portfolio with error handling
     let portfolio = initial_actions
         .iter.fold({}, (portfolio, action) =>
-            update_portfolio(portfolio, action, date) match:
+            match update_portfolio(portfolio, action, date):
                 Ok(new_portfolio) => new_portfolio
                 Err(error) => (
                     print(f"❌ Error: {error}")
@@ -174,9 +174,9 @@ run_portfolio_simulation = () =>
             None  # No action
         ])
 
-        action match:
+        match action:
             None => updated_portfolio
-            action => update_portfolio(updated_portfolio, action, date) match:
+            action => match update_portfolio(updated_portfolio, action, date):
                 Ok(new_portfolio) =>
                     print(f"✅ Executed: {action.type} {action.symbol ?? ""}")
                     new_portfolio

@@ -6,7 +6,7 @@ export Pattern = class:
     __slots__ = ("pattern",)
 
     __init__ = (self, pattern) =>
-        pattern match:
+        match pattern:
             re.Pattern() => self.pattern = pattern
             str() => self.pattern = re.compile(pattern)
             Pattern(pattern=pattern) => self.pattern = pattern

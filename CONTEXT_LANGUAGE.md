@@ -110,7 +110,7 @@ Koatl provides sophisticated pattern matching in multiple contexts:
 1. **Literal Patterns**: Match specific values
 
     ```koatl
-    x match:
+    match x:
         1 => "one"
         "hello" => "greeting"
         True => "truthy"
@@ -129,7 +129,7 @@ Koatl provides sophisticated pattern matching in multiple contexts:
 
     ```koatl
     y = 2
-    x match:
+    match x:
         .y => "matched the constant 2"      # Match against variable y
         .module.value => ...                # Match against module attribute
         y => "capture any value as y"       # Different: binds new variable
@@ -138,7 +138,7 @@ Koatl provides sophisticated pattern matching in multiple contexts:
 4. **Sequence Patterns**: Lists and tuples
 
     ```koatl
-    x match:
+    match x:
         [] => "empty list"
         [a] => "single element"
         [a, b, c] => "three elements"
@@ -149,7 +149,7 @@ Koatl provides sophisticated pattern matching in multiple contexts:
 5. **Mapping Patterns**: Records and dicts
 
     ```koatl
-    x match:
+    match x:
         {} => "empty record"
         {a: x} => "record with key a"
         {a, b} => "shorthand for a: a, b: b"
@@ -159,7 +159,7 @@ Koatl provides sophisticated pattern matching in multiple contexts:
 6. **Class Patterns**: Constructor patterns
 
     ```koatl
-    x match:
+    match x:
         Point(x, y) => ...  # Match Point instance
         Exception(msg=m) => ...  # With named patterns
     ```
@@ -167,45 +167,37 @@ Koatl provides sophisticated pattern matching in multiple contexts:
 7. **Or Patterns**: Alternatives with `|`
 
     ```koatl
-    x match:
+    match x:
         1 | 2 | 3 => "one, two, or three"
         [a, b] | {x: a, y: b} => ...  # List or record form
     ```
 
 8. **As Patterns**: Bind after matching
     ```koatl
-    x match:
+    match x:
         [a, *rest] as whole => ...  # Bind entire pattern to 'whole'
     ```
 
 #### In Match Expressions
 
-Match supports both postfix and classic syntax:
-
-**Postfix match** (preferred for expressions):
+Match supports both prefix and postfix syntax:
 
 ```koatl
-result = x match:
+result = match x:
     [a, b, c] => a + b + c
     {name: n, age: a} => f"{n} is {a} years old"
     [_] => "Single element list"
     _ => "Default case (catch-all)"
 ```
 
-**Classic match** (preferred for statements/side effects):
+Both prefix (`match x:`) and postfix (`x match:`) syntax are supported.
 
-```koatl
-match x:
-    [a, b, c] => print(a + b + c)
-    _ => print("default")
-```
-
-> **Style Note**: Use postfix match (`x match:`) when the result is used as an expression. Use classic match (`match x:`) when performing side effects or when the match is a top-level statement.
+> **Style Note**: Prefer `match x:` as the default style. The postfix form `x match:` is also valid and may read better in some expression contexts.
 
 Match expressions also support **guards**:
 
 ```koatl
-x match:
+match x:
     [a, b] if a > b => "a is larger"
     [a, b] => "b is larger or equal"
 ```
@@ -599,10 +591,8 @@ print(x, y)  # Safe: captures leak after Never block
 
 True pattern matching with guards, supporting two syntaxes:
 
-**Postfix match** (preferred for expressions):
-
 ```koatl
-result = x match:
+result = match x:
     1 => "one"
     2 => "two"
     [a, b] if a > b => f"pair {a} > {b}"
@@ -612,16 +602,9 @@ result = x match:
     _ => "unknown"
 ```
 
-**Classic match** (preferred for statements/side effects):
+Both prefix (`match x:`) and postfix (`x match:`) syntax are supported.
 
-```koatl
-match x:
-    1 => print("one")
-    2 => print("two")
-    _ => print("unknown")
-```
-
-> **Style Note**: Use postfix match (`x match:`) when using the result as an expression. Use classic match (`match x:`) for top-level statements or side effects.
+> **Style Note**: Prefer `match x:` as the default style. The postfix form `x match:` is also valid and may read better in some expression contexts.
 
 ### 3. **With-Expressions**
 
@@ -938,7 +921,7 @@ users
 ### API Data Processing
 
 ```koatl
-fetch_repos("python") match:
+match fetch_repos("python"):
     Ok(response) =>
         response["items"]
             .iter.map(create_repo)

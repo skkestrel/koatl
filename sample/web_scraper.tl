@@ -13,14 +13,14 @@ import hashlib
 
 # URL and content validation using pattern matching
 validate_url = url =>
-    url match:
+    match url:
         url_str if url_str.startswith(("http://", "https://")) =>
             check urlparse(url_str).netloc <> "" ?? False
         _ => False
 
 # Content extraction with pattern matching on HTML elements
 extract_content = (soup, content_type="text") =>
-    content_type match:
+    match content_type:
         "text" =>
             # Extract clean text content
             for script_or_style in soup(["script", "style"]):
@@ -151,7 +151,7 @@ create_scraper = (delay=1.0, max_retries=3, timeout=10) => {
 
             # Check cache first
             let cache_key = url
-            check self.cache[cache_key] match:
+            match check self.cache[cache_key]:
                 Ok(cached_page) =>
                     print(f"📄 Using cached: {url}")
                     return Ok(cached_page)
@@ -173,7 +173,7 @@ create_scraper = (delay=1.0, max_retries=3, timeout=10) => {
 
                                 let response = self.session.get(url, headers=headers, timeout=self.timeout)
 
-                                return response.status_code match:
+                                return match response.status_code:
                                     200 =>
                                         let page = create_page(url, response.text)
                                         self.cache = {**self.cache, (cache_key): page}
@@ -205,7 +205,7 @@ create_scraper = (delay=1.0, max_retries=3, timeout=10) => {
             else:
                 let (current_url, depth) = queue.pop(0)
 
-                self.fetch_page(current_url).run() match:
+                match self.fetch_page(current_url).run():
                     Ok(page) =>
                         results = {**results, (current_url): page}
                         print(f"✅ Crawled: {current_url} (depth {depth})")
@@ -290,7 +290,7 @@ analyze_content = pages =>
 
 # Report generation with pattern matching
 generate_report = (analysis, format="text") =>
-    format match:
+    match format:
         "text" =>
             f"""
 📊 Website Content Analysis Report
@@ -375,7 +375,7 @@ run_single_page_demo = () =>
     demo_urls.iter.for_each(url =>
         print(f"\n🌐 Analyzing: {url}")
 
-        scraper.fetch_page(url).run() match:
+        match scraper.fetch_page(url).run():
             Ok(page) =>
                 let metadata = page.get_metadata()
                 print(f"📄 Title: {metadata.title}")
@@ -430,7 +430,7 @@ if __name__ == "__main__":
 
     let choice = input("Enter choice (1-3): ").strip()
 
-    choice match:
+    match choice:
         "1" => run_single_page_demo()
         "2" => run_crawling_demo()
         "3" => (

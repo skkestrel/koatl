@@ -19,7 +19,7 @@ create_cell = (x, y, alive=False) => {
 
     next_state: Record.method! (self, alive_neighbors) =>
         # Conway's Game of Life rules using pattern matching
-        (self.alive, alive_neighbors) match:
+        match (self.alive, alive_neighbors):
             (True, 2) | (True, 3) => True      # Survival
             (False, 3) => True                 # Birth
             _ => False                         # Death or stay dead
@@ -105,7 +105,7 @@ analyze_patterns = (grid, size) =>
         detected_gliders: detected_gliders.tally()
 
         # Stability analysis
-        stability: total_alive match:
+        stability: match total_alive:
             0 => "extinct"
             x if x < size => "dying"
             x if x > size * size * 0.8 => "overpopulated"
@@ -167,7 +167,7 @@ run_simulation = (size=20, max_generations=100, delay=0.5) =>
                 print(f"🚀 Detected {analysis.detected_gliders} glider(s)!")
 
             # Check for extinction or stability
-            analysis.stability match:
+            match analysis.stability:
                 "extinct" =>
                     print("💀 All cells have died. Simulation ended.")
 
@@ -253,7 +253,7 @@ if __name__ == "__main__":
 
     let choice = input("Choose option (1 or 2): ").strip()
 
-    choice match:
+    match choice:
         "1" => run_simulation(size=15, max_generations=50, delay=0.3)
         "2" => run_pattern_demo()
         _ => print("Invalid choice. Running random simulation...")
