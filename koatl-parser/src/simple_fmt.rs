@@ -330,6 +330,27 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                     args.simple_fmt()
                 )
             }
+            Expr::MethodPipe {
+                expr,
+                question,
+                fn_expr,
+                args,
+                ..
+            } => {
+                let question_str = if question.is_some() { "?" } else { "" };
+                let args_str = if let Some(args) = args {
+                    format!("({})", args.simple_fmt())
+                } else {
+                    String::new()
+                };
+                format!(
+                    "{}{}->{}{}" ,
+                    expr.simple_fmt(),
+                    question_str,
+                    fn_expr.simple_fmt(),
+                    args_str
+                )
+            }
             Expr::Checked {
                 expr,
                 except_kw,

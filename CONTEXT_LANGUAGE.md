@@ -1,1276 +1,1032 @@
-# Koatl Language - Introduction & Reference
+# Koatl Language Reference
 
-## Overview
+**Koatl** is a functional-first language that transpiles to Python. It brings expressive functional idioms to Python while maintaining full interoperability: same runtime, same `pip install`, same deployment. For a compact cheat sheet see [CONTEXT_LANGUAGE_SHORT.md](CONTEXT_LANGUAGE_SHORT.md).
 
-**Koatl** is a functional-first language that transpiles to Python. It brings expressive, concise functional programming idioms to Python while maintaining full Python interoperability. The language is designed to improve code readability, reduce boilerplate, and provide powerful abstractions for data processing and control flow.
+---
 
-## Core Language Features
+## Functions
 
-### 1. **Arrow Functions & Lambda Syntax**
+Koatl replaces `def` and `lambda` with `=>` for all function definitions. Assigning an arrow function to a name sets `__name__` automatically.
 
-Koatl replaces Python's `def` keyword with concise arrow function syntax:
-
-```koatl
-let fib = x => if x matches 0 | 1 then 1 else fib(x-1) + fib(x-2)
-let add = (a, b) => a + b
-let greet = name => "Hello, " + name |> print
-```
-
-**Function Definition Forms**:
-
-**Unary functions** (single pattern argument):
-
-- `x => body` - Single expression
-- `[a, b] => a + b` - Pattern-matched argument
-- `[x, *rest] => ...` - With spread operator
-
-**Parenthesized functions** (multiple arguments with Python-like syntax):
+### Forms
 
 ```koatl
-(a, b) => a + b
-(a, b, *args) => ...  # Variable arguments
-(a, b, **kwargs) => ...  # Keyword arguments
-(a, b, *args, **kwargs) => ...  # Both
-(a, *, kw_only) => ...  # Keyword-only arguments
-(a, /) => ...  # Positional-only arguments
+# Unary (single argument, no parens needed)
+let double = x => x * 2
+let head   = [first, *_] => first          # pattern-matched argument
+
+# Multi-argument
+let add    = (a, b) => a + b
+let greet  = (name, greeting="Hello") => f"{greeting}, {name}!"
+
+# Variable / keyword arguments
+let f = (a, b, *args, **kwargs) => other(a + 2, *args, **kwargs)
+let g = (a, *, kw_only) => a + kw_only    # keyword-only
+let h = (a, /) => a                        # positional-only
+
+# Multi-line body — last expression is the return value
+let fib = n =>
+    if n < 2 then 1
+    else fib(n-1) + fib(n-2)
+
+# Inline multi-statement
+let f = x => let y = x * 2; y + 1
 ```
 
-**Argument Delegation**:
+### Pattern-Matched Arguments
 
-The `delegate` keyword copies argument definitions (names and defaults) from another function's signature. It must appear after `*` or `*args`. The target can be any expression (identifier, dotted path, subscript, etc.):
+Parenthesized function arguments support destructuring (not guards):
+
+```koatl
+let sum_pair = ([a, b]) => a + b
+let show_rec = ({name, age}) => f"{name} is {age}"
+let mixed    = ([x, y], default=10) => x + y + default
+```
+
+### Argument Delegation
+
+`delegate` copies argument names and defaults from another function's signature. It must appear after `*` or `*args`:
 
 ```koatl
 let target = (*, x=10, y=20) => x + y
 
-# Copy x's name and default from target
 let f = (a, *, delegate target(x)) => (a, x)
-f(1)        # (1, 10)
-f(1, x=5)   # (1, 5)
+f(1)         # (1, 10)
+f(1, x=5)    # (1, 5)
 
-# Delegate multiple args
-let g = (*, delegate target(x, y)) => (x, y)
-g()          # (10, 20)
-
-# Alias: expose target's arg under a different name
+# Alias: expose under a different name
 let h = (*, delegate target(x as local_x)) => local_x
-h(local_x=99)  # 99
 
-# Override defaults
+# Override default
 let j = (*, delegate target(x=42)) => x
-j()          # 42
 
-# **kwargs spread: remaining target args collected into a dict
+# **kwargs spread: remaining target args collected into dict
 let k = (*, delegate target(x, **kw)) => (x, kw)
 k()          # (1, {"y": 20})
 
-# Dotted target (attribute access)
-let ns = {func: (*, x=10, y=20) => x + y}
-let m = (*, delegate ns.func(x, y)) => (x, y)
-
 # Multiple delegates from different targets
-let n = (*, delegate target_a(p, q), delegate target_b(r, s)) => (p, q, r, s)
+let n = (*, delegate ta(p, q), delegate tb(r, s)) => (p, q, r, s)
 ```
 
-`delegate` is a contextual keyword — it can still be used as a regular identifier outside of argument lists.
+`delegate` is a contextual keyword — it can still be used as an identifier outside argument lists.
 
-**Pattern Matching in Arguments**:
+---
 
-Parenthesized function arguments support pattern matching (but not guards):
+## Variables & Scope
 
 ```koatl
-([x, y]) => x + y  # Destructure list argument
-({name, age}) => f"{name} is {age}"  # Destructure record
-([x, y], default=10) => x + y + default  # With defaults
+let x = 1       # Block-scoped mutable variable
+const y = 2     # Block-scoped constant (convention only, not enforced)
+global z = 3    # Global scope
+export a = 4    # Module export (added to __all__)
+x = 5           # Unscoped assignment (Python-style)
 ```
 
-**Argument Defaults** (only in parenthesized functions):
-
-```koatl
-(a, b=10) => a + b
-(x=0) => x  # Defaults require parenthesized syntax
-```
-
-**Block vs. Inline**:
-
-- Single expression: `x => x + 1`
-- Inline block: `x => let y = 1; y + x`
-- Multi-line block:
-    ```koatl
-    x =>
-        let y = 1
-        y + x
-    ```
-
-### 2. **Pattern Matching**
-
-Koatl provides sophisticated pattern matching in multiple contexts:
-
-#### Pattern Types
-
-1. **Literal Patterns**: Match specific values
-
-    ```koatl
-    match x:
-        1 => "one"
-        "hello" => "greeting"
-        True => "truthy"
-    ```
-
-2. **Capture Patterns**: Bind values to variables
-
-    ```koatl
-    [head, tail] => ...  # Binds elements to variables
-    {name: n} => ...     # Extracts and binds fields
-    x => ...             # Captures any value as x
-    _ => ...             # Wildcard (ignores value)
-    ```
-
-3. **Value Patterns**: Match against variables/attributes (use `.` prefix)
-
-    ```koatl
-    y = 2
-    match x:
-        .y => "matched the constant 2"      # Match against variable y
-        .module.value => ...                # Match against module attribute
-        y => "capture any value as y"       # Different: binds new variable
-    ```
-
-4. **Sequence Patterns**: Lists and tuples
-
-    ```koatl
-    match x:
-        [] => "empty list"
-        [a] => "single element"
-        [a, b, c] => "three elements"
-        [a, *rest] => "first element and rest"
-        [*rest, last] => "all but last"
-    ```
-
-5. **Mapping Patterns**: Records and dicts
-
-    ```koatl
-    match x:
-        {} => "empty record"
-        {a: x} => "record with key a"
-        {a, b} => "shorthand for a: a, b: b"
-        {**rest} => "capture remaining fields"
-    ```
-
-6. **Class Patterns**: Constructor patterns
-
-    ```koatl
-    match x:
-        Point(x, y) => ...  # Match Point instance
-        Exception(args=[m]) => ...  # Destructure args tuple
-    ```
-
-7. **Or Patterns**: Alternatives with `|`
-
-    ```koatl
-    match x:
-        1 | 2 | 3 => "one, two, or three"
-        [a, b] | {x: a, y: b} => ...  # List or record form
-    ```
-
-8. **As Patterns**: Bind after matching
-    ```koatl
-    match x:
-        [a, *rest] as whole => ...  # Bind entire pattern to 'whole'
-    ```
-
-#### In Match Expressions
-
-Match supports both prefix and postfix syntax:
-
-```koatl
-result = match x:
-    [a, b, c] => a + b + c
-    {name: n, age: a} => f"{n} is {a} years old"
-    [_] => "Single element list"
-    _ => "Default case (catch-all)"
-```
-
-Both prefix (`match x:`) and postfix (`x match:`) syntax are supported.
-
-> **Style Note**: Prefer `match x:` as the default style. The postfix form `x match:` is also valid and may read better in some expression contexts.
-
-Match expressions also support **guards**:
-
-```koatl
-match x:
-    [a, b] if a > b => "a is larger"
-    [a, b] => "b is larger or equal"
-```
-
-#### In Function Arguments
-
-```koatl
-process = [head, *tail] => (head, tail)  # Destructure list patterns
-get_value = {key: k, value: v} => v     # Destructure record patterns
-
-# With guards
-compare = (a, b) if a > b => a
-compare = (a, b) => b
-```
-
-#### If Let (Pattern Matching in Conditions)
-
-`if let` destructures a value and enters the then-block only if the pattern matches. Captured variables are scoped to the then-block:
-
-```koatl
-if let [a, *b] = x:
-    print(a, b)  # Variables a and b are available in this scope
-else:
-    print("no match")
-```
-
-`if not let` is the inverse — the then-block must be of Never type (return/raise/break/continue), and captures leak to the surrounding scope:
-
-```koatl
-if not let [x, y] = value:
-    return
-print(x, y)  # x and y are available (safe because we returned otherwise)
-```
-
-#### While Let
-
-`while let` loops while a pattern continues to match:
-
-```koatl
-while let ("Some", val) = data[idx]:
-    process(val)
-    idx = idx + 1
-```
-
-#### Matches (Capture-Free)
-
-The `matches` / `not matches` operator is available for capture-free boolean pattern checks:
-
-```koatl
-let matched = x matches [_, _]:   # no captures — just a boolean test
-```
-
-### 3. **Piping & Method Chaining**
-
-Convenient piping with `|>` and `.()` operators:
-
-```koatl
-# Using |> pipe operator
-data
-    |> do_something
-    |> do_other_thing
-    |> pass_into_second_arg(a, $, option="yes")
-
-# Using .(f) for higher precedence
-(..10).iter.map($ + 1).(filter $ > 5).(print)
-```
-
-### 3b. **Method Pipe (`->`)**
-
-The `->` operator pipes the left operand as the **first argument** of the right-hand function call:
-
-```koatl
-x->f(a, b)           # f(x, a, b)
-data->transform(opts) # transform(data, opts)
-```
-
-### 4. **Placeholder Variables ($)**
-
-The `$` placeholder creates lambdas automatically:
-
-```koatl
-f(a, $, c)              # => x => f(a, x, c)
-($ + 2 * y / 4)         # => x => x + 2 * y / 4
-list.map($ * 2)         # => list.map(x => x * 2)
-list.filter($ > 5)      # => list.filter(x => x > 5)
-```
-
-### 5. **If-Expressions**
-
-If statements return values.
-
-**Classic (Python-style)**:
-
-```koatl
-if condition:
-    do_something()
-    do_other_thing()
-else:
-    do_alternative()
-```
-
-**With `then` keyword** (inline only):
-
-```koatl
-y = if condition then 10 else 20
-x = if is_valid then process(data) else default_value
-```
-
-> **Note**: `then` introduces a single inline expression — it cannot be followed by `:`. Use `:` for block bodies.
-
-### 6. **Check-Expressions**
-
-Elegantly handle exceptions without breaking flow:
-
-```koatl
-result = check some_value           # Ok(value) or Err(exception)
-result = check risky_call except ValueError()  # Catch specific exceptions
-```
-
-### 7. **Coalescing Operators**
-
-Handle None, Err, and exceptions gracefully:
-
-```koatl
-value = check get_config() ?? default_value
-result = None?.property             # => None
-result = Ok([1,2,3])?[0]           # => Ok(1)
-```
-
-### 8. **Better Slicing & Ranges**
-
-Cleaner slice syntax usable outside lists:
-
-**Slice Syntax**: `[start..stop..step]`
-
-```koatl
-# Standard slices
-first_three = [1, 2, 3, 4, 5][..3]      # [1, 2, 3]
-from_two = [1, 2, 3, 4, 5][2..]        # [3, 4, 5]
-middle = [1, 2, 3, 4, 5][1..4]         # [2, 3, 4]
-with_step = [1, 2, 3, 4, 5][..5..2]    # [1, 3, 5] - every 2nd element
-
-# Slices are first-class values (can be stored and reused)
-my_slice = ..5
-some_array[my_slice]
-
-# Ranges (slices with only dots)
-..10        # Range from 0 to 10
-5..         # Range from 5 to end
-1..10..2    # Range from 1 to 10 with step 2
-
-# Ranges are iterable
-for i in ..10:
-    print(i)
-
-# Can be used with iterator methods
-(..100)
-    .map($ * 2)
-    .filter($ > 50)
-    .list()
-```
-
-### 9. **Records (Enhanced Dicts)**
-
-Javascript-like object syntax:
-
-```koatl
-x = {a: 1, b: 2, c: 3}
-
-# Keys don't need quotes
-# Records support dot notation like Javascript
-x.a == 1
-x["a"] == 1
-
-# Expressions as keys
-key = "my_key"
-obj = {(key): "value", other: 42}
-
-# Block expressions as keys (for complex computed keys)
-obj = {
-    (
-        temp = compute_key()
-        temp.upper()
-    ): "computed key value"
-}
-
-# Records with methods and properties
-x = {
-    a: 1
-    get_value: () => 2
-    computed: Record.method& self => self.a * 2
-}
-```
-
-### 10. **Module System**
-
-Unified import/export syntax:
-
-```koatl
-# Simplified imports
-import a.b.c.d              # from a.b.c import d
-import a.b.c.(d, e, f)      # from a.b.c import d, e, f
-import a.b.c.*              # from a.b.c import *
-
-# With relative imports and aliasing
-import a.b.c.(
-    .e
-    d as renamed_d
-    f.g.(i, j)
-)
-
-# Exports
-export import other_module.(item, other_item)
-export result = compute()
-private_value = 1  # Not exported
-```
-
-## Declarations & Statements
-
-### Variable Declarations
-
-Koatl has four declaration modifiers:
-
-```koatl
-let x = 1       # Block-scoped mutable variable (Koatl's main declaration)
-const y = 2     # Block-scoped constant (Python-style, not enforced)
-global z = 3    # Global scope declaration
-export a = 4    # Export for module (sets __all__)
-```
-
-Multiple declarations on one line:
-
-```koatl
-let x, y, z = 1, 2, 3
-```
-
-**Key difference from Python**: `let` creates proper block scope. Unlike Python, later binding doesn't affect earlier statements:
+**`let` creates proper block scope.** A binding later in a scope cannot affect earlier statements — `nonlocal` is never needed:
 
 ```koatl
 let a = 1
 if True:
     let a = 2
-    print(a)    # Prints: 2
-print(a)        # Prints: 1  (not affected by inner binding!)
+    print(a)    # 2
+print(a)        # 1  (not clobbered)
+
+outer = () =>
+    let count = 0
+    () =>
+        count += 1  # no nonlocal needed
+        count
 ```
 
-### Pattern-Based Assignments
-
-Destructure on assignment:
+### Pattern-Based Assignment
 
 ```koatl
-let [x, y] = [1, 2]
-let {name: n, age: a} = user
-let {name, age} = user  # Shorthand
+let [x, y]            = [1, 2]
+let {name, age}       = user          # shorthand for {name: name, age: age}
+let {name: n, age: a} = user          # bind to different names
+const {x, y}          = point
 ```
 
-With modifiers:
+### Special Identifiers
+
+**`__locals__`** — dict of Koatl variable names → values in the current scope:
 
 ```koatl
-let [a, b] = tuple
-const {x, y} = point
+(arg1, arg2) =>
+    let local = 100
+    __locals__   # {local: 100, arg1: ..., arg2: ...}
 ```
 
-### Control Flow Statements
-
-**While loops**:
+**`__captures__`** — dict of variables captured from outer scopes (excludes globals and current-scope variables):
 
 ```koatl
-while x > 0:
-    print(x)
-    x -= 1
+outer = () =>
+    let x = 1
+    inner = () =>
+        __captures__  # {x: 1}
+    inner()
 ```
 
-**For loops** (with pattern matching):
+---
+
+## Pipes & Placeholders
+
+### `|>` Pipe
+
+`x |> f` means `f(x)`. Passes the left side as the last (or sole) argument:
+
+```koatl
+data
+    |> do_something
+    |> transform
+    |> save_to(db, $, format="json")   # $ as placeholder for position
+```
+
+### `->` Method Pipe
+
+`x->f(args)` means `f(x, args)` — inserts `x` as the **first** argument:
+
+| Form | Meaning |
+|------|---------|
+| `x->f(args)` | `f(x, args)` |
+| `x->f.g(args)` | `f.g(x, args)` |
+| `x->(expr)(args)` | `expr(x, args)` |
+| `x->f` *(no parens)* | `partial(f, x)` |
+
+```koatl
+data->process(opts)          # process(data, opts)
+data->clean()->transform()   # transform(clean(data))
+x->f                         # partial(f, x)
+```
+
+### `?->` Optional Method Pipe
+
+Maps over `Ok`/non-`None`, passes through `Err`/`None`:
+
+```koatl
+check open(path)?->parse()       # Ok(parse(file)) or Err
+result?->transform(opts)         # skips if result is Err/None
+```
+
+### `.()` Scoped Call
+
+Prefer `->` for named functions. `.()` is useful for inline lambdas:
+
+```koatl
+results.(x => x.value * scale)
+```
+
+### `$` Placeholder
+
+`$` constructs a lambda from its surrounding expression, up to the nearest function call. A bare `$` as an argument creates `x => f(..., x, ...)`:
+
+```koatl
+f(a, $, c)              # x => f(a, x, c)
+list.map($ * 2)         # list.map(x => x * 2)
+list.filter($ > 5)      # list.filter(x => x > 5)
+($.name.upper())        # x => x.name.upper()
+```
+
+When in doubt, use an explicit arrow function.
+
+---
+
+## Pattern Matching
+
+Patterns are used in `match`, `if let`, `for`, function arguments, and `except`.
+
+### Pattern Types
+
+**Literal** — match specific values:
+```koatl
+match x:
+    1 => "one"
+    "hello" => "greeting"
+    True => "truthy"
+```
+
+**Capture** — bind to a variable; `_` discards:
+```koatl
+match x:
+    [head, *tail] => (head, tail)
+    {name: n} => n
+    _ => "ignore"
+```
+
+**Value** — match against an existing variable (`.` prefix):
+```koatl
+y = 42
+match x:
+    .y => "matched 42"              # tests the value of y
+    .module.attr => "matched attr"
+    y => "captures any value as y"  # no dot = capture
+```
+
+**Sequence** — lists and tuples:
+```koatl
+match x:
+    [] => "empty"
+    [a] => "one element"
+    [a, b, c] => "three"
+    [a, *rest] => "head and rest"
+    [*rest, last] => "all but last"
+```
+
+**Mapping** — records and dicts:
+```koatl
+match x:
+    {a: v} => v              # extract key a
+    {a, b} => (a, b)         # shorthand for a: a, b: b
+    {**rest} => rest         # capture remaining fields
+```
+
+**Class** — constructor patterns:
+```koatl
+match x:
+    Point(x, y) => ...
+    ValueError(args=[m]) => m    # destructure args tuple
+```
+
+**Or** — alternatives with `|`:
+```koatl
+match x:
+    1 | 2 | 3 => "small"
+    [a, b] | {x: a, y: b} => a + b
+```
+
+**As** — bind after matching:
+```koatl
+match x:
+    [a, *rest] as whole => (a, whole)
+```
+
+**Guards**:
+```koatl
+match x:
+    [a, b] if a > b => "a larger"
+    [a, b] => "b larger or equal"
+```
+
+### Match Expressions
+
+Both prefix and postfix syntax are valid. Prefer prefix `match x:`:
+
+```koatl
+result = match x:
+    {type: "ok", data: d} => d
+    {type: "err", msg: m} => raise RuntimeError(m)
+    _ => default
+
+# Postfix form (reads well in some expression contexts)
+x match:
+    0 => "zero"
+    _ => "other"
+```
+
+### If Let / If Not Let
+
+`if let` enters the block only when the pattern matches; captures are scoped to the block:
+
+```koatl
+if let [a, b] = some_list:
+    print(a, b)
+else:
+    print("no match")
+```
+
+`if not let` is the inverse — the body **must** diverge (return/raise/break/continue); captures leak to the surrounding scope (like Swift's `guard let`):
+
+```koatl
+if not let Ok(value) = result:
+    return default
+use(value)   # safe — we returned otherwise
+```
+
+### While Let
+
+Loops while the pattern continues to match:
+
+```koatl
+idx = 0
+while let ("Some", val) = data[idx]:
+    process(val)
+    idx += 1
+```
+
+### `matches` Operator
+
+Capture-free boolean test — use `if let` when you need captures:
+
+```koatl
+x matches [_, _]              # True if x is a 2-element list
+x not matches None
+response.status matches 200 | 201
+```
+
+---
+
+## Control Flow
+
+### If / Elif / Else
+
+`if` is an expression — it returns the value of whichever branch runs:
+
+```koatl
+# Block form
+x = if condition:
+    value_a
+elif other:
+    value_b
+else:
+    value_c
+
+# Inline: use `then` (single expression only, no `:` after `then`)
+x = if condition then value_a else value_b
+```
+
+### For Loops
+
+`for` supports full pattern matching in the loop variable:
 
 ```koatl
 for x in ..10:
     print(x)
 
-for [key, value] in items:
+for [key, value] in my_dict.items():
     print(key, value)
 
-for {name: n, age: a} in users:
-    print(n, a)
+for {name, age} in users:
+    print(f"{name} is {age}")
+
+for (i, x) in items.iter.enumerate():
+    print(i, x)
 ```
 
-**Break and Continue**:
+### While Loops
 
 ```koatl
-while True:
-    if condition:
-        break
-    if other:
-        continue
-    print("loop body")
+while x > 0:
+    x -= 1
 ```
 
-**Return statements**:
+### Try / Except / Finally
+
+`except` clauses use **match-arm syntax** (`Pattern =>`), tried in order. Any pattern is valid including OR-patterns, guards, and `as`:
 
 ```koatl
-return value
-return  # Empty return (returns None)
+result = try:
+    parse(raw)
+except ValueError(args=[m]) if len(m) > 0 =>
+    f"long: {m}"
+except ValueError() =>
+    "short"
+except KeyError | TypeError as e =>
+    f"other: {e}"
+except TypeError(args=[m]) | RuntimeError(args=[m]) =>
+    f"shared handler: {m}"
+finally:
+    cleanup()
 ```
 
-**Raise statements**:
+- `ExcType(args=[m])` destructures the `args` tuple (standard on all exceptions)
+- `as e` binds the raw exception object
+- `ExcType(field=var)` destructures named attributes
+
+Pattern matching in `except` also works inside `check`:
 
 ```koatl
-raise ValueError("message")
+x = check a except NameError()   # caught; other exceptions propagate
 ```
 
-### Import Statements
+### With
 
-**Basic imports**:
-
-```koatl
-import module.path.name        # from module.path import name
-import module.path.(a, b, c)   # from module.path import a, b, c
-import module.path.*           # from module.path import *
-```
-
-**Relative imports**:
-
-```koatl
-import .local_module           # from . import local_module
-import ..parent_module         # from .. import parent_module
-import ...grandparent          # from ... import grandparent
-```
-
-**With aliasing**:
-
-```koatl
-import module.path.name as alias
-import module.(a as x, b as y)
-```
-
-**Exporting**:
-
-```koatl
-export import other_module.(item, other)
-export my_value = 42
-```
-
-### Expression Statements
-
-Any expression can be a statement:
-
-```koatl
-print("hello")
-x + y
-obj.method(arg)
-check risky_operation
-```
-
-## Control Flow Expressions
-
-These are expressions that return values and control program flow:
-
-### 1. **If-Expressions**
-
-If can be both expression and statement:
-
-**Classic syntax** (Python-style):
-
-```koatl
-x = if condition:
-    value_if_true
-else:
-    value_if_false
-
-# Can be chained
-z = if a:
-    1
-elif b:
-    2
-else:
-    3
-```
-
-**With `then` keyword** (inline only):
-
-```koatl
-y = if condition then 10 else 20
-x = if is_valid then process(data) else default_value
-```
-
-> **Note**: `then` introduces a single inline expression — it cannot be followed by `:`. Use `:` for block bodies.
-
-**`if let` (pattern matching in conditions)**:
-
-```koatl
-if let [a, b] = x:
-    print(a, b)  # a and b are bound in this scope
-
-if not let [x, y] = value:
-    return  # Must return/break/continue/raise here
-print(x, y)  # Safe: captures leak after Never block
-```
-
-### 2. **Match-Expressions**
-
-True pattern matching with guards, supporting two syntaxes:
-
-```koatl
-result = match x:
-    1 => "one"
-    2 => "two"
-    [a, b] if a > b => f"pair {a} > {b}"
-    [a, b] => f"pair {a} <= {b}"
-    {type: "error", msg: m} => f"error: {m}"
-    {type: "ok", data: d} => f"success: {d}"
-    _ => "unknown"
-```
-
-Both prefix (`match x:`) and postfix (`x match:`) syntax are supported.
-
-> **Style Note**: Prefer `match x:` as the default style. The postfix form `x match:` is also valid and may read better in some expression contexts.
-
-### 3. **With-Expressions**
-
-Context managers that return values:
+`with` binds the `__enter__` return value using pattern syntax and returns the body value:
 
 ```koatl
 content = with f = open("file.txt"):
     f.read()
 
-# With pattern matching
+# Pattern on the context manager's return value
 with [file1, file2] = open_pair():
     file1.read() + file2.read()
 ```
 
-### 4. **Try-Except-Finally Expressions**
+### Check & Coalescing
 
-Exception handling with pattern matching:
+`check` wraps the result in `Ok`/`Err` instead of raising:
 
 ```koatl
-result = try:
-    risky_operation()
-except ValueError(args=[m]) if len(m) > 0 =>
-    f"long error: {m}"
-except ValueError() =>
-    "short error"
-except KeyError as e =>
-    f"key error: {e}"
-finally:
-    cleanup()
+result = check risky()                    # Ok(value) or Err(exception)
+result = check expr except ValueError()  # only catch ValueError; others propagate
 ```
 
-### 5. **Memo-Expressions**
-
-Memoization with automatic dependency tracking:
+`??` lazily evaluates the right-hand default when the left side is `None`, `Err`, or an uncaught exception:
 
 ```koatl
-# Lazy memoized computation
-result = memo:
-    expensive_computation()
-
-# Async memoization
-async_result = async memo:
-    await fetch_data()
-
-# In functions
-fib = x =>
-    if x < 2 then @Memo.pure(1) else memo @fib(x-1) + @fib(x-2)
+config = check load_config() ?? default_config
+port   = check int(env["PORT"]) ?? 8080
+name   = check user.profile?.name ?? "unnamed"
 ```
 
-### 6. **Await & Yield Expressions**
+### Await / Yield
 
 ```koatl
-# Await expressions
 result = await async_operation()
 
-# Yield expressions
 gen = x => (
     yield 1
     yield x + 2
 )
 
-# Yield from
 combined = => yield from other_generator()
 ```
 
-## Advanced Language Features
+---
 
-### **With-Expressions**
+## Attribute Access
 
-With statements return values:
-
-```koatl
-content = with f = open("file.txt", "r"):
-    f.read()
-```
-
-### **Scoped Variables**
-
-Proper lexical scoping with `let`:
+### Standard
 
 ```koatl
-let a = 1
-if True:
-    let a = 2
-    print(a)        # Prints: 2
-print(a)            # Prints: 1
+obj.attr          # attribute access
+obj.method(arg)   # method call
+obj[key]          # subscript
+obj::__dict__     # raw attribute — bypasses vget/__getattr__
 ```
 
-Unlike Python, `nonlocal` is never needed—Koatl's scoping rules prevent binding conflicts.
+### Safe Navigation (`?.`)
 
-### **Special Identifiers for Introspection**
-
-Koatl provides special identifiers for runtime introspection:
-
-#### **`__locals__`**
-
-Returns a dictionary mapping Koatl variable names to their Python runtime values in the current scope:
+Short-circuits on `None`/`Err` — the object itself is potentially None/Err:
 
 ```koatl
-test_locals = (arg1, arg2) =>
-    let local = 100
-    __locals__
-    # Returns: {local: 100, arg1: <value>, arg2: <value>}
+obj?.prop            # None if obj is None/Err, else obj.prop
+obj?[0]              # None if obj is None/Err
+obj?(arg)            # None if obj is None/Err
+obj?.a?.b?.c         # chains freely
 ```
 
-This is useful for debugging, metaprogramming, or passing local context to dynamic code.
+### Maybe Attribute (`.?`)
 
-#### **`__captures__`**
-
-Returns a dictionary of variables captured from outer scopes (excluding globals):
+Tries the access, returns `None` on `AttributeError` — the object exists but the attribute may not:
 
 ```koatl
-outer = () =>
-    let x = 1
-    let y = 2
-    inner = () =>
-        let z = 3
-        __captures__  # Returns: {x: 1, y: 2} (not z or globals)
-    inner()
+obj.?attr               # None if attr doesn't exist on obj
+config.?debug ?? False  # use debug if present, else False
 ```
 
-**Key behaviors**:
+**Key distinction**: `obj?.attr` checks whether *obj* is None/Err; `obj.?attr` checks whether *attr* exists.
 
-- Only available inside functions (error if used at module level)
-- Includes variables from parent function scopes
-- Excludes global scope variables
-- Excludes variables from the current function scope (use `__locals__` for those)
-- Uses `globals() | locals()` to access captured values at runtime
-- Handles shadowing correctly (inner scope variables override outer ones)
+---
 
-Both `__locals__` and `__captures__` translate Koatl names (like `x`) to their mangled Python equivalents (like `let_x_1`), making them safe for use with Python's runtime introspection.
+## Decorators
 
-### **Block Comments**
+`!` applies a single-argument function — the decorator operator:
 
-Nestable block comments:
+```koatl
+Cls = class:
+    method = staticmethod! () => ...
+    prop   = property! self => self.value
+
+# a! b  ≡  a(b)
+Extension.method(int, "double")! self => self * 2
+```
+
+---
+
+## Containers
+
+### Records
+
+Javascript-style dicts with unquoted keys, dot access, optional commas, and method/property support:
+
+```koatl
+x = {a: 1, b: "hello"}
+x.a == 1
+x["a"] == 1
+
+# Computed key (wrap in parens)
+key = "id"
+{(key): 123}        # {"id": 123}
+
+# Spread / update
+updated = {**x, b: "world"}
+
+# Multiline (commas optional)
+config = {
+    host: "localhost"
+    port: 8080
+}
+
+# Methods and properties (self is explicit)
+counter = {
+    value: 0
+    inc: Record.method! self => {**self, value: self.value + 1}
+    val: Record.property! self => self.value
+}
+counter.inc().val  # 1
+```
+
+### Lists
+
+Python lists; multiline without commas:
+
+```koatl
+items = [
+    1
+    2
+    3
+]
+[1, 2, 3].map($ * 2)     # eager: [2, 4, 6]
+[1, 2, 3].filter($ > 1)  # eager: [2, 3]
+```
+
+### Tuples
+
+```koatl
+x = (1, 2, 3)
+a, b = 1, 2
+
+# Multi-line parens are block expressions, not tuples:
+x = (       # this is a block — x gets 3
+    1
+    2
+    3
+)
+x = (1, 2,  # still a tuple when a comma is present on same line
+     3, 4)
+```
+
+### Sets
+
+```koatl
+set([1, 2, 3])   # no literal syntax
+```
+
+### Ranges & Slices
+
+`..` replaces `:` for all slice/range syntax:
+
+```koatl
+..10          # range(0, 10)
+1..10         # range(1, 10)
+1..10..2      # range(1, 10, 2)
+5..           # open-ended (from 5, as a slice)
+
+arr[..3]      # arr[:3]
+arr[2..]      # arr[2:]
+arr[1..4]     # arr[1:4]
+arr[..5..2]   # arr[:5:2]
+
+# Slices are first-class values
+s = ..5
+arr[s]
+
+# Ranges are iterable
+for i in ..10: print(i)
+(..100).iter.filter($ % 2 == 0).list()
+```
+
+---
+
+## Iterators & Extensions
+
+### Iterable vs Iterator
+
+- **`Iterable`** — anything with an `.iter` extension property (lists, dicts, ranges, strings, tuples). Provides `.traverse()` and `.debug_iter()`.
+- **`Iterator`** — anything with `__next__` (result of `.iter`, or any Python iterator). Provides the full method suite.
+
+`.iter` delegates to `.items()` for dicts, so `for [k, v] in d.iter:` works naturally.
+
+### Eager vs Lazy
+
+Concrete containers have **eager** `map`/`filter` overrides that return their own type:
+
+```koatl
+[1, 2, 3].map($ * 2)              # [2, 4, 6]  — list in, list out
+set([1, 2, 3]).map($ * 2)         # {2, 4, 6}
+{a: 1, b: 2}.map_values($ * 10)   # {a: 10, b: 20}
+{a: 1, b: 2}.map_keys($.upper())  # {A: 1, B: 2}
+{a: 1, b: 2}.filter_values($ > 1) # {b: 2}
+```
+
+For everything else — aggregations, slicing, chaining — call `.iter` first:
+
+```koatl
+[1, 2, 3].iter.sum()                              # 6
+[3, 1, 4].iter.sorted().list()                    # [1, 3, 4]
+(..100).iter.filter($ % 7 == 0).take(5).list()   # [0, 7, 14, 21, 28]
+```
+
+### Iterator Method Reference
+
+**Transformations**: `.map(f)`, `.filter(f)`, `.flat_map(f?)`, `.filter_map(f?)`, `.enumerate(start=0)`, `.zip(*others)`, `.chain(*others)`, `.product(*others)`, `.cycle()`, `.unique()`, `.reversed()`, `.sorted(key?, reverse?)`
+
+**Slicing**: `.take(n)`, `.skip(n)`, `.take_while(f)`, `.skip_while(f)`
+
+**Aggregations** (consume iterator): `.fold(init, f)`, `.sum()`, `.mean()`, `.min(key?)`, `.max(key?)`, `.tally(f?)`, `.join(sep="")`, `.all(f)`, `.any(f)`, `.find(f)`, `.first()`, `.last(f)`, `.at(i)`, `.for_each(f)`
+
+**Collectors**: `.list()`, `.set()`, `.tuple()`, `.dict()`, `.record()`, `.associate(f)`, `.group_by(f)`, `.count_by(f?)`
+
+### Extension Attributes & Traits
+
+Extension attributes add methods and properties to any type — including builtins — without monkey-patching, via a virtual dispatch table (`vget`):
+
+```koatl
+# Add a method to int
+Extension.method(int, "double")! self => self * 2
+(5).double()   # 10
+
+# Add a property
+Extension.property(list, "len")! self => len(self)
+[1, 2, 3].len  # 3
+
+# Trait: add methods to any type satisfying requirements
+export Iterable = Extension.trait! class(Trait):
+    iter = Trait.abstract! self => ()            # requirement
+    traverse = (self, f) => self.iter.for_each(f)  # available on anything with .iter
+
+export Iterator = Extension.trait! class(Trait):
+    __next__ = Trait.abstract! self => ()
+    map    = (self, f) => map(f, self)
+    filter = (self, f) => filter(f, self)
+    list   = self => list(self)
+    # ... fold, sum, take, skip, sorted, group_by, etc.
+```
+
+**Virtual dispatch order**: `__getattribute__` → type vtable → trait vtable → `AttributeError`.
+
+### Debugging Pipelines
+
+`.debug_iter()` wraps any iterable and tracks values through the pipeline, rendering an ASCII grid with `.show()`:
+
+```koatl
+[1, 2, 3, 4, 5]
+    .debug_iter()
+    .map($ * 2)
+    .filter($ > 4)
+    .show()
+# ┌───┬────────┬──────┬────────┐
+# │   │ source │  map │ filter │
+# ├───┼────────┼──────┼────────┤
+# │ 0 │   1    │   2  │ [skip] │
+# │ 2 │   3    │   6  │   6    │
+```
+
+---
+
+## Modules
+
+### Imports
+
+Koatl unifies `import` and `from ... import` into dot-separated paths:
+
+```koatl
+import a.b.c            # from a.b import c
+import a.b.(c, d)       # from a.b import c, d
+import a.b.*            # from a.b import *
+import a.b.c as alias
+```
+
+Inside a `(...)` group, entries are resolved relative to the preceding path:
+
+- Plain name `d` → import from current prefix
+- Dotted path `f.g.(i, j)` → extend prefix, then import
+- `.x` → pop one level: `.x` inside `a.b.(...)` → `from a import x`
+- Bare `.` → import the prefix module itself: `.` inside `a.b.(...)` → `from a import b`
+
+```koatl
+import a.b.(
+    c           # from a.b import c
+    f.g.(i, j)  # from a.b.f.g import i, j
+    .x          # from a import x
+    .           # from a import b
+)
+```
+
+**Relative imports**:
+
+```koatl
+import .local           # from . import local
+import ..parent         # from .. import parent
+import ...grandparent   # from ... import grandparent
+```
+
+**With aliasing**:
+
+```koatl
+import module.(a as x, b as y)
+```
+
+### Exports
+
+```koatl
+export my_value = 42
+export import other.(x, y)   # re-export
+# anything without export is module-private
+```
+
+---
+
+## Monads
+
+Koatl uses `@` as a **monadic bind** operator (not a decorator — use `decorator! value` for decoration). Inside a function, `@expr` yields-and-binds the monadic value, producing flat sequential-looking code for nested operations.
+
+> `@` requires `bind_once` (called at most once). This supports deterministic monads: Result, Memo, Async, Env.
+
+### Result
+
+`Ok` / `Err`, with automatic wrapping via `Result(value)`:
+
+```koatl
+Result(1)           # Ok(1)
+Result(None)        # Err(None)
+Result(ValueError()) # Err(ValueError())
+```
+
+`@` unwraps `Ok` and short-circuits on `Err` (like `?` in Rust):
+
+```koatl
+process = () =>
+    let x = @get_value()       # returns Err immediately if Err
+    let y = @transform(x)
+    x + y                      # implicitly Ok(x + y)
+
+process()   # Ok(...) or Err(...)
+```
+
+`Result` provides a default `bind_once` for **all** types, so `@` also works on bare non-Result values.
+
+### Memo
+
+Memoized computation with the `memo` keyword. Dependencies are automatically inferred from directly captured variables:
+
+```koatl
+let fib = n =>
+    if n < 2 then @Memo.pure(1)
+    else memo @fib(n-1) + @fib(n-2)
+
+fib(200).run()   # or fib(200).run(Memo.Cache())
+```
+
+`async memo` for async memoization.
+
+### Async
+
+```koatl
+f = () =>
+    print("start")
+    @Async.sleep(1)
+    print("done")
+
+f().run()   # creates event loop; or `await f()` in async context
+```
+
+### Env
+
+Provides access to an external context object without threading it through every function:
+
+```koatl
+g = () =>
+    @Env.item("key")
+
+f = () =>
+    let a = @Env.item("first")
+    let b = @g()
+    a + b
+
+f().run(context_dict)
+```
+
+---
+
+## Syntax Reference
+
+### Block Comments
+
+Nestable `#- ... -#` block comments:
 
 ```koatl
 x = #- this is a #- nested -# comment -# 2
 ```
 
-### **Try-Catch Pattern Matching**
+### F-Strings
 
-Unified exception handling with pattern matching:
-
-```koatl
-try:
-    do_something()
-except ValueError(args=[m]) | TypeError(args=[m]) =>
-    print(f"Error: {m}")
-
-try:
-    risky()
-except NameError() as e =>
-    print(e)
-```
-
-## Blocks & Expression Composition
-
-### Indentation-Based Blocks
-
-Koatl uses Python-style indentation for blocks:
+`:` is the format delimiter, but only at bracket depth 0:
 
 ```koatl
-if True:
-    statement1
-    statement2
-    let nested_value = if inner:
-        x
-    else:
-        y
+f"{pi:.2f}"              # "3.14"
+f"{num:05d}"             # "00042"
+f"{(if ok: x):.2f}"     # : inside () is NOT a delimiter
 
-while condition:
-    loop_body
+# Multi-line block inside {}
+f"Result: {
+    let a = compute()
+    a * 2
+}"
+
+rf"path: {value}\n"     # raw f-string — \n is literal
 ```
 
-### Block Expressions (Parenthesized Blocks)
+### Block Expressions
 
-Use parentheses to create expression blocks - the final expression is the value:
+A `(` at the end of a line starts an expression block; the final expression is the value:
 
 ```koatl
 x = (
     a = 2
     b = 3
-    a + b    # This is the value (5)
+    a + b    # x == 5
+)
+
+x = 2 + (
+    if True then 2 else 3
 )
 ```
 
-### Semicolon Separators
+### Semicolons
 
-Statements can be separated by semicolons for single-line composition:
+Separate statements on one line:
 
 ```koatl
-x = (let x = 123; x)  # x == 123
-
-# Or in regular code
 let a = 1; let b = 2; a + b
+x = (let x = 123; x)
 ```
 
 ### Indentation Rules
 
-- Opening `(` at end of line starts a block on next line
-- Indented code continues the block
-- Dedent ends the block
+- Opening `(` at end of a line starts a new indented block
 - Optional commas in multiline lists, records, and function calls
-- No commas needed in multiline indented code
+- `[` and `{` also open blocks when at end of line
 
 ```koatl
 my_list = [
     1
-    2 +
-        2
+    2 + 2
     3
 ]
-
-my_record = {
-    a: 1
-    b: 2
-    c: 3
-}
 
 function_call(
     arg1
     arg2
-    kwarg=value
+    kw=value
 )
 ```
 
-## Container Types
-
-### **Records** (Enhanced Dicts)
-
-- Javascript-like syntax with attribute access
-- Auto-forwarding attribute lookup to indexing
-- Support for methods, properties, and computed fields
-- Multiline records without commas:
-    ```koatl
-    obj = {
-        a: 1
-        b: 2
-        c: 3
-    }
-    ```
-
-### **Lists**
-
-- Python lists with improved syntax
-- Multiline lists without commas:
-    ```koatl
-    items = [
-        1
-        2
-        3
-    ]
-    ```
-
-### **Tuples**
-
-- Standard Python tuples: `(1, 2, 3)`
-- Comma creates tuples: `a, b = 1, 2`
-
-### **Sets**
-
-- Use constructor: `set([1, 2, 3])`
-
-## Prelude & Standard Library
-
-### **std module**
-
-Lazily-loaded standard library access:
-
-```koatl
-std.io.read_file("data.txt") |> print
-```
-
-### **mod module**
-
-Lazily-loaded Python package proxy:
-
-```koatl
-mod.numpy.array([1, 2, 3]) + 2 |> print
-```
-
-### **Built-in Extensions**
-
-- `.iter` - Makes objects iterable (delegates to `.items()` for dicts)
-- `Iterable` trait - Marks types with `iter`; `Iterator` trait - Methods for iterators (`map`, `filter`, `fold`, etc.)
-
-## Common Patterns & Examples
-
-### Data Processing Pipeline
-
-```koatl
-(..10).iter
-    .map(fib)
-    .filter($ % 2 == 0)
-    .map($ * 2)
-    .list()
-```
-
-### Record Transformations
-
-```koatl
-users = [
-    {name: "Alice", age: 30}
-    {name: "Bob", age: 25}
-]
-
-users
-    .iter.filter($.age > 26)
-    .map({**$, adult: True})
-    .for_each(print)
-```
-
-### API Data Processing
-
-```koatl
-match fetch_repos("python"):
-    Ok(response) =>
-        response["items"]
-            .iter.map(create_repo)
-            .filter($.stars > 10)
-            .sorted($.activity, reverse=True)
-            .iter.for_each(print)
-    Err(e) =>
-        print(f"Error: {e}")
-```
-
-### Game of Life Simulation
-
-```koatl
-create_cell = (x, y, alive=False) => {
-    x: x, y: y, alive: alive
-    neighbors: Record.method! (self, size) => [...]
-    next_state: Record.method! (self, count) => [...]
-}
-
-display_grid = (grid, size) =>
-    (..size).iter.for_each(y =>
-        (..size).iter
-            .map(x => if grid[(x, y)].alive then "██" else "  ")
-            .join("")
-            |> print
-    )
-```
-
-## Advanced Features
-
-### **Monads**
-
-Koatl supports several monadic patterns using the `@` bind operator:
-
-#### **Memo Monad** (Memoization)
-
-```koatl
-fib = x => if x < 2 then @Memo.pure(1) else memo @fib(x - 1) + @fib(x - 2)
-
-fib(200).run()  # Cached computation
-```
-
-Automatically tracks dependencies based on captured variables.
-
-#### **Result Monad** (Error Handling)
-
-```koatl
-f = () =>
-    x = @get_some_value()           # Returns early if error
-    y = @get_some_other_value(x)    # Returns early if error
-    x + y
-
-f() # Ok(result) or Err(exception)
-```
-
-#### **Async Monad**
-
-```koatl
-f = () =>
-    print("sleepy")
-    @Async.sleep(1)
-    print("refreshed!")
-
-await f()
-```
-
-#### **Env Monad** (Context/Dependency Injection)
-
-```koatl
-g = () =>
-    @Env.item("config_key")
-
-f = () =>
-    x = @Env.item("first")
-    y = @Env.item("second")
-    x + y
-
-f().run(config_dict)
-```
-
-### **Extension Attributes & Traits**
-
-Non-destructively add methods/properties to any type using a virtual dispatch system powered by `vget`.
-
-#### How Extension Attributes Work
-
-When you access an attribute on an object, Koatl uses `vget` (virtual get) instead of Python's standard attribute lookup. The `vget` system:
-
-1. **First tries standard Python attribute lookup** via `getattr()`
-2. **If that fails**, checks two virtual tables (vtables):
-    - **Type-based vtable**: Methods/properties registered for specific types
-    - **Trait-based vtable**: Methods from traits with requirement checking
-
-This allows you to add methods to any type—even built-in types like `int`, `str`, `None`—without modifying their class definitions.
-
-#### Adding Extension Methods
-
-```koatl
-# Add a method to a specific type
-Extension.method(int, "double")! self => self * 2
-
-# Now all ints have this method
-(5).double()  # => 10
-```
-
-#### Adding Extension Properties
-
-```koatl
-# Add a property (computed attribute)
-Extension.property(list, "len")! self => len(self)
-
-# Access like a regular attribute
-[1, 2, 3].len  # => 3
-```
-
-#### Trait-Based Extensions
-
-Traits allow you to add methods to multiple types that satisfy requirements. Requirements are specified using `Trait.abstract!`:
-
-```koatl
-# Define a trait with requirements
-export Iterable = Extension.trait! class:
-    # Abstract methods define requirements - types must have these to use the trait
-    iter = Trait.abstract! self => ()
-
-    # Concrete methods are only available if requirements are met
-    traverse = (self, f) => self.iter.for_each(f)
-
-# Iterator trait applies to anything with __next__
-export Iterator = Extension.trait! class:
-    __next__ = Trait.abstract! self => ()
-
-    map = (self, f) => map(f, self)
-    filter = (self, f) => filter(f, self)
-    list = self => list(self)
-    # ... plus fold, sum, take, skip, etc.
-
-# Now any type with 'iter' gets Iterable, any with '__next__' gets Iterator
-[1, 2, 3].iter.map(x => x * 2)  # .iter returns iterator, Iterator trait applies
-[1, 2, 3].map(x => x * 2)       # Eager list.map override returns a list
-```
-
-When you mark a method with `Trait.abstract!`, it becomes a requirement that types must satisfy to use the trait's other methods.
-
-#### Implementation Details
-
-The virtual dispatch system is implemented in Rust for performance:
-
-- **`fast_vset(type, name, value)`**: Register a method/property for a specific type
-- **`fast_vset_trait(trait_name, requirements, name, value)`**: Register a trait method
-- **`fast_vget(obj, name)`**: Look up method/property via vtables
-
-When you call `obj.method()`, the transpiled code uses `vget(obj, "method")` which:
-
-1. Checks Python's `__getattribute__` first
-2. Falls back to type-specific vtable
-3. Falls back to trait vtables (checking requirements)
-4. Returns `None` if not found (or raises `AttributeError`)
-
-#### Example: Built-in Extensions
-
-The prelude adds many useful extensions:
-
-```koatl
-# String pattern matching
-"hello world".matches(r"w\w+")  # Uses Extension.method(str, "matches")
-
-# List operations (eager map/filter return lists)
-[1, 2, 3].map(x => x * 2)  # Eager list.map returns [2, 4, 6]
-[1, 2, 3].iter.sum()        # Iterator methods require .iter
-
-# Dict operations
-{a: 1, b: 2}.map_values(x => x * 10)  # Extension.method(dict, "map_values")
-```
-
-## Decorators
-
-Use `!` as a decorator shorthand:
-
-```koatl
-Foo = class:
-    method = staticmethod! () => ...
-    prop = property! self => self.value
-```
-
-## Attribute Access & Member Selection
-
-### Standard Attribute Access
-
-```koatl
-obj.property             # Get attribute
-obj.method(arg)          # Method call
-obj[key]                 # Subscript (for dicts/lists)
-obj["string_key"]        # String key subscript
-```
-
-### Safe Navigation (Optional Chaining)
-
-Safely access attributes on potentially None/Err values:
-
-```koatl
-result = obj?.property    # None if obj is None
-result = obj?[0]          # None if obj is None
-result = obj?(arg)        # None if obj is None
-result = result?.deeply?.nested?.property  # Chains safely
-```
-
-### Maybe Attribute (`.?`)
-
-Try to access an attribute that may not exist, returning None instead of raising AttributeError:
-
-```koatl
-result = obj.?attr        # None if attr doesn't exist, otherwise returns the attribute
-result = obj.?method()    # Can chain with method calls
-
-# Useful for duck typing and optional attributes
-config.?debug_mode ?? False  # Get debug_mode if it exists, otherwise False
-```
-
-**Important distinction** - `.?` and `?.` check different things:
-
-- `obj.?attr` (MaybeAttribute) - Checks if `attr` exists on `obj`. Returns None if the attribute doesn't exist (no AttributeError), otherwise returns the attribute value. The object `obj` itself must not be None.
-- `obj?.attr` (Safe Navigation) - Checks if `obj` is None/Err first. If `obj` is None/Err, returns None. Otherwise, accesses `attr` normally (which must exist or will raise AttributeError).
-
-### Raw Attribute Access
-
-Bypass `vget` and access the true attribute:
-
-```koatl
-obj::__dict__           # Get __dict__ directly, not via __getattr__
-obj::__class__          # Get __class__ directly
-```
+---
 
 ## Operators Reference
 
-### Operator Precedence (highest to lowest)
+### Precedence (highest to lowest for binary operators)
 
-The parser processes operators in this precedence order:
+| Level | Operators | Associativity |
+|-------|-----------|---------------|
+| 0 | `**` | Right |
+| 1 | `*`, `/`, `//`, `%`, `@` | Left |
+| 2 | `+`, `-` | Left |
+| 3 | `<<`, `>>` | Left |
+| 4 | `&` | Left |
+| 5 | `^` | Left |
+| 6 | `\|` | Left |
+| 7 | `<`, `>`, `<=`, `>=`, `==`, `!=`, `===`, `!==`, `in`, `not in` | Left |
+| 8 | `and` | Left |
+| 9 | `or` | Left |
+| 10 | `??` | Left |
+| 11 | `\|>` | Left (lowest) |
 
-| #   | Precedence  | Operators                                                      | Associativity | Note               |
-| --- | ----------- | -------------------------------------------------------------- | ------------- | ------------------ |
-| 11  | Pipe        | `\|>`                                                          | Left-to-right | Lowest precedence  |
-| 10  | Coalesce    | `??`                                                           | Left-to-right |                    |
-| 9   | Logical OR  | `or`                                                           | Left-to-right |                    |
-| 8   | Logical AND | `and`                                                          | Left-to-right |                    |
-| 7   | Comparison  | `<`, `>`, `<=`, `>=`, `==`, `!=`, `===`, `!==`, `in`, `not in` | Left-to-right |                    |
-| 6   | Bitwise OR  | `\|`                                                           | Left-to-right |                    |
-| 5   | Bitwise XOR | `^`                                                            | Left-to-right |                    |
-| 4   | Bitwise AND | `&`                                                            | Left-to-right |                    |
-| 3   | Shifts      | `<<`, `>>`                                                     | Left-to-right |                    |
-| 2   | Add/Sub     | `+`, `-`                                                       | Left-to-right |                    |
-| 1   | Mul/Div     | `*`, `/`, `//`, `%`, `@`                                       | Left-to-right |                    |
-| 0   | Power       | `**`                                                           | Right-to-left | Highest precedence |
+**Above binary precedence** (processed in order): `matches` / `not matches`, `memo`, `with`, `match:`, `try:...except:`, `await` / `yield`, `check`
 
-**Special operators** (above binary precedence, processed in order):
+### Postfix Operators
 
-- `matches` / `not matches` - Pattern matching test (capture-free)
-- `memo` - Memoization
-- `with` - Context manager
-- `match:` - Pattern matching
-- `try: ... except: ... finally:` - Exception handling
-- `await` / `yield` - Control flow
-- `check` - Error wrapping
-
-### Postfix Operators (highest precedence within expressions)
-
-| Operator    | Meaning                                  | Example                     |
-| ----------- | ---------------------------------------- | --------------------------- |
-| `()`        | Function call                            | `f(a, b)`                   |
-| `[]`        | Subscript                                | `x[0]` or `x[1..3]`         |
-| `.attr`     | Attribute access                         | `x.property`                |
-| `.?attr`    | Maybe attribute (safe nav)               | `x?.property`               |
-| `::attr`    | Raw attribute (bypass **getattr**)       | `x::__dict__`               |
-| `?[]`       | Safe subscript                           | `x?[0]`                     |
-| `?()`       | Safe call                                | `x?(a, b)`                  |
-| `.()`       | Scoped call (higher precedence than `.`) | `f.(x)`                     |
-| `->f(args)` | Method pipe (insert as first arg)        | `x->f(a, b)` = `f(x, a, b)` |
-| `!`         | Decorator/Function call                  | `decorator! value`          |
+| Operator | Meaning | Example |
+|----------|---------|---------|
+| `()` | Function call | `f(a, b)` |
+| `?()` | Safe call (short-circuits on None/Err) | `x?(a, b)` |
+| `[]` | Subscript | `x[0]`, `x[1..3]` |
+| `?[]` | Safe subscript | `x?[0]` |
+| `.attr` | Attribute access | `x.prop` |
+| `?.attr` | Safe attribute (short-circuits on None/Err) | `x?.prop` |
+| `.?attr` | Maybe attribute (returns `None` on AttributeError) | `x.?prop` |
+| `::attr` | Raw attribute (bypasses `vget`) | `x::__dict__` |
+| `?::attr` | Safe raw attribute | `x?::__dict__` |
+| `.()` | Scoped call; use for inline lambdas | `x.(v => v * 2)` |
+| `?.()` | Safe scoped call | `x?.(v => v * 2)` |
+| `->f(args)` | Method pipe (inserts as first arg) | `x->f(a, b)` = `f(x, a, b)` |
+| `?->f(args)` | Optional method pipe | `x?->f(a)` |
+| `!` | Decorator / one-argument call | `decorator! value` |
 
 ### Unary Prefix Operators
 
-| Operator | Meaning          |
-| -------- | ---------------- |
-| `+`      | Unary plus       |
-| `-`      | Unary minus      |
-| `~`      | Bitwise NOT      |
-| `@`      | Monadic bind     |
-| `not`    | Logical negation |
-
-### Special Operators
-
-| Operator                                                       | Meaning                                       |
-| -------------------------------------------------------------- | --------------------------------------------- |
-| `=>`                                                           | Lambda/function definition                    |
-| `??`                                                           | Coalesce on None/Err/Exception                |
-| `..`                                                           | Range/slice syntax                            |
-| `&`                                                            | Decorator shorthand (equiv. to function call) |
-| `$`                                                            | Placeholder variable                          |
-| `=`                                                            | Assignment                                    |
-| `+=`, `-=`, `*=`, `/=`, `//=`, `%=`, `@=`, `**=`, `\|=`, `??=` | Augmented assignment                          |
+| Operator | Meaning |
+|----------|---------|
+| `+` | Unary plus |
+| `-` | Unary minus |
+| `~` | Bitwise NOT |
+| `@` | Monadic bind |
+| `not` | Logical negation |
 
 ### Comparison Operators
 
-| Koatl    | Python   | Meaning                |
-| -------- | -------- | ---------------------- |
-| `==`     | `==`     | Equality               |
-| `!=`     | `!=`     | Not equal              |
-| `<`      | `<`      | Less than              |
-| `<=`     | `<=`     | Less or equal          |
-| `>`      | `>`      | Greater than           |
-| `>=`     | `>=`     | Greater or equal       |
-| `===`    | `is`     | Identity (same object) |
-| `!==`    | `is not` | Non-identity           |
-| `in`     | `in`     | Membership             |
-| `not in` | `not in` | Non-membership         |
+| Koatl | Python | Meaning |
+|-------|--------|---------|
+| `==` | `==` | Equality |
+| `!=` | `!=` | Inequality |
+| `===` | `is` | Identity |
+| `!==` | `is not` | Non-identity |
+| `in` | `in` | Membership |
+| `not in` | `not in` | Non-membership |
+
+### Assignment Operators
+
+`=`, `+=`, `-=`, `*=`, `/=`, `//=`, `%=`, `**=`, `|=`, `??=`, `@=`
+
+---
 
 ## Execution Modes
 
-### As Script
+### Script
 
 ```bash
 koatl script.tl
 ```
 
-### As Module
+### Module (import from Python)
 
 ```python
-import koatl.runtime  # Enable .tl imports
-import my_script
+import koatl.runtime   # enables .tl imports
+import my_script       # imports my_script.tl
 ```
 
-### In Jupyter/IPython
+### Jupyter / IPython
 
 ```python
 %load_ext koatl.notebook
 ```
 
-Or with koatl-kernel:
+Or with `koatl-kernel`:
 
 ```bash
 pip install koatl-kernel
-jupyter notebook  # Select Koatl kernel
+jupyter notebook   # select Koatl kernel
+```
+
+---
+
+## Common Patterns
+
+### Data Pipeline
+
+```koatl
+orders
+    .iter
+    .filter($.status == "pending")
+    .group_by($.customer_id)
+    .iter
+    .map([id, items] => {id, total: items.iter.map($.price).sum()})
+    .filter($.total > 100)
+    .sorted($.total, reverse=True)[..10]
+```
+
+### Safe Nested Access
+
+```koatl
+get_name = (data, id) =>
+    if not let Ok(user) = check data[id]: return "unknown"
+    if not let Ok(profile) = check user.profile: return "no profile"
+    check profile.name ?? "unnamed"
+```
+
+### Memoized Recursion
+
+```koatl
+let fib = n =>
+    if n < 2 then @Memo.pure(n)
+    else memo @fib(n-1) + @fib(n-2)
+
+fib(200).run()
+```
+
+### Error-Chaining with @
+
+```koatl
+fetch_and_process = url =>
+    let raw  = @Async.from_sync(() => check requests.get(url))
+    let data = @raw.json()->Result()
+    transform(data)
+
+match fetch_and_process("https://example.com/api")():
+    Ok(result) => use(result)
+    Err(e)     => log(e)
+```
+
+### Record with Methods
+
+```koatl
+create_counter = (initial=0) => {
+    value: initial
+    inc:   Record.method! self => {**self, value: self.value + 1}
+    add:   Record.method! (self, n) => {**self, value: self.value + n}
+    get:   Record.property! self => self.value
+}
+
+create_counter(10).inc().add(5).get   # 16
 ```

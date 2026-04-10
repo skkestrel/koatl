@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use crate::ast;
-use crate::ast::{Indirect, IntoIndirect};
+use crate::ast::{BinaryOp, Indirect, IntoIndirect};
 use koatl_parser::cst::{Spannable, Spanned};
 use koatl_parser::lexer::SToken;
 use koatl_parser::{Span, Token, cst};
@@ -373,6 +373,25 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
                     ast::Expr::MappedCall(expr.lift(), args.lift())
                 } else {
                     ast::Expr::Call(expr.lift(), args.lift())
+                }
+            }
+            cst::Expr::MethodPipe {
+                expr,
+                question,
+                fn_expr,
+                args,
+                ..
+            } => {
+                let rhs = match args {
+                    Some(args) => ast::Expr::Call(fn_expr.lift(), args.lift())
+                        .spanned(fn_expr.span)
+                        .indirect(),
+                    None => fn_expr.lift(),
+                };
+                if question.is_some() {
+                    ast::Expr::Binary(BinaryOp::MappedMethodPipe, expr.lift(), rhs)
+                } else {
+                    ast::Expr::Binary(BinaryOp::MethodPipe, expr.lift(), rhs)
                 }
             }
             cst::Expr::MethodCall {

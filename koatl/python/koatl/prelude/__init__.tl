@@ -39,12 +39,15 @@ Extension.method(dict, "filter")! (self, f) => self.iter.filter(f).dict()
 Extension.method(dict, "filter_keys")! (self, f) => self.iter.filter([k, v] => f(k)).dict()
 Extension.method(dict, "filter_values")! (self, f) => self.iter.filter([k, v] => f(v)).dict()
 
+import functools.partial
+
 # Implementations for language features
 
 __tl__.do = koatl.std.control.do.do
 
 __tl__.op_map = koatl.std.control.result.op_map
 __tl__.op_coal = koatl.std.control.result.op_coal
+__tl__.op_partial = partial
 
 __tl__.Ok = koatl.std.control.result.Ok
 __tl__.Err = koatl.std.control.result.Err

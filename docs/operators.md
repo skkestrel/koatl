@@ -40,7 +40,36 @@ data
     |> pass_into_second_arg(a, $, option="yes")
 ```
 
-`x.(f)` means the same thing, but with higher precedence.
+## Method pipe
+
+`x->f(args)` means `f(x, args)` — it pipes `x` in as the **first** argument of a call. This is useful when the function you're calling is not a method on `x`, or when you want to chain free functions in a readable left-to-right sequence:
+
+```koatl
+data->process(opts)          # process(data, opts)
+data->clean()->transform()   # transform(clean(data))
+```
+
+The right-hand side can be any of:
+
+| Form                 | Meaning                               |
+| -------------------- | ------------------------------------- |
+| `x->f(args)`         | `f(x, args)`                          |
+| `x->f.g(args)`       | `f.g(x, args)`                        |
+| `x->(expr)(args)`    | `expr(x, args)`                       |
+| `x->f` _(no parens)_ | `partial(f, x)` — partial application |
+
+`x?->f(args)` is the optional variant: if `x` is `Ok(v)`, applies `f(v, args)` and wraps the result in `Ok`; if `x` is `Err` or `None`, passes through unchanged.
+
+```koatl
+(check parse(raw))?->process(opts)     # Ok(process(parsed, opts)) or Err
+(check open(path))?->transform()       # short-circuits on file error
+```
+
+The `.()` form also works for piping inline lambdas where `->` would be awkward:
+
+```koatl
+results.(x => x * 2)       # (x => x * 2)(results)
+```
 
 ## Check-expressions
 
@@ -147,20 +176,29 @@ config_option = check get_config_value() ?? default_value
 
 ### Mapping operators
 
-The mapping operators `?.`, `?()`, and `?[]` work as usual on both `Result` values and regular values:
+The mapping operators `?.`, `?()`, `?[]`, and `?->` work on both `Result` values and regular values:
 
 ```koatl
 >>> None?.prop
 None
 
 >>> Ok([1, 2, 3])?[0]
-Ok[1]
+Ok(1)
 
 >>> Err(ValueError())?.prop
 Err(ValueError())
 
 >>> Ok(None)?.prop
 <...raised AttributeError...>
+
+>>> Ok(data)?->process(opts)
+Ok(process(data, opts))
+
+>>> Err(e)?->process(opts)
+Err(e)
+
+>>> None?->process(opts)
+None
 ```
 
 ## Better slices

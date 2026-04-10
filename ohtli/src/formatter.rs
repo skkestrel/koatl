@@ -590,8 +590,25 @@ impl ToElements for SExpr<'_, '_> {
                 op,
                 rhs,
                 op_kind: _,
+            } => line!(lhs, not, op, rhs),
+            Expr::MethodPipe {
+                expr,
+                question,
+                arrow,
+                fn_expr,
+                args,
             } => {
-                line!(lhs, not, op, rhs)
+                let mut elems = line!(expr, question.map(attached_token), attached_token(arrow));
+                // fn_expr attaches to arrow with no space
+                let mut fn_elems = fn_expr.to_elements();
+                if let Some(first) = fn_elems.first_mut() {
+                    first.attach_before = true;
+                }
+                elems.extend(fn_elems);
+                if let Some(args) = args {
+                    elems.extend(attached_listing(args));
+                }
+                elems
             }
             Expr::Unary {
                 op,

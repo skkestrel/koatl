@@ -476,6 +476,13 @@ pub enum Expr<TTree: Tree> {
         question: Option<TTree::Token>,
         args: Listing<CallItem<TTree>, TTree>,
     },
+    MethodPipe {
+        expr: TTree::Expr,
+        question: Option<TTree::Token>,
+        arrow: TTree::Token,
+        fn_expr: TTree::Expr,
+        args: Option<Listing<CallItem<TTree>, TTree>>,
+    },
     MethodCall {
         expr: TTree::Expr,
         question: Option<TTree::Token>,

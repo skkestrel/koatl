@@ -1367,7 +1367,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             ArrowCall {
                 arrow: &'tok SToken<'src>,
                 fn_expr: SExpr<'src, 'tok>,
-                args: SListing<'src, 'tok, SCallItem<'src, 'tok>>,
+                args: Option<SListing<'src, 'tok, SCallItem<'src, 'tok>>>,
             },
         }
 
@@ -1422,8 +1422,15 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     return Err(());
                 }
                 let arrow = ctx.symbol("->")?;
-                let fn_expr = ctx.qualified_ident()?;
-                let args = ctx.listing("(", ")", Token::Symbol(","), |ctx| ctx.call_item())?;
+                let fn_expr = first_of!(
+                    ctx,
+                    "function expression",
+                    |ctx| ctx.qualified_ident(),
+                    |ctx| ctx.atom()
+                )?;
+                let args = optional!(ctx, |ctx: &mut Self| {
+                    ctx.listing("(", ")", Token::Symbol(","), |ctx| ctx.call_item())
+                })?;
                 Ok(Postfix::ArrowCall {
                     arrow,
                     fn_expr,
@@ -1555,24 +1562,23 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         fn_expr,
                         args,
                     } => {
-                        let call_span = self.span_from(start);
-                        let call_expr = Expr::Call {
-                            expr: fn_expr.boxed(),
-                            question: None,
-                            args,
+                        if question.is_some() && args.is_none() {
+                            let idx = self.cursor;
+                            self.cur_error = Some((
+                                idx,
+                                ParseErr {
+                                    message: ErrMsg::Custom("Expected an argument list; ?-> partial application is not allowed".into()),
+                                    index: idx,
+                                },
+                            ));
+                            return Err(());
                         }
-                        .spanned(call_span);
-                        let op_kind = if question.is_some() {
-                            BinaryOp::MappedMethodPipe
-                        } else {
-                            BinaryOp::MethodPipe
-                        };
-                        Expr::Binary {
-                            lhs: expr.boxed(),
-                            not: None,
-                            op: arrow,
-                            op_kind,
-                            rhs: call_expr.boxed(),
+                        Expr::MethodPipe {
+                            expr: expr.boxed(),
+                            question,
+                            arrow,
+                            fn_expr: fn_expr.boxed(),
+                            args,
                         }
                     }
                 }

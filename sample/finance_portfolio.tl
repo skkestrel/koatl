@@ -54,19 +54,19 @@ update_portfolio = (portfolio, action, date) =>
                 @Err(ValueError(f"Insufficient shares: {stock.shares} < {shares}"))
 
         {type: "dividend", symbol, amount} =>
-            portfolio[symbol]?.(stock => {
+            portfolio[symbol]?->(stock => {
                 **portfolio
                 (symbol): {**stock, dividends: (check stock.dividends ?? 0) + amount}
-            }) ?? portfolio
+            })() ?? portfolio
 
         _ => @Err(ValueError(f"Unknown action: {action}"))
     )
 
 # Market simulation using Async monad for delayed operations
 simulate_market_day = portfolio =>
-    async memo @Async.from_sync(() =>
+    Async.from_sync(() =>
         # Simulate random price movements
-        portfolio.items()
+        portfolio.items().iter
             .map([symbol, stock] =>
                 let volatility = 0.02  # 2% daily volatility
                 let change = random.gauss(0.001, volatility)  # Slight upward bias
@@ -86,7 +86,7 @@ analyze_portfolio = (portfolio, date) =>
     let risk_assessment = stocks
         .map(stock => {
             **stock
-            risk_level: match stock.annualized_return(date).(abs):
+            risk_level: match stock.annualized_return(date)->abs():
                 x if x < 0.1 => "Low"
                 x if x < 0.3 => "Medium"
                 _ => "High"
@@ -199,12 +199,12 @@ run_portfolio_simulation = () =>
     print(f"Worst Performer: {wp.symbol} ({wp.return_rate * 100}%)")
 
     print("\n🎯 Sector Allocation:")
-    analysis.sector_allocation.for_each(sector =>
+    analysis.sector_allocation.iter.for_each(sector =>
         print(f"  {sector.sector}: {sector.percentage}% (${sector.total_value})")
     )
 
     print("\n⚠️  Risk Breakdown:")
-    analysis.risk_breakdown.for_each(risk =>
+    analysis.risk_breakdown.iter.for_each(risk =>
         print(f"  {risk.risk_level} Risk: {risk.count} stocks, ${risk.total_value}")
     )
 

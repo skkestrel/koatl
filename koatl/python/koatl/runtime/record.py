@@ -49,7 +49,14 @@ class Record:
     def map(self, f):
         newrec = Record()
         for k, v in self.items():
-            nk, nv = f((k, v))
+            result = f((k, v))
+            try:
+                nk, nv = result
+            except (TypeError, ValueError):
+                raise TypeError(
+                    f"Record.map: expected f to return a (key, value) tuple, "
+                    f"got {type(result).__name__}: {result!r}"
+                )
             newrec[nk] = nv
         return newrec
 

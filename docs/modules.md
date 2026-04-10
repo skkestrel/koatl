@@ -13,17 +13,22 @@ import a.b.c.(d, e, f)
 
 import a.b.c.*
 # from a.b.c import *
+```
 
+Inside a `(...)` group, each entry is resolved relative to the preceding path:
+
+- A plain name `d` → import `d` from the current prefix
+- A dotted path `f.g.(i, j)` → extend the prefix by `f.g`, then import `i` and `j`
+- A `.` prefix pops one level: `.e` inside `a.b.c.(...)` → `from a.b import e`
+- A bare `.` imports the prefix module itself: `.` inside `a.b.c.(...)` → `from a.b import c`
+
+```koatl
 import a.b.c.(
-    .e
-    .
-    d
-    f.g.(i, j)
+    d           # from a.b.c import d
+    f.g.(i, j)  # from a.b.c.f.g import i, j
+    .e          # from a.b import e
+    .           # from a.b import c
 )
-# from a.b import c
-# from a.b.c import d
-# from a.b import e
-# from a.b.c.f.g import i, j
 ```
 
 ## Exports

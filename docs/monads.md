@@ -94,7 +94,7 @@ While errors aren't typically returned from functions in Python, the `check` ope
 Result provides a default `bind_once` implementation for ALL types that don't otherwise define it, which means `(1).bind_once(...)` works — and therefore the `@` operator also works with bare non-Result values using Result semantics.
 
 ```koatl
-match external_function().(Result):
+match external_function()->Result():
     Ok(value) => ...
     Err(value) => ...
 ```

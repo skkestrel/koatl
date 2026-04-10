@@ -2513,10 +2513,36 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                             break 'block call;
                         }
                         _ => {
-                            return Err(simple_err(
-                                "'?->' must be followed by a function call",
-                                span,
-                            ));
+                            // a?->f  (no args) → op_map(a, x => op_partial(f, x))
+                            let arg_name = ctx.create_aux_var("maparg", span.start);
+                            let py_fn_expr = rhs.transform(ctx)?;
+                            let mut inner_pre = PyBlock::new();
+                            let py_fn = inner_pre.bind(py_fn_expr);
+                            let inner_call = a.call(
+                                a.tl_builtin("op_partial"),
+                                vec![
+                                    a.call_arg(py_fn),
+                                    a.call_arg(a.load_ident(arg_name.clone())),
+                                ],
+                            );
+                            let fn_info = ctx.mapped_fninfo.get(&rhs.as_ref().into()).unwrap();
+                            let inner_fn = pre.bind(make_fn_exp(
+                                ctx,
+                                FnDef::PyFnDef(
+                                    PyArgList::simple_args(vec![(arg_name, None)]),
+                                    SPyExprWithPre {
+                                        value: inner_call,
+                                        pre: inner_pre,
+                                    },
+                                    false,
+                                    fn_info.is_async,
+                                ),
+                                &span,
+                            )?);
+                            break 'block a.call(
+                                a.tl_builtin("op_map"),
+                                vec![a.call_arg(py_lhs), a.call_arg(inner_fn)],
+                            );
                         }
                     }
                 } else if let BinaryOp::MethodPipe = op {
@@ -2531,10 +2557,12 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                             break 'block a.call(py_fn, py_args);
                         }
                         _ => {
-                            return Err(simple_err(
-                                "'->' must be followed by a function call",
-                                span,
-                            ));
+                            // a->f  (no args) → op_partial(f, a)
+                            let py_fn = pre.bind(rhs.transform(ctx)?);
+                            break 'block a.call(
+                                a.tl_builtin("op_partial"),
+                                vec![a.call_arg(py_fn), a.call_arg(py_lhs)],
+                            );
                         }
                     }
                 } else if let BinaryOp::And | BinaryOp::Or = op {
@@ -2589,7 +2617,11 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
 
                 let py_op = match op {
                     BinaryOp::Pipe => break 'block a.call(rhs, vec![PyCallItem::Arg(lhs)]),
-                    BinaryOp::Coalesce | BinaryOp::And | BinaryOp::Or | BinaryOp::MethodPipe | BinaryOp::MappedMethodPipe => {
+                    BinaryOp::Coalesce
+                    | BinaryOp::And
+                    | BinaryOp::Or
+                    | BinaryOp::MethodPipe
+                    | BinaryOp::MappedMethodPipe => {
                         panic!()
                     }
                     _ => map_py_binary_op(*op, span)?,

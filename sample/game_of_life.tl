@@ -101,9 +101,9 @@ analyze_patterns = (grid, size) =>
     {
         total_alive: total_alive
         density: total_alive / (size * size) * 100
-        still_life_regions: still_life_candidates.tally()
-        oscillator_candidates: potential_oscillators.tally()
-        detected_gliders: detected_gliders.tally()
+        still_life_regions: still_life_candidates.iter.tally()
+        oscillator_candidates: potential_oscillators.iter.tally()
+        detected_gliders: detected_gliders.iter.tally()
 
         # Stability analysis
         stability: match total_alive:

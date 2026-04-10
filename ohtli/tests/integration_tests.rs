@@ -608,8 +608,30 @@ fn test_fstr_escaped_braces() {
 
 #[test]
 fn test_fstr_format_specifier() {
-    let input = r#"f"value: {x%.2f}""#;
-    let expected = r#"f"value: {x%.2f}""#;
+    let input = r#"f"value: {x:.2f}""#;
+    let expected = r#"f"value: {x:.2f}""#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_fstr_format_specifier_zero_pad() {
+    let input = r#"f"{num:05d}""#;
+    let expected = r#"f"{num:05d}""#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_fstr_format_specifier_multiple() {
+    let input = r#"f"{num:05d} and {pi:.2f}""#;
+    let expected = r#"f"{num:05d} and {pi:.2f}""#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_fstr_format_specifier_with_parens() {
+    // : inside parens is NOT a format delimiter
+    let input = r#"f"{(if cond: x else: y):.2f}""#;
+    let expected = r#"f"{(if cond: x else: y):.2f}""#;
     assert_compare_formatting(input, expected);
 }
 
@@ -826,5 +848,75 @@ fn test_if_matches_condition() {
     print("pair")"#;
     let expected = r#"if x matches [_, _]:
     print("pair")"#;
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_neq_operator() {
+    let input = "x = a != b";
+    let expected = "x = a != b";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_not_identity_operator() {
+    let input = "x = a !== b";
+    let expected = "x = a !== b";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_optional_method_pipe() {
+    let input = "result = a?->str()";
+    let expected = "result = a?->str()";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_optional_method_pipe_with_args() {
+    let input = "result = value?->pow(2)";
+    let expected = "result = value?->pow(2)";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_optional_method_pipe_chained() {
+    let input = "result = a?->str()?->upper()";
+    let expected = "result = a?->str()?->upper()";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_method_pipe_qualified() {
+    let input = "result = value->math.sqrt()";
+    let expected = "result = value->math.sqrt()";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_method_pipe_parenthesized_fn() {
+    let input = "result = value->(get_fn())()";
+    let expected = "result = value->(get_fn())()";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_optional_method_pipe_parenthesized_fn() {
+    let input = "result = value?->(get_fn())()";
+    let expected = "result = value?->(get_fn())()";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_method_pipe_partial() {
+    let input = "result = value->str";
+    let expected = "result = value->str";
+    assert_compare_formatting(input, expected);
+}
+
+#[test]
+fn test_optional_method_pipe_partial() {
+    let input = "result = value?->str";
+    let expected = "result = value?->str";
     assert_compare_formatting(input, expected);
 }
