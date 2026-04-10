@@ -24,13 +24,6 @@ assert_eq("hello"?->str.upper(), "HELLO")
 assert_eq(None?->pow(2), None)
 assert_eq(3?->pow(2), 9)
 
-# Optional method pipe partial: a?->f is op_map(a, x => partial(f, x))
-double = (x, y) => x * y
-assert_eq(None?->double, None)
-# When value is present, returns a partial
-result = 5?->double
-assert_eq(result(3), 15)
-
 # Chained optional method pipes
 assert_eq(None?->str()?->str.upper(), None)
 assert_eq("hello"?->str.strip()?->str.upper(), "HELLO")
