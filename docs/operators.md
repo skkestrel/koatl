@@ -31,13 +31,13 @@ Rules:
 
 ## Piping
 
-`x | f` means `f(x)` and can be chained for intuitive piping syntax:
+`x |> f` means `f(x)` and can be chained for intuitive piping syntax:
 
 ```koatl
 data
-    | do_some_thing
-    | do_some_other_thing
-    | pass_into_second_arg(a, $, option="yes")
+    |> do_some_thing
+    |> do_some_other_thing
+    |> pass_into_second_arg(a, $, option="yes")
 ```
 
 `x.(f)` means the same thing, but with higher precedence.

@@ -65,7 +65,7 @@ except NameError() as x =>
 
 try:
     do_something()
-except CustomException(msg=msg) | OtherException(msg=msg) =>
+except CustomException(args=[msg]) | OtherException(args=[msg]) =>
     print(msg)
 ```
 

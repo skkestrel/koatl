@@ -310,6 +310,7 @@ pub enum BinaryOp {
 
     Coalesce,
     Pipe,
+    MethodPipe,
 }
 
 #[derive(Debug, Copy, Clone)]

@@ -73,7 +73,7 @@ assert_eq(
     match [1, 2, 3]:
         [1, *x] => x
         _ => 123
-    [2, 3] | list
+    [2, 3] |> list
 )
 
 assert_eq(
@@ -81,7 +81,7 @@ assert_eq(
         [1, *x] => x
         _ =>
             123
-    [2, 3] | list
+    [2, 3] |> list
 )
 
 x = 1

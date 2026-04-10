@@ -25,7 +25,7 @@ For anything else — aggregations, slicing, chaining, reordering — call `.ite
 [1, 2, 3, 4, 5].iter.sum()                    # 15
 [3, 1, 4, 1, 5].iter.sorted()                 # [1, 1, 3, 4, 5]
 [1, 2, 3].iter.flat_map(x => [x, x * 10])     # lazy iterator
-(..100).iter.filter($ %% 7 == 0).take(5).list()   # [0, 7, 14, 21, 28]
+(..100).iter.filter($ % 7 == 0).take(5).list()   # [0, 7, 14, 21, 28]
 ```
 
 Ranges always require `.iter`:
@@ -197,7 +197,7 @@ Every row is one value from the source. Columns show its state at each pipeline 
 ```koatl
 let di = (..20).debug_iter(history=10)
     .map($ ** 2)
-    .filter($ %% 2 == 0)
+    .filter($ % 2 == 0)
     .take(5)
 
 let results = list(di)     # [0, 4, 16, 36, 64]

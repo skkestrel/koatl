@@ -1,6 +1,6 @@
 #![allow(unused_variables, dead_code)]
 
-const FMT_DELIMITER: &str = "%";
+const FMT_DELIMITER: &str = "%%";
 
 #[derive(Debug, Clone, Copy)]
 pub struct Span {
@@ -254,8 +254,8 @@ impl<'src> TokenizeCtx<'src> {
     fn new(input: &'src str) -> Self {
         static KEYWORDS: &[&str] = &[
             "if", "elif", "then", "else", "import", "export", "as", "class", "while", "for", "in",
-            "break", "continue", "with", "yield", "global", "return", "raise", "del", "try", "except",
-            "finally", "and", "or", "not", "is", "await", "let", "const", "with",
+            "break", "continue", "with", "yield", "global", "return", "raise", "del", "try",
+            "except", "finally", "and", "or", "not", "is", "await", "let", "const", "with",
         ];
 
         let keywords = HashSet::<String>::from_iter(KEYWORDS.iter().map(|s| s.to_string()));
@@ -423,8 +423,8 @@ impl<'src> TokenizeCtx<'src> {
 
     fn parse_symbol(&mut self) -> TResult<'src, (Token<'src>, Span)> {
         const POLYGRAMS: &[&str] = &[
-            "+=", "-=", "*=", "/=", "|=", "??=", "===", "<=>", "=>", "..", "==", "<>", "<=", ">=",
-            "!==", "!=", "//", "%%", "@@", "**", "??", ".=", "::", "||", "&&", "^^", ">>", "<<",
+            "+=", "-=", "*=", "/=", "|=", "%=", "@=", "??=", "===", "<=>", "|>", "->", "=>", "..",
+            "==", "<>", "<=", ">=", "!==", "!=", "//", "%%", "**", "??", ".=", "::", ">>", "<<",
         ];
         const MONOGRAMS: &str = "[](){}<>.,;:!?@$%^&*+-=|\\/`~";
 
@@ -1374,11 +1374,14 @@ impl<'src> TokenizeCtx<'src> {
                         tokens.extend(line_tokens.drain(..));
 
                         if mode != ParseBlockMode::Continuation && mode != ParseBlockMode::FmtExpr {
-                            tokens.push(SToken::new(
-                                Token::Eol,
-                                self.span_since(&self.cursor()),
-                                Vec::new(),
-                            ));
+                            let eol_span = tokens
+                                .last()
+                                .map(|t| Span {
+                                    start: t.span.end,
+                                    end: t.span.end,
+                                })
+                                .unwrap_or_else(|| self.span_since(&self.cursor()));
+                            tokens.push(SToken::new(Token::Eol, eol_span, Vec::new()));
                         }
                     }
                 } else {
@@ -1514,11 +1517,14 @@ impl<'src> TokenizeCtx<'src> {
             tokens.extend(line_tokens.drain(..));
 
             if mode != ParseBlockMode::Continuation && mode != ParseBlockMode::FmtExpr {
-                tokens.push(SToken::new(
-                    Token::Eol,
-                    self.span_since(&self.cursor()),
-                    Vec::new(),
-                ));
+                let eol_span = tokens
+                    .last()
+                    .map(|t| Span {
+                        start: t.span.end,
+                        end: t.span.end,
+                    })
+                    .unwrap_or_else(|| self.span_since(&self.cursor()));
+                tokens.push(SToken::new(Token::Eol, eol_span, Vec::new()));
             }
         }
 

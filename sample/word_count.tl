@@ -25,6 +25,6 @@ books = {
 }
 
 let rec = books.map([key, value] => (key, @word_count(value))).traverse().run()
-    | Record
+    |> Record
 
 rec.iter.for_each(print)

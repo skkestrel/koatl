@@ -274,11 +274,19 @@ impl SPyPattern<'_> {
                 // never emit parens
                 cls.emit_to(ctx, LOW_PREC)?;
                 ctx.emit("(");
+                let mut first = true;
                 for item in items {
+                    if !first {
+                        ctx.emit(", ");
+                    }
+                    first = false;
                     item.emit_to(ctx)?;
-                    ctx.emit(", ");
                 }
                 for (key, value) in kws {
+                    if !first {
+                        ctx.emit(", ");
+                    }
+                    first = false;
                     ctx.emit(key);
                     ctx.emit("=");
                     value.emit_to(ctx)?;

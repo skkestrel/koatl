@@ -63,7 +63,7 @@ if True:
 print(x)  # 1
 
 # Pipes replace nested calls
-data | do_something | transform | save_to(db, $, format="json")
+data |> do_something |> transform |> save_to(db, $, format="json")
 ```
 
 > Koatl is under active development. Features might change.
@@ -78,7 +78,7 @@ Optionally install the `quetzal-koatl` extension on VSCode for syntax highlighti
 
 ```koatl
 # hello_world.tl
-"hello world" | print
+"hello world" |> print
 ```
 
 ```bash
@@ -110,13 +110,13 @@ The sections below address Python's main paper cuts: limited lambdas, leaky scop
 
 ### Piping & placeholders
 
-The `|` operator pipes a value into the next function and `$` creates a lambda in place, replacing inside-out nesting with a linear chain:
+The `|>` operator pipes a value into the next function and `$` creates a lambda in place, replacing inside-out nesting with a linear chain:
 
 ```koatl
 data
-    | do_something
-    | transform
-    | save_to(db, $, format="json")
+    |> do_something
+    |> transform
+    |> save_to(db, $, format="json")
 ```
 
 <details>
@@ -184,7 +184,7 @@ def head(arg):
 ```koatl
 let result = try:
     parse(raw_input)
-except ValueError(msg=m) => f"bad input: {m}"
+except ValueError(args=[m]) => f"bad input: {m}"
 except _ => default_value
 
 let label = match status:
@@ -454,7 +454,7 @@ The `..` operator creates slices as first-class values that compose naturally wi
 [1, 2, 3, 4, 5][2..]              # [3, 4, 5]
 
 (1..100).iter
-    .filter($ %% 7 == 0)
+    .filter($ % 7 == 0)
     .map($ ** 2)
     .take(5)
     .list()                       # [49, 196, 441, 784, 1225]

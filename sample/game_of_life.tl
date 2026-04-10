@@ -2,6 +2,7 @@
 # Demonstrates advanced pattern matching, ranges, iterators, and functional composition
 
 import random
+import sys
 import time
 
 # Cell states using pattern matching and enums
@@ -38,7 +39,7 @@ display_grid = (grid, size) =>
     (..size).iter.for_each(y =>
         let row = (..size).iter
             .map(x => if grid[(x, y)].alive then "██" else "  ")
-            .join_str("")
+            .join("")
         print(f"│{row}│")
     )
 
@@ -251,10 +252,10 @@ if __name__ == "__main__":
     print("1. Run random simulation")
     print("2. Run pattern demos")
 
-    let choice = input("Choose option (1 or 2): ").strip()
+    let choice = (if len(sys.argv) > 1 then sys.argv[1] else "1").strip()
 
     match choice:
         "1" => run_simulation(size=15, max_generations=50, delay=0.3)
         "2" => run_pattern_demo()
         _ => print("Invalid choice. Running random simulation...")
-            | run_simulation()
+            |> run_simulation()

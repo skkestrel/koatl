@@ -117,7 +117,7 @@ display_results = (query, result) =>
 
             print(f"\n📂 Categories:")
             stats.categories.for_each(cat =>
-                let langs = cat.languages.join_str(", ")
+                let langs = cat.languages.join(", ")
                 print(f"  {cat.category}: {cat.count} repos ({langs})")
             )
 

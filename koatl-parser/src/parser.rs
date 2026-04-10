@@ -1079,7 +1079,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             };
 
             let fmt = optional!(self, |ctx: &mut Self| {
-                let sep = ctx.symbol("%")?;
+                let sep = ctx.symbol("%%")?;
                 let (head, parts) = ctx.fstr_inner()?;
                 Ok(FmtSpec { sep, head, parts })
             })?;
@@ -1143,10 +1143,18 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         precedence: u8,
     ) -> ParseResult<(Option<&'tok SToken<'src>>, &'tok SToken<'src>, BinaryOp)> {
         match precedence {
-            11 => {
-                let op = self.symbol("|")?;
-                Ok((None, op, BinaryOp::Pipe))
-            }
+            11 => first_of!(
+                self,
+                "pipe op",
+                |ctx| {
+                    let op = ctx.symbol("|>")?;
+                    Ok((None, op, BinaryOp::Pipe))
+                },
+                |ctx| {
+                    let op = ctx.symbol("->")?;
+                    Ok((None, op, BinaryOp::MethodPipe))
+                }
+            ),
             10 => {
                 let op = self.symbol("??")?;
                 Ok((None, op, BinaryOp::Coalesce))
@@ -1202,13 +1210,13 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 Ok(res)
             }
             6 => self
-                .symbol_table(&[("||", BinaryOp::BitOr)])
+                .symbol_table(&[("|", BinaryOp::BitOr)])
                 .map(|(tok, kind)| (None, tok, kind)),
             5 => self
-                .symbol_table(&[("^^", BinaryOp::BitXor)])
+                .symbol_table(&[("^", BinaryOp::BitXor)])
                 .map(|(tok, kind)| (None, tok, kind)),
             4 => self
-                .symbol_table(&[("&&", BinaryOp::BitAnd)])
+                .symbol_table(&[("&", BinaryOp::BitAnd)])
                 .map(|(tok, kind)| (None, tok, kind)),
             3 => self
                 .symbol_table(&[("<<", BinaryOp::LShift), (">>", BinaryOp::RShift)])
@@ -1221,8 +1229,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     ("*", BinaryOp::Mul),
                     ("/", BinaryOp::Div),
                     ("//", BinaryOp::FloorDiv),
-                    ("%%", BinaryOp::Mod),
-                    ("@@", BinaryOp::MatMul),
+                    ("%", BinaryOp::Mod),
+                    ("@", BinaryOp::MatMul),
                 ])
                 .map(|(tok, kind)| (None, tok, kind)),
             0 => {
@@ -1358,6 +1366,11 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 op: &'tok SToken<'src>,
                 decorated: SExpr<'src, 'tok>,
             },
+            ArrowCall {
+                arrow: &'tok SToken<'src>,
+                fn_expr: SExpr<'src, 'tok>,
+                args: SListing<'src, 'tok, SCallItem<'src, 'tok>>,
+            },
         }
 
         loop {
@@ -1404,6 +1417,20 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 let op = ctx.symbol("!")?;
                 let decorated = ctx.expr()?;
                 Ok(Postfix::Decorator { op, decorated })
+            };
+
+            let arrow_call = |ctx: &mut Self| {
+                if !allow_calls {
+                    return Err(());
+                }
+                let arrow = ctx.symbol("->")?;
+                let fn_expr = ctx.qualified_ident()?;
+                let args = ctx.listing("(", ")", Token::Symbol(","), |ctx| ctx.call_item())?;
+                Ok(Postfix::ArrowCall {
+                    arrow,
+                    fn_expr,
+                    args,
+                })
             };
 
             let dot_attribute = |ctx: &mut Self| {
@@ -1455,7 +1482,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 subscript,
                 raw_attribute,
                 decorator,
-                dot_attribute
+                dot_attribute,
+                arrow_call
             ) {
                 Ok(item) => match item {
                     Postfix::Call { args } => Expr::Call {
@@ -1522,6 +1550,32 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                             expr: decorated.boxed(),
                             op,
                             decorator: expr.boxed(),
+                        }
+                    }
+                    Postfix::ArrowCall {
+                        arrow,
+                        fn_expr,
+                        args,
+                    } => {
+                        if question.is_some() {
+                            return Err(self.set_error(
+                                start,
+                                ErrMsg::Custom("'->' cannot be used with ? operator".into()),
+                            ));
+                        }
+                        let call_span = self.span_from(start);
+                        let call_expr = Expr::Call {
+                            expr: fn_expr.boxed(),
+                            question: None,
+                            args,
+                        }
+                        .spanned(call_span);
+                        Expr::Binary {
+                            lhs: expr.boxed(),
+                            not: None,
+                            op: arrow,
+                            op_kind: BinaryOp::MethodPipe,
+                            rhs: call_expr.boxed(),
                         }
                     }
                 }
@@ -2453,7 +2507,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         ("%=", BinaryOp::Mod),
                         ("@=", BinaryOp::MatMul),
                         ("**=", BinaryOp::Exp),
-                        ("|=", BinaryOp::Pipe),
+                        ("|=", BinaryOp::BitOr),
                         ("??=", BinaryOp::Coalesce),
                     ])?;
                     Ok((tok, Some(kind)))

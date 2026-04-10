@@ -13,7 +13,7 @@ Koatl replaces Python's `def` keyword with concise arrow function syntax:
 ```koatl
 let fib = x => if x matches 0 | 1 then 1 else fib(x-1) + fib(x-2)
 let add = (a, b) => a + b
-let greet = name => "Hello, " + name | print
+let greet = name => "Hello, " + name |> print
 ```
 
 **Function Definition Forms**:
@@ -161,7 +161,7 @@ Koatl provides sophisticated pattern matching in multiple contexts:
     ```koatl
     match x:
         Point(x, y) => ...  # Match Point instance
-        Exception(msg=m) => ...  # With named patterns
+        Exception(args=[m]) => ...  # Destructure args tuple
     ```
 
 7. **Or Patterns**: Alternatives with `|`
@@ -252,17 +252,26 @@ let matched = x matches [_, _]:   # no captures — just a boolean test
 
 ### 3. **Piping & Method Chaining**
 
-Convenient piping with `|` and `.()` operators:
+Convenient piping with `|>` and `.()` operators:
 
 ```koatl
-# Using | pipe operator
+# Using |> pipe operator
 data
-    | do_something
-    | do_other_thing
-    | pass_into_second_arg(a, $, option="yes")
+    |> do_something
+    |> do_other_thing
+    |> pass_into_second_arg(a, $, option="yes")
 
 # Using .(f) for higher precedence
 (..10).iter.map($ + 1).(filter $ > 5).(print)
+```
+
+### 3b. **Method Pipe (`->`)**
+
+The `->` operator pipes the left operand as the **first argument** of the right-hand function call:
+
+```koatl
+x->f(a, b)           # f(x, a, b)
+data->transform(opts) # transform(data, opts)
 ```
 
 ### 4. **Placeholder Variables ($)**
@@ -626,7 +635,7 @@ Exception handling with pattern matching:
 ```koatl
 result = try:
     risky_operation()
-except ValueError(msg=m) if len(m) > 0 =>
+except ValueError(args=[m]) if len(m) > 0 =>
     f"long error: {m}"
 except ValueError() =>
     "short error"
@@ -752,7 +761,7 @@ Unified exception handling with pattern matching:
 ```koatl
 try:
     do_something()
-except ValueError(msg=m) | TypeError(msg=m) =>
+except ValueError(args=[m]) | TypeError(args=[m]) =>
     print(f"Error: {m}")
 
 try:
@@ -876,7 +885,7 @@ function_call(
 Lazily-loaded standard library access:
 
 ```koatl
-std.io.read_file("data.txt") | print
+std.io.read_file("data.txt") |> print
 ```
 
 ### **mod module**
@@ -884,7 +893,7 @@ std.io.read_file("data.txt") | print
 Lazily-loaded Python package proxy:
 
 ```koatl
-mod.numpy.array([1, 2, 3]) + 2 | print
+mod.numpy.array([1, 2, 3]) + 2 |> print
 ```
 
 ### **Built-in Extensions**
@@ -945,8 +954,8 @@ display_grid = (grid, size) =>
     (..size).iter.for_each(y =>
         (..size).iter
             .map(x => if grid[(x, y)].alive then "██" else "  ")
-            .join_str("")
-            |print
+            .join("")
+            |> print
     )
 ```
 
@@ -1163,17 +1172,17 @@ The parser processes operators in this precedence order:
 
 | #   | Precedence  | Operators                                                                   | Associativity | Note               |
 | --- | ----------- | --------------------------------------------------------------------------- | ------------- | ------------------ |
-| 11  | Pipe        | `\|`                                                                        | Left-to-right | Lowest precedence  |
+| 11  | Pipe        | `\|>`                                                                       | Left-to-right | Lowest precedence  |
 | 10  | Coalesce    | `??`                                                                        | Left-to-right |                    |
 | 9   | Logical OR  | `or`                                                                        | Left-to-right |                    |
 | 8   | Logical AND | `and`                                                                       | Left-to-right |                    |
 | 7   | Comparison  | `<`, `>`, `<=`, `>=`, `==`, `<>`, `!=`, `===`, `<=>`, `!==`, `in`, `not in` | Left-to-right |                    |
-| 6   | Bitwise OR  | `\|\|`                                                                      | Left-to-right |                    |
-| 5   | Bitwise XOR | `^^`                                                                        | Left-to-right |                    |
-| 4   | Bitwise AND | `&&`                                                                        | Left-to-right |                    |
+| 6   | Bitwise OR  | `\|`                                                                        | Left-to-right |                    |
+| 5   | Bitwise XOR | `^`                                                                         | Left-to-right |                    |
+| 4   | Bitwise AND | `&`                                                                         | Left-to-right |                    |
 | 3   | Shifts      | `<<`, `>>`                                                                  | Left-to-right |                    |
 | 2   | Add/Sub     | `+`, `-`                                                                    | Left-to-right |                    |
-| 1   | Mul/Div     | `*`, `/`, `//`, `%%`, `@@`                                                  | Left-to-right |                    |
+| 1   | Mul/Div     | `*`, `/`, `//`, `%`, `@`                                                    | Left-to-right |                    |
 | 0   | Power       | `**`                                                                        | Right-to-left | Highest precedence |
 
 **Special operators** (above binary precedence, processed in order):
@@ -1188,17 +1197,18 @@ The parser processes operators in this precedence order:
 
 ### Postfix Operators (highest precedence within expressions)
 
-| Operator | Meaning                                  | Example             |
-| -------- | ---------------------------------------- | ------------------- |
-| `()`     | Function call                            | `f(a, b)`           |
-| `[]`     | Subscript                                | `x[0]` or `x[1..3]` |
-| `.attr`  | Attribute access                         | `x.property`        |
-| `.?attr` | Maybe attribute (safe nav)               | `x?.property`       |
-| `::attr` | Raw attribute (bypass **getattr**)       | `x::__dict__`       |
-| `?[]`    | Safe subscript                           | `x?[0]`             |
-| `?()`    | Safe call                                | `x?(a, b)`          |
-| `.()`    | Scoped call (higher precedence than `.`) | `f.(x)`             |
-| `!`      | Decorator/Function call                  | `decorator! value`  |
+| Operator    | Meaning                                  | Example                     |
+| ----------- | ---------------------------------------- | --------------------------- |
+| `()`        | Function call                            | `f(a, b)`                   |
+| `[]`        | Subscript                                | `x[0]` or `x[1..3]`         |
+| `.attr`     | Attribute access                         | `x.property`                |
+| `.?attr`    | Maybe attribute (safe nav)               | `x?.property`               |
+| `::attr`    | Raw attribute (bypass **getattr**)       | `x::__dict__`               |
+| `?[]`       | Safe subscript                           | `x?[0]`                     |
+| `?()`       | Safe call                                | `x?(a, b)`                  |
+| `.()`       | Scoped call (higher precedence than `.`) | `f.(x)`                     |
+| `->f(args)` | Method pipe (insert as first arg)        | `x->f(a, b)` = `f(x, a, b)` |
+| `!`         | Decorator/Function call                  | `decorator! value`          |
 
 ### Unary Prefix Operators
 

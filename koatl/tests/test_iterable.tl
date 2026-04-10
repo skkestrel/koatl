@@ -33,7 +33,7 @@ test_map = () =>
 
 test_filter = () =>
     assert_eq([1, 2, 3, 4, 5].filter($ > 3), [4, 5])
-    assert_eq([1, 2, 3, 4, 5].filter($ %% 2 == 0), [2, 4])
+    assert_eq([1, 2, 3, 4, 5].filter($ % 2 == 0), [2, 4])
     assert_eq((..10).iter.filter($ > 5).list(), [6, 7, 8, 9])
     assert_eq([1, 2, 3].filter($ > 10), [])
 
@@ -65,7 +65,7 @@ test_tally = () =>
     assert_eq([].iter.tally(), 0)
     assert_eq((..10).iter.tally(), 10)
     assert_eq([1, 2, 3, 4, 5].iter.tally(x => x > 2), 3)
-    assert_eq([1, 2, 3, 4, 5].iter.tally(x => x %% 2 == 0), 2)
+    assert_eq([1, 2, 3, 4, 5].iter.tally(x => x % 2 == 0), 2)
     assert_eq([1, 2, 3].iter.tally(x => x > 10), 0)
 
 test_take = () =>
@@ -82,12 +82,12 @@ test_skip = () =>
 
 test_take_while = () =>
     assert_eq([1, 2, 3, 4, 5].iter.take_while($ < 4).list(), [1, 2, 3])
-    assert_eq([2, 4, 6, 7, 8].iter.take_while($ %% 2 == 0).list(), [2, 4, 6])
+    assert_eq([2, 4, 6, 7, 8].iter.take_while($ % 2 == 0).list(), [2, 4, 6])
     assert_eq([1, 2, 3].iter.take_while($ > 10).list(), [])
 
 test_skip_while = () =>
     assert_eq([1, 2, 3, 4, 5].iter.skip_while($ < 4).list(), [4, 5])
-    assert_eq([2, 4, 6, 7, 8].iter.skip_while($ %% 2 == 0).list(), [7, 8])
+    assert_eq([2, 4, 6, 7, 8].iter.skip_while($ % 2 == 0).list(), [7, 8])
     assert_eq([1, 2, 3].iter.skip_while($ > 10).list(), [1, 2, 3])
 
 test_enumerate = () =>
@@ -130,7 +130,7 @@ test_associate = () =>
     assert_eq([].iter.associate($ + 1), {})
 
 test_group_by = () =>
-    assert_eq([1, 2, 3, 4, 5].iter.group_by($ %% 2), {0: [2, 4], 1: [1, 3, 5]})
+    assert_eq([1, 2, 3, 4, 5].iter.group_by($ % 2), {0: [2, 4], 1: [1, 3, 5]})
     assert_eq(["a", "bb", "ccc", "dd"].iter.group_by(len), {1: ["a"], 2: ["bb", "dd"], 3: ["ccc"]})
     assert_eq([].iter.group_by($ > 0), {})
 
@@ -166,7 +166,7 @@ test_record_map = () =>
 test_record_filter = () =>
     # filter based on key-value pairs (defined in prelude/__init__.tl for dict)
     assert_eq({1: 10, 2: 20, 3: 30}.filter([k, v] => v > 15), {2: 20, 3: 30})
-    assert_eq({1: 10, 2: 20, 3: 30}.filter([k, v] => k %% 2 == 1), {1: 10, 3: 30})
+    assert_eq({1: 10, 2: 20, 3: 30}.filter([k, v] => k % 2 == 1), {1: 10, 3: 30})
 
 test_record_filter_keys = () =>
     # filter_keys - defined in prelude/__init__.tl for dict and record.py for Record
@@ -176,4 +176,4 @@ test_record_filter_keys = () =>
 test_record_filter_values = () =>
     # filter_values - defined in prelude/__init__.tl for dict and record.py for Record
     assert_eq({1: 10, 2: 20, 3: 30}.filter_values($ >= 20), {2: 20, 3: 30})
-    assert_eq({"a": 5, "b": 10, "c": 25}.filter_values($ %% 10 == 5), {"a": 5, "c": 25})
+    assert_eq({"a": 5, "b": 10, "c": 25}.filter_values($ % 10 == 5), {"a": 5, "c": 25})

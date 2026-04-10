@@ -329,6 +329,15 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                         PyBinaryOp::Sub => "Sub",
                         PyBinaryOp::Mult => "Mult",
                         PyBinaryOp::Div => "Div",
+                        PyBinaryOp::Mod => "Mod",
+                        PyBinaryOp::Pow => "Pow",
+                        PyBinaryOp::FloorDiv => "FloorDiv",
+                        PyBinaryOp::MatMult => "MatMult",
+                        PyBinaryOp::BitOr => "BitOr",
+                        PyBinaryOp::BitAnd => "BitAnd",
+                        PyBinaryOp::BitXor => "BitXor",
+                        PyBinaryOp::LShift => "LShift",
+                        PyBinaryOp::RShift => "RShift",
                         _ => {
                             return Err(PyTlErr {
                                 message: format!(

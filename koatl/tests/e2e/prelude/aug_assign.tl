@@ -9,7 +9,11 @@ x ??= 2
 assert_eq(x, 2)
 
 x = 4
-x |= $ + 2
+x = x |> $ + 2
+assert_eq(x, 6)
+
+x = 4
+x |= 2
 assert_eq(x, 6)
 
 

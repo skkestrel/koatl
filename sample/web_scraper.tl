@@ -3,6 +3,7 @@
 
 import math
 import random
+import sys
 import requests
 import json
 import re
@@ -26,7 +27,7 @@ extract_content = (soup, content_type="text") =>
             for script_or_style in soup(["script", "style"]):
                 script_or_style.decompose()
 
-            soup.get_text().split().join_str(" ").strip()
+            soup.get_text().split().join(" ").strip()
 
         "links" =>
             # Extract all links with their text
@@ -183,14 +184,12 @@ create_scraper = (delay=1.0, max_retries=3, timeout=10) => {
                                     403 => Err(f"Access forbidden: {url}")
                                     _ => Err(f"HTTP {response.status_code}: {url}")
 
-                            except requests.RequestException() as e:
+                            except requests.RequestException(e) =>
                                 print(f"⚠️  Retry {attempt}/{self.max_retries} for {url}: {e}")
                                 time.sleep(self.delay * (2 ** (attempt - 1)))  # Exponential backoff
                                 return fetch_with_retry(attempt + 1)
-                            except Exception() as e:
+                            except Exception(e) =>
                                 return Err(f"Unexpected error fetching {url}: {e}")
-
-                    return fetch_with_retry(1)
         )
 
     # Crawl multiple pages with depth control
@@ -298,27 +297,27 @@ generate_report = (analysis, format="text") =>
 
 📈 Overview:
   • Pages analyzed: {analysis.page_count}
-  • Total words: {analysis.total_words!,}
-  • Average words per page: {analysis.avg_words_per_page!.0f}
+  • Total words: {analysis.total_words}
+  • Average words per page: {analysis.avg_words_per_page%%.1f}
   • Total reading time: {analysis.total_reading_time} minutes
 
 🔑 Top Keywords:
-{analysis.top_keywords.map(kw => f"  • {kw.keyword} ({kw.frequency} times)").join_str("\n")}
+{analysis.top_keywords.map(kw => f"  • {kw.keyword} ({kw.frequency} times)").join("\n")}
 
 📄 Pages by Size:
 {analysis.pages_by_size.iter.take(5).map(page =>
     f"  • {page.title or page.url} - {page.word_count} words ({page.reading_time}min read)"
-).join_str("\n")}
+).join("\n")}
 
 🔗 Link Analysis:
 {analysis.link_domains.iter.take(5).map(domain =>
     f"  • {domain.domain}: {domain.link_count} links"
-).join_str("\n")}
+).join("\n")}
 
 📋 Common Headings:
 {analysis.common_headings.map([heading, count] =>
     f"  • \"{heading}\" (appears {count} times)"
-).join_str("\n")}
+).join("\n")}
 """
 
         "json" =>
@@ -342,19 +341,19 @@ generate_report = (analysis, format="text") =>
 
     <div class="metric">
         <h2>Overview</h2>
-        <p>Pages: {analysis.page_count} | Words: {analysis.total_words!,} |
+        <p>Pages: {analysis.page_count} | Words: {analysis.total_words} |
            Reading Time: {analysis.total_reading_time} min</p>
     </div>
 
     <div class="metric">
         <h2>Top Keywords</h2>
-        {analysis.top_keywords.map(kw => f"<span class=\"keyword\">{kw.keyword} ({kw.frequency})</span>").join_str("")}
+        {analysis.top_keywords.map(kw => f"<span class=\"keyword\">{kw.keyword} ({kw.frequency})</span>").join("")}
     </div>
 
     <div class="metric">
         <h2>Page Analysis</h2>
         <ul>
-        {analysis.pages_by_size.map(page => f"<li>{page.title or page.url} - {page.word_count} words</li>").join_str("")}
+        {analysis.pages_by_size.map(page => f"<li>{page.title or page.url} - {page.word_count} words</li>").join("")}
         </ul>
     </div>
 </body>
@@ -385,7 +384,7 @@ run_single_page_demo = () =>
                 print(f"🖼️  Images: {page.get_images().len}")
 
                 let keywords = page.extract_keywords(5)
-                print(f"🔑 Keywords: {keywords.join_str(", ")}")
+                print(f"🔑 Keywords: {keywords.join(", ")}")
 
             Err(error) =>
                 print(f"❌ Error: {error}")
@@ -415,7 +414,7 @@ run_crawling_demo = () =>
             with f = open("crawl_report.json", "w"):
                 json.dump(analysis, f, indent=2)
             print("💾 Detailed report saved to crawl_report.json")
-        except Exception() as e:
+        except Exception(e) =>
             print(f"⚠️  Could not save report: {e}")
     else:
         print("❌ No pages successfully crawled")
@@ -428,7 +427,7 @@ if __name__ == "__main__":
     print("2. Website Crawling")
     print("3. Both")
 
-    let choice = input("Enter choice (1-3): ").strip()
+    let choice = (if len(sys.argv) > 1 then sys.argv[1] else "1").strip()
 
     match choice:
         "1" => run_single_page_demo()
@@ -437,5 +436,6 @@ if __name__ == "__main__":
             run_single_page_demo()
             run_crawling_demo()
         )
-        _ => print("Invalid choice, running single page demo...")
-            | run_single_page_demo()
+        _ =>
+            print("Invalid choice, running single page demo...")
+            run_single_page_demo()

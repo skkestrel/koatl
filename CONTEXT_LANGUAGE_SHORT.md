@@ -6,24 +6,23 @@ Koatl is a functional-first language that transpiles to Python. This is a quick 
 
 ## Key Differences from Python
 
-| Feature                 | Python                    | Koatl                          |
-| ----------------------- | ------------------------- | ------------------------------ |
-| Function definition     | `def f(x): return x+1`    | `f = x => x + 1`               |
-| Slice syntax            | `[1:5]`, `[::2]`          | `[1..5]`, `[....2]` (use `..`) |
-| f-string format spec    | `f"{x:.2f}"`              | `f"{x%.2f}"` (use `%`)         |
-| Block-scoped variable   | (no equivalent)           | `let x = 1`                    |
-| Import from             | `from a.b import c`       | `import a.b.c`                 |
-| Identity / non-identity | `is` / `is not`           | `===` / `!==`                  |
-| Modulo                  | `x % y`                   | `x %% y`                       |
-| Bitwise OR              | `\|`                      | `\|\|`                         |
-| Bitwise XOR             | `^`                       | `^^`                           |
-| Bitwise AND             | `&`                       | `&&`                           |
-| Matrix multiply / `@`   | `A @ B` / `@decorator`    | `A @@ B` / `decorator! f`      |
-| Pipe (new)              | (no equivalent)           | `x \| f` — passes x into f     |
-| Coalesce (new)          | (no equivalent)           | `x ?? default`                 |
-| Ternary                 | `Y if X else Z`           | `if X then Y else Z`           |
-| List comprehension      | `[f(x) for x in xs]`      | `xs.iter.map(f).list()`        |
-| Filtered comprehension  | `[x for x in xs if p(x)]` | `xs.iter.filter(p).list()`     |
+| Feature                 | Python                     | Koatl                               |
+| ----------------------- | -------------------------- | ----------------------------------- |
+| Function definition     | `def f(x): return x+1`     | `f = x => x + 1`                    |
+| Slice syntax            | `[1:5]`, `[::2]`           | `[1..5]`, `[....2]` (use `..`)      |
+| f-string format spec    | `f"{x:.2f}"`               | `f"{x%%.2f}"` (use `%%`)            |
+| Block-scoped variable   | (no equivalent)            | `let x = 1`                         |
+| Import from             | `from a.b import c`        | `import a.b.c`                      |
+| Identity / non-identity | `is` / `is not`            | `===` / `!==`                       |
+| Decorator               | `@decorator; def ...`      | `decorator! () => ...`              |
+| Pipe (new)              | (no equivalent)            | `x \|> f` — passes x into f         |
+| Method pipe (new)       | (no equivalent)            | `x->f(args)` = `f(x, args)`         |
+| Coalesce (new)          | (no equivalent)            | `x ?? default`                      |
+| Ternary                 | `Y if X else Z`            | `if X then Y else Z`                |
+| List comprehension      | `[f(x) for x in xs]`       | `xs.iter.map(f).list()`             |
+| Filtered comprehension  | `[x for x in xs if p(x)]`  | `xs.iter.filter(p).list()`          |
+| `except` clauses        | `except TypeError as e:`   | `except TypeError() =>` (match arm) |
+| `with` binding          | `with f = open(...) as f:` | `with f = open(...):`               |
 
 ---
 
@@ -83,15 +82,18 @@ print(a)        # 1  (not affected!)
 ## Pipe Operator & Placeholder
 
 ```koatl
-# | pipes left side as last argument (or single argument)
-"hello world" | print              # print("hello world")
-data | do_something | do_other     # chaining
+# |> pipes left side as last argument (or single argument)
+"hello world" |> print              # print("hello world")
+data |> do_something |> do_other     # chaining
+
+# -> pipes left side as first argument of a call
+x->f(a, b)                          # f(x, a, b)
 
 # $ creates an anonymous function from the surrounding expression
 list.map($ * 2)          # list.map(x => x * 2)
 list.filter($ > 5)       # list.filter(x => x > 5)
 f(a, $, c)               # x => f(a, x, c)
-$ + 1 | $ * 2            # pipeable lambdas
+$ + 1 |> $ * 2           # pipeable lambdas
 
 # .() — scoped call (higher precedence than .)
 (..10).iter.map($ + 1).(filter $ > 5).(list)
@@ -320,16 +322,24 @@ match check int(user_input):
 
 ### try/except
 
+`except` clauses use **match-arm syntax** (`Pattern =>`), tried in order — like `match` arms. Each clause can use any pattern (destructuring, OR-patterns `|`, guards `if`):
+
 ```koatl
 result = try:
     risky_operation()
-except ValueError(msg=m) =>
-    f"value error: {m}"
+except ValueError(args=[m]) if len(m) > 0 =>
+    f"long error: {m}"
+except ValueError() =>
+    "short error"
 except KeyError as e =>
     f"key error: {e}"
+except TypeError(args=[m]) | RuntimeError(args=[m]) =>   # OR-pattern
+    f"other error: {m}"
 finally:
     cleanup()
 ```
+
+The `as e` form captures the raw exception object; `ExcType(args=[m])` destructures the `args` tuple (all exceptions expose it), and `ExcType(field=var)` destructures named attributes.
 
 ### Result monad with @
 
@@ -403,7 +413,7 @@ for (i, x) in items.iter.enumerate():
 .group_by(f)      # group into dict by key function
 .unique()         # deduplicate
 .count_by(f)      # count occurrences of each key
-.join_str(sep)    # join strings
+.join(sep)    # join strings
 .associate(f)     # map i => (i, f(i)) into dict
 ```
 
@@ -521,16 +531,21 @@ if let Ok({name, email}) = check user_data[id]:
 
 ## with as Expression
 
-`with` returns the value of its body — useful for resource-scoped computations:
+`with` returns the value of its body — useful for resource-scoped computations. The binding uses **`Pattern = expr`** form (like `if let`), applied once to the `__enter__` return value — the pattern must fully match:
 
 ```koatl
 content = with f = open("file.txt"):
     f.read()
 
-# Pattern matching on the context manager result
+# Destructure the context manager's return value
 with [a, b] = open_pair():
     a.read() + b.read()
+
+with {conn, cursor} = db_context():
+    cursor.execute(query)
 ```
+
+**vs. `except`**: `with` binds once (no fallthrough, no alternation); `except` clauses are match arms tried in order and support `|`, guards, and `as`.
 
 ---
 

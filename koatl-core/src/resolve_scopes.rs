@@ -1029,13 +1029,18 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                     .map(|case| {
                         let (pattern, scope, _meta) = pattern_scoped(state, case.pattern);
 
-                        let body = state
-                            .scoped(scope, |state| case.body.traverse_guarded(state))
+                        let (guard, body) = state
+                            .scoped(scope, |state| {
+                                (
+                                    case.guard.map(|g| g.traverse_guarded(state)),
+                                    case.body.traverse_guarded(state),
+                                )
+                            })
                             .value;
 
                         MatchCase {
                             pattern,
-                            guard: case.guard.map(|x| x.traverse_guarded(state)),
+                            guard,
                             body,
                         }
                     })

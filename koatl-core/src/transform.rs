@@ -2473,6 +2473,24 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                     let py_lhs = pre.bind(lhs.transform(ctx)?);
                     let call = pre.bind(create_coalesce(ctx, py_lhs, rhs, span)?);
                     break 'block call;
+                } else if let BinaryOp::MethodPipe = op {
+                    let py_lhs = pre.bind(lhs.transform(ctx)?);
+                    match &rhs.value {
+                        Expr::Call(fn_expr, call_args) => {
+                            let py_fn = pre.bind(fn_expr.transform(ctx)?);
+                            let t_args = transform_call_items(ctx, call_args, &span)?;
+                            pre.extend(t_args.pre);
+                            let mut py_args = t_args.value;
+                            py_args.insert(0, PyCallItem::Arg(py_lhs));
+                            break 'block a.call(py_fn, py_args);
+                        }
+                        _ => {
+                            return Err(simple_err(
+                                "'->' must be followed by a function call",
+                                span,
+                            ));
+                        }
+                    }
                 } else if let BinaryOp::And | BinaryOp::Or = op {
                     // handle short-circuiting manually
 
@@ -2525,7 +2543,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
 
                 let py_op = match op {
                     BinaryOp::Pipe => break 'block a.call(rhs, vec![PyCallItem::Arg(lhs)]),
-                    BinaryOp::Coalesce | BinaryOp::And | BinaryOp::Or => {
+                    BinaryOp::Coalesce | BinaryOp::And | BinaryOp::Or | BinaryOp::MethodPipe => {
                         panic!()
                     }
                     _ => map_py_binary_op(*op, span)?,

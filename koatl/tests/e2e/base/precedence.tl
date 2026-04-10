@@ -9,9 +9,9 @@ assert_eq(x(1), 3)
 
 x = x =>
     x
-        | x => x * 2
-        | x => x - 3
-        | x => x + 1 * 2
+        |> x => x * 2
+        |> x => x - 3
+        |> x => x + 1 * 2
 assert_eq(x(1), 1)
 
 
