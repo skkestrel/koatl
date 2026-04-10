@@ -279,15 +279,8 @@ trait SPyExprWithPreExt<'src> {
 impl<'src> SPyExprWithPreExt<'src> for SPyExprWithPre<'src> {
     fn drop_expr<'ast>(self, _ctx: &mut TlCtx<'src, 'ast>) -> PyBlock<'src> {
         let mut block = self.pre;
-
-        match self.value.value {
-            PyExpr::Literal(..) | PyExpr::Name(..) => {}
-            _ => {
-                let span = self.value.tl_span;
-                block.push((PyStmt::Expr(self.value), span).into());
-            }
-        }
-
+        let span = self.value.tl_span;
+        block.push((PyStmt::Expr(self.value), span).into());
         block
     }
 }
@@ -1937,12 +1930,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
         match &stmt {
             Stmt::Expr(expr) => {
                 let expr = pre.bind(expr.transform(ctx)?);
-
-                if let PyExpr::Name(_, PyAccessCtx::Load) = &expr.value {
-                    // this is a no-op, so we can skip it
-                } else {
-                    pre.push(a.expr(expr));
-                }
+                pre.push(a.expr(expr));
             }
             Stmt::Return(expr) => {
                 let expr = pre.bind(expr.transform(ctx)?);

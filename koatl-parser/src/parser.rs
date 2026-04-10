@@ -1173,6 +1173,15 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         Ok((None, in_, BinaryOp::In))
                     },
                     |ctx| {
+                        let is = ctx.keyword("is")?;
+                        let not = ctx.keyword("not")?;
+                        Ok((Some(is), not, BinaryOp::Nis))
+                    },
+                    |ctx| {
+                        let is = ctx.keyword("is")?;
+                        Ok((None, is, BinaryOp::Is))
+                    },
+                    |ctx| {
                         let (tok, kind) = ctx.symbol_table(&[
                             ("<", BinaryOp::Lt),
                             ("<=", BinaryOp::Leq),
