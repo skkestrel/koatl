@@ -181,7 +181,7 @@ run_simulation = (size=20, max_generations=100, delay=0.5) =>
                 _ =>
                     # Show trends if available
                     let trends = stats.get_trends()
-                    if trends.trend <> "insufficient_data":
+                    if trends.trend != "insufficient_data":
                         print(f"📈 Trend: {trends.trend} (avg density: {trends.avg_density}%)")
 
                     # Continue evolution

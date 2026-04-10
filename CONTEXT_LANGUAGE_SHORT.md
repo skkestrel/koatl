@@ -10,7 +10,6 @@ Koatl is a functional-first language that transpiles to Python. This is a quick 
 | ----------------------- | -------------------------- | ----------------------------------- |
 | Function definition     | `def f(x): return x+1`     | `f = x => x + 1`                    |
 | Slice syntax            | `[1:5]`, `[::2]`           | `[1..5]`, `[....2]` (use `..`)      |
-| f-string format spec    | `f"{x:.2f}"`               | `f"{x%%.2f}"` (use `%%`)            |
 | Block-scoped variable   | (no equivalent)            | `let x = 1`                         |
 | Import from             | `from a.b import c`        | `import a.b.c`                      |
 | Identity / non-identity | `is` / `is not`            | `===` / `!==`                       |
@@ -129,14 +128,15 @@ for i in ..10:
 
 ## F-Strings
 
-Use `%` instead of `:` for format specs:
+Use `:` for format specs (same as Python, but only recognized at bracket depth 0):
 
 ```koatl
 f"Hello, {name}!"                  # basic interpolation
-f"{pi%.2f}"                        # format spec (Python: f"{pi:.2f}")
-f"{num%05d}"                       # zero-padded
-f"{num%>5d}"                       # right-aligned, width 5
-f"{hex_num%#x}"                    # hex with prefix (0xff)
+f"{pi:.2f}"                        # format spec (same as Python)
+f"{num:05d}"                       # zero-padded
+f"{num:>5d}"                       # right-aligned, width 5
+f"{hex_num:#x}"                    # hex with prefix (0xff)
+f"{(if cond: x):.2f}"             # : inside () is NOT a format delimiter
 
 # Multi-line / block expression inside {}
 f"Result: {

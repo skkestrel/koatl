@@ -1170,20 +1170,20 @@ obj::__class__          # Get __class__ directly
 
 The parser processes operators in this precedence order:
 
-| #   | Precedence  | Operators                                                                   | Associativity | Note               |
-| --- | ----------- | --------------------------------------------------------------------------- | ------------- | ------------------ |
-| 11  | Pipe        | `\|>`                                                                       | Left-to-right | Lowest precedence  |
-| 10  | Coalesce    | `??`                                                                        | Left-to-right |                    |
-| 9   | Logical OR  | `or`                                                                        | Left-to-right |                    |
-| 8   | Logical AND | `and`                                                                       | Left-to-right |                    |
-| 7   | Comparison  | `<`, `>`, `<=`, `>=`, `==`, `<>`, `!=`, `===`, `<=>`, `!==`, `in`, `not in` | Left-to-right |                    |
-| 6   | Bitwise OR  | `\|`                                                                        | Left-to-right |                    |
-| 5   | Bitwise XOR | `^`                                                                         | Left-to-right |                    |
-| 4   | Bitwise AND | `&`                                                                         | Left-to-right |                    |
-| 3   | Shifts      | `<<`, `>>`                                                                  | Left-to-right |                    |
-| 2   | Add/Sub     | `+`, `-`                                                                    | Left-to-right |                    |
-| 1   | Mul/Div     | `*`, `/`, `//`, `%`, `@`                                                    | Left-to-right |                    |
-| 0   | Power       | `**`                                                                        | Right-to-left | Highest precedence |
+| #   | Precedence  | Operators                                                      | Associativity | Note               |
+| --- | ----------- | -------------------------------------------------------------- | ------------- | ------------------ |
+| 11  | Pipe        | `\|>`                                                          | Left-to-right | Lowest precedence  |
+| 10  | Coalesce    | `??`                                                           | Left-to-right |                    |
+| 9   | Logical OR  | `or`                                                           | Left-to-right |                    |
+| 8   | Logical AND | `and`                                                          | Left-to-right |                    |
+| 7   | Comparison  | `<`, `>`, `<=`, `>=`, `==`, `!=`, `===`, `!==`, `in`, `not in` | Left-to-right |                    |
+| 6   | Bitwise OR  | `\|`                                                           | Left-to-right |                    |
+| 5   | Bitwise XOR | `^`                                                            | Left-to-right |                    |
+| 4   | Bitwise AND | `&`                                                            | Left-to-right |                    |
+| 3   | Shifts      | `<<`, `>>`                                                     | Left-to-right |                    |
+| 2   | Add/Sub     | `+`, `-`                                                       | Left-to-right |                    |
+| 1   | Mul/Div     | `*`, `/`, `//`, `%`, `@`                                       | Left-to-right |                    |
+| 0   | Power       | `**`                                                           | Right-to-left | Highest precedence |
 
 **Special operators** (above binary precedence, processed in order):
 
@@ -1234,18 +1234,18 @@ The parser processes operators in this precedence order:
 
 ### Comparison Operators
 
-| Koatl         | Python   | Meaning                |
-| ------------- | -------- | ---------------------- |
-| `==`          | `==`     | Equality               |
-| `<>` / `!=`   | `!=`     | Not equal              |
-| `<`           | `<`      | Less than              |
-| `<=`          | `<=`     | Less or equal          |
-| `>`           | `>`      | Greater than           |
-| `>=`          | `>=`     | Greater or equal       |
-| `===`         | `is`     | Identity (same object) |
-| `<=>` / `!==` | `is not` | Non-identity           |
-| `in`          | `in`     | Membership             |
-| `not in`      | `not in` | Non-membership         |
+| Koatl    | Python   | Meaning                |
+| -------- | -------- | ---------------------- |
+| `==`     | `==`     | Equality               |
+| `!=`     | `!=`     | Not equal              |
+| `<`      | `<`      | Less than              |
+| `<=`     | `<=`     | Less or equal          |
+| `>`      | `>`      | Greater than           |
+| `>=`     | `>=`     | Greater or equal       |
+| `===`    | `is`     | Identity (same object) |
+| `!==`    | `is not` | Non-identity           |
+| `in`     | `in`     | Membership             |
+| `not in` | `not in` | Non-membership         |
 
 ## Execution Modes
 

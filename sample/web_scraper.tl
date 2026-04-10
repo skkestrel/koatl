@@ -16,7 +16,7 @@ import hashlib
 validate_url = url =>
     match url:
         url_str if url_str.startswith(("http://", "https://")) =>
-            check urlparse(url_str).netloc <> "" ?? False
+            check urlparse(url_str).netloc != "" ?? False
         _ => False
 
 # Content extraction with pattern matching on HTML elements
@@ -35,7 +35,7 @@ extract_content = (soup, content_type="text") =>
                 url: link["href"]
                 text: link.get_text().strip()
                 title: link.get("title", "")
-            }).filter(link => link.text <> "")
+            }).filter(link => link.text != "")
 
         "images" =>
             # Extract image information
@@ -43,7 +43,7 @@ extract_content = (soup, content_type="text") =>
                 src: img.get("src", "")
                 alt: img.get("alt", "")
                 title: img.get("title", "")
-            }).filter(img => img.src <> "")
+            }).filter(img => img.src != "")
 
         "headings" =>
             # Extract heading hierarchy
@@ -53,7 +53,7 @@ extract_content = (soup, content_type="text") =>
                     text: heading.get_text().strip()
                     id: heading.get("id", "")
                 })
-            ).filter(heading => heading.text <> "")
+            ).filter(heading => heading.text != "")
 
         "metadata" =>
             # Extract page metadata
@@ -126,7 +126,7 @@ create_page = (url, html_content) => {
         let base_domain = urlparse(self.url).netloc
         self.get_links().filter(link =>
             let link_domain = urlparse(urljoin(self.url, link.url)).netloc
-            link_domain <> base_domain and link_domain <> ""
+            link_domain != base_domain and link_domain != ""
         )
 }
 
@@ -247,7 +247,7 @@ analyze_content = pages =>
             })
         ).group_by(item =>
             let domain = urlparse(urljoin(item.page_url, item.link.url)).netloc
-            if domain <> "" then domain else "internal"
+            if domain != "" then domain else "internal"
         )
 
         {
@@ -298,7 +298,7 @@ generate_report = (analysis, format="text") =>
 📈 Overview:
   • Pages analyzed: {analysis.page_count}
   • Total words: {analysis.total_words}
-  • Average words per page: {analysis.avg_words_per_page%%.1f}
+  • Average words per page: {analysis.avg_words_per_page:.1f}
   • Total reading time: {analysis.total_reading_time} minutes
 
 🔑 Top Keywords:

@@ -2473,6 +2473,52 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                     let py_lhs = pre.bind(lhs.transform(ctx)?);
                     let call = pre.bind(create_coalesce(ctx, py_lhs, rhs, span)?);
                     break 'block call;
+                } else if let BinaryOp::MappedMethodPipe = op {
+                    let py_lhs = pre.bind(lhs.transform(ctx)?);
+                    match &rhs.value {
+                        Expr::Call(fn_expr, call_args) => {
+                            let arg_name = ctx.create_aux_var("maparg", span.start);
+                            let py_fn_expr = fn_expr.transform(ctx)?;
+                            let t_args = transform_call_items(ctx, call_args, &span)?;
+
+                            let mut inner_pre = PyBlock::new();
+                            let py_fn = inner_pre.bind(py_fn_expr);
+                            inner_pre.extend(t_args.pre);
+                            let mut py_args = t_args.value;
+                            py_args.insert(0, PyCallItem::Arg(a.load_ident(arg_name.clone())));
+                            let inner_call = a.call(py_fn, py_args);
+
+                            let fn_info = ctx.mapped_fninfo.get(&rhs.as_ref().into()).unwrap();
+                            let inner_fn = pre.bind(make_fn_exp(
+                                ctx,
+                                FnDef::PyFnDef(
+                                    PyArgList::simple_args(vec![(arg_name, None)]),
+                                    SPyExprWithPre {
+                                        value: inner_call,
+                                        pre: inner_pre,
+                                    },
+                                    false,
+                                    fn_info.is_async,
+                                ),
+                                &span,
+                            )?);
+
+                            let mut call = a.call(
+                                a.tl_builtin("op_map"),
+                                vec![a.call_arg(py_lhs), a.call_arg(inner_fn)],
+                            );
+                            if fn_info.is_async {
+                                call = a.await_(call);
+                            }
+                            break 'block call;
+                        }
+                        _ => {
+                            return Err(simple_err(
+                                "'?->' must be followed by a function call",
+                                span,
+                            ));
+                        }
+                    }
                 } else if let BinaryOp::MethodPipe = op {
                     let py_lhs = pre.bind(lhs.transform(ctx)?);
                     match &rhs.value {
@@ -2543,7 +2589,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
 
                 let py_op = match op {
                     BinaryOp::Pipe => break 'block a.call(rhs, vec![PyCallItem::Arg(lhs)]),
-                    BinaryOp::Coalesce | BinaryOp::And | BinaryOp::Or | BinaryOp::MethodPipe => {
+                    BinaryOp::Coalesce | BinaryOp::And | BinaryOp::Or | BinaryOp::MethodPipe | BinaryOp::MappedMethodPipe => {
                         panic!()
                     }
                     _ => map_py_binary_op(*op, span)?,

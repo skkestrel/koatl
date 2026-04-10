@@ -1,4 +1,4 @@
-(Prism.languages.koatl = {
+((Prism.languages.koatl = {
 	comment: [
 		{ pattern: /#-[\s\S]*?(?:-#|$)/, lookbehind: !0, greedy: !0 },
 		{ pattern: /#[^-].*/, lookbehind: !0, greedy: !0 },
@@ -35,7 +35,7 @@
 		/\b(?:__import__|Async|Env|Memo|Ok|Err|Result|Record|abs|callable|classmethod|complex|dict|eval|float|format|frozenset|getattr|globals|hasattr|hash|help|hex|int|iter|len|list|locals|long|max|min|next|object|property|repr|round|set|setattr|staticmethod|str|super|tuple|type)\b/,
 	boolean: /\b(?:False|None|True)\b/,
 	number: /\b0(?:b(?:_?[01])+|o(?:_?[0-7])+|x(?:_?[a-f0-9])+)\b|(?:\b\d+(?:_\d+)*(?:\.(?:\d+(?:_\d+)*)?)?|\B\.\d+(?:_\d+)*)(?:e[+-]?\d+(?:_\d+)*)?j?(?!\w)/i,
-	operator: /[-+%=]=?|!=|:=|\*\*?=?|\/\/?=?|<[<=>]?|>[=>]?|[&|^~]/,
+	operator: /[-+%=]=?|!=|:=|\*\*?=?|\/\/?=?|<[<=]?|>[=>]?|[&|^~]/,
 	punctuation: /[{}[\];(),.:]/,
 }),
-	(Prism.languages.koatl["string-interpolation"].inside.interpolation.inside.rest = Prism.languages.koatl);
+	(Prism.languages.koatl["string-interpolation"].inside.interpolation.inside.rest = Prism.languages.koatl));

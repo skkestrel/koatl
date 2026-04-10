@@ -1446,6 +1446,14 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                         (x.traverse(state), y)
                     }
+                    BinaryOp::MappedMethodPipe => {
+                        let (y, fn_ctx) =
+                            with_phantom_fninfo(state, span, |state| y.traverse(state));
+
+                        state.mapped_fninfo.insert(y.as_ref().into(), fn_ctx);
+
+                        (x.traverse(state), y)
+                    }
                     _ => (x.traverse(state), y.traverse(state)),
                 };
 

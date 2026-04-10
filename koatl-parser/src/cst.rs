@@ -311,6 +311,7 @@ pub enum BinaryOp {
     Coalesce,
     Pipe,
     MethodPipe,
+    MappedMethodPipe,
 }
 
 #[derive(Debug, Copy, Clone)]

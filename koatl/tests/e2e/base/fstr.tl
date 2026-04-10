@@ -28,24 +28,30 @@ assert_eq(f"""
 
 # Test format specifiers
 num = 42
-assert_eq(f"{num%%d}", "42")
-assert_eq(f"{num%%05d}", "00042")
-assert_eq(f"{num%%>5d}", "   42")
-assert_eq(f"{num%%<5d}", "42   ")
-assert_eq(f"{num%%^5d}", " 42  ")
+assert_eq(f"{num:d}", "42")
+assert_eq(f"{num:05d}", "00042")
+assert_eq(f"{num:>5d}", "   42")
+assert_eq(f"{num:<5d}", "42   ")
+assert_eq(f"{num:^5d}", " 42  ")
 
 pi = 3.14159
-assert_eq(f"{pi%%.2f}", "3.14")
-assert_eq(f"{pi%%.4f}", "3.1416")
+assert_eq(f"{pi:.2f}", "3.14")
+assert_eq(f"{pi:.4f}", "3.1416")
 
 hex_num = 255
-assert_eq(f"{hex_num%%x}", "ff")
-assert_eq(f"{hex_num%%X}", "FF")
-assert_eq(f"{hex_num%%#x}", "0xff")
+assert_eq(f"{hex_num:x}", "ff")
+assert_eq(f"{hex_num:X}", "FF")
+assert_eq(f"{hex_num:#x}", "0xff")
 
 # Test multiple format specs in one string
-assert_eq(f"{num%%05d} and {pi%%.2f}", "00042 and 3.14")
+assert_eq(f"{num:05d} and {pi:.2f}", "00042 and 3.14")
 
 # Test format spec with expressions
-assert_eq(f"{1 + 1%%d}", "2")
-assert_eq(f"{(10 * 5)%%03d}", "050")
+assert_eq(f"{1 + 1:d}", "2")
+assert_eq(f"{(10 * 5):03d}", "050")
+
+# Test multiline expression with format spec
+assert_eq(f"{(if True:
+  1
+else:
+  2):.2f}", "1.00")

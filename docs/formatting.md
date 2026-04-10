@@ -155,10 +155,9 @@ f"Hello, my name is {
 }"
 ```
 
-Format specifiers use `%` instead of `:`:
-
 ```koatl
-f"{123%.2f}"
+f"{123:.2f}"
+f"{(if cond: x):.2f}"   # : inside () is not a format delimiter
 ```
 
 ### Verbatim f-strings

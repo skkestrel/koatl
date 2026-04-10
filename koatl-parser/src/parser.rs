@@ -1079,7 +1079,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             };
 
             let fmt = optional!(self, |ctx: &mut Self| {
-                let sep = ctx.symbol("%%")?;
+                let sep = ctx.symbol(":")?;
                 let (head, parts) = ctx.fstr_inner()?;
                 Ok(FmtSpec { sep, head, parts })
             })?;
@@ -1196,10 +1196,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                             (">", BinaryOp::Gt),
                             (">=", BinaryOp::Geq),
                             ("==", BinaryOp::Eq),
-                            ("<>", BinaryOp::Neq),
                             ("!=", BinaryOp::Neq),
                             ("===", BinaryOp::Is),
-                            ("<=>", BinaryOp::Nis),
                             ("!==", BinaryOp::Nis),
                         ])?;
 
@@ -1557,12 +1555,6 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         fn_expr,
                         args,
                     } => {
-                        if question.is_some() {
-                            return Err(self.set_error(
-                                start,
-                                ErrMsg::Custom("'->' cannot be used with ? operator".into()),
-                            ));
-                        }
                         let call_span = self.span_from(start);
                         let call_expr = Expr::Call {
                             expr: fn_expr.boxed(),
@@ -1570,11 +1562,16 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                             args,
                         }
                         .spanned(call_span);
+                        let op_kind = if question.is_some() {
+                            BinaryOp::MappedMethodPipe
+                        } else {
+                            BinaryOp::MethodPipe
+                        };
                         Expr::Binary {
                             lhs: expr.boxed(),
                             not: None,
                             op: arrow,
-                            op_kind: BinaryOp::MethodPipe,
+                            op_kind,
                             rhs: call_expr.boxed(),
                         }
                     }

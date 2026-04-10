@@ -171,7 +171,7 @@ test_record_filter = () =>
 test_record_filter_keys = () =>
     # filter_keys - defined in prelude/__init__.tl for dict and record.py for Record
     assert_eq({1: 10, 2: 20, 3: 30}.filter_keys($ > 1), {2: 20, 3: 30})
-    assert_eq({"a": 1, "b": 2, "c": 3}.filter_keys($ <> "b"), {"a": 1, "c": 3})
+    assert_eq({"a": 1, "b": 2, "c": 3}.filter_keys($ != "b"), {"a": 1, "c": 3})
 
 test_record_filter_values = () =>
     # filter_values - defined in prelude/__init__.tl for dict and record.py for Record

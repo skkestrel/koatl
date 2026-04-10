@@ -20,7 +20,7 @@ export LazyModule = class:
                         else:
                             None
 
-                if self._submodules[attr] <=> None:
+                if self._submodules[attr] !== None:
                     return self._submodules[attr]
 
             if hasattr(self._module, attr):
