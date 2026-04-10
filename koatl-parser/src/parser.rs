@@ -2522,10 +2522,10 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let return_stmt = |ctx: &mut Self| {
             let return_kw = ctx.keyword("return")?;
-            let expr = ctx.parse(expr)?;
+            let expr = optional!(ctx, expr)?;
             Ok(Stmt::Return {
                 return_kw,
-                expr: expr.boxed(),
+                expr: expr.map(|e| e.boxed()),
             })
         };
 
@@ -2536,6 +2536,19 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 raise_kw,
                 expr: expr.map(|e| e.boxed()),
             })
+        };
+
+        let del_stmt = |ctx: &mut Self| {
+            let del_kw = ctx.keyword("del")?;
+            let first = ctx.parse(expr)?;
+            let mut targets = vec![(first.boxed(), None)];
+            while let Some(comma) = optional!(ctx, |c: &mut Self| c.symbol(","))? {
+                let last = targets.last_mut().unwrap();
+                last.1 = Some(comma);
+                let next = ctx.parse(expr)?;
+                targets.push((next.boxed(), None));
+            }
+            Ok(Stmt::Del { del_kw, targets })
         };
 
         let stmt = first_of!(
@@ -2551,7 +2564,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             break_stmt,
             continue_stmt,
             return_stmt,
-            raise_stmt
+            raise_stmt,
+            del_stmt
         )?;
 
         Ok(stmt.spanned(self.span_from(start)))

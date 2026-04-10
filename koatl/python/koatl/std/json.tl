@@ -12,7 +12,7 @@ export JSONDecoder = class(json.JSONDecoder):
     __init__ = (self, **kwargs) =>
         let object_hook = d =>
             match d:
-                dict() => Record(d)
+                dict() => Record.from_dict_ref(d)
                 default => d
 
         super().__init__(object_hook=object_hook, **kwargs)

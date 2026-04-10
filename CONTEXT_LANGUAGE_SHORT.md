@@ -15,6 +15,12 @@ Koatl is a functional-first language that transpiles to Python. This is a quick 
 | Import from             | `from a.b import c`       | `import a.b.c`                 |
 | Identity / non-identity | `is` / `is not`           | `===` / `!==`                  |
 | Modulo                  | `x % y`                   | `x %% y`                       |
+| Bitwise OR              | `\|`                      | `\|\|`                         |
+| Bitwise XOR             | `^`                       | `^^`                           |
+| Bitwise AND             | `&`                       | `&&`                           |
+| Matrix multiply / `@`   | `A @ B` / `@decorator`    | `A @@ B` / `decorator! f`      |
+| Pipe (new)              | (no equivalent)           | `x \| f` — passes x into f     |
+| Coalesce (new)          | (no equivalent)           | `x ?? default`                 |
 | Ternary                 | `Y if X else Z`           | `if X then Y else Z`           |
 | List comprehension      | `[f(x) for x in xs]`      | `xs.iter.map(f).list()`        |
 | Filtered comprehension  | `[x for x in xs if p(x)]` | `xs.iter.filter(p).list()`     |

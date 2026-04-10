@@ -109,11 +109,15 @@ pub enum Stmt<TTree: Tree> {
     },
     Return {
         return_kw: TTree::Token,
-        expr: TTree::Expr,
+        expr: Option<TTree::Expr>,
     },
     Raise {
         raise_kw: TTree::Token,
         expr: Option<TTree::Expr>,
+    },
+    Del {
+        del_kw: TTree::Token,
+        targets: Vec<(TTree::Expr, Option<TTree::Token>)>, // expr, optional comma
     },
     Expr {
         expr: TTree::Expr,

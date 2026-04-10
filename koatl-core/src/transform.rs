@@ -1933,7 +1933,11 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                 pre.push(a.expr(expr));
             }
             Stmt::Return(expr) => {
-                let expr = pre.bind(expr.transform(ctx)?);
+                let expr = if let Some(expr) = expr {
+                    pre.bind(expr.transform(ctx)?)
+                } else {
+                    a.none()
+                };
                 pre.push(a.return_(expr));
             }
             Stmt::Decl(..) => {
@@ -2006,8 +2010,15 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
                     let expr = pre.bind(expr.transform(ctx)?);
                     pre.push(a.raise(Some(expr)));
                 } else {
-                    pre.push(a.raise(Some(a.call(a.tl_builtin("Exception"), vec![]))));
+                    pre.push(a.raise(None));
                 }
+            }
+            Stmt::Del(targets) => {
+                let py_targets = targets
+                    .iter()
+                    .map(|t| Ok(pre.bind(t.transform_full(ctx, PyAccessCtx::Del)?)))
+                    .collect::<TlResult<Vec<_>>>()?;
+                pre.push(a.del(py_targets));
             }
             Stmt::For(target, iter, body) => {
                 let iter = pre.bind(iter.transform(ctx)?);

@@ -96,12 +96,13 @@ pub enum Stmt<'a, TTree: Tree> {
 
     Expr(TTree::Expr),
 
-    Return(TTree::Expr),
+    Return(Option<TTree::Expr>),
     While(TTree::Expr, TTree::Expr),
     WhileLet(TTree::Pattern, TTree::Expr, TTree::Expr),
     For(TTree::Pattern, TTree::Expr, TTree::Expr),
     Import(ImportTree<'a>, bool),
     Raise(Option<TTree::Expr>),
+    Del(Vec<TTree::Expr>),
 
     Break,
     Continue,

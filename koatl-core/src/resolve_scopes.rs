@@ -1679,7 +1679,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                 Stmt::Assign(lhs, rhs, op)
             }
             Stmt::Expr(expr) => Stmt::Expr(expr.traverse_guarded(state)),
-            Stmt::Return(expr) => Stmt::Return(expr.traverse_guarded(state)),
+            Stmt::Return(expr) => Stmt::Return(expr.map(|x| x.traverse_guarded(state))),
             Stmt::While(cond, body) => {
                 Stmt::While(cond.traverse_guarded(state), body.traverse_guarded(state))
             }
@@ -1702,6 +1702,12 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
                 Stmt::For(pattern, iter.traverse_guarded(state), body)
             }
             Stmt::Raise(expr) => Stmt::Raise(expr.map(|x| x.traverse_guarded(state))),
+            Stmt::Del(targets) => Stmt::Del(
+                targets
+                    .into_iter()
+                    .map(|e| e.traverse_guarded(state))
+                    .collect(),
+            ),
             Stmt::Import(tree, reexport) => {
                 let scope_key = *state.scope_stack.last().unwrap();
                 let scope = &mut state.scopes[scope_key];

@@ -38,8 +38,8 @@ impl AstBuilder {
         Stmt::Assign(target.into(), value.into(), aug_op).spanned(self.span)
     }
 
-    pub fn return_<'src>(&self, expr: impl IntoIndirect<SExpr<'src>>) -> SStmt<'src> {
-        Stmt::Return(expr.indirect()).spanned(self.span)
+    pub fn return_<'src>(&self, expr: Option<impl IntoIndirect<SExpr<'src>>>) -> SStmt<'src> {
+        Stmt::Return(expr.map(|e| e.indirect())).spanned(self.span)
     }
 
     pub fn while_<'src>(

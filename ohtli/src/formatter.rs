@@ -274,6 +274,15 @@ pub fn stmt_to_elements(stmt: &SStmt) -> Elements {
         Stmt::Raise { raise_kw, expr } => {
             line!(raise_kw, expr)
         }
+        Stmt::Del { del_kw, targets } => {
+            line!(
+                del_kw,
+                targets
+                    .iter()
+                    .flat_map(|(e, comma)| line!(e, comma.map(attached_token)))
+                    .collect::<Vec<_>>()
+            )
+        }
         Stmt::Error { raw } => {
             // Tokenize the raw error text to preserve trivia (comments, newlines, whitespace)
             let (tokens_opt, _) = tokenize(raw, true);

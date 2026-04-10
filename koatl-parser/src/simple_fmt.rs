@@ -449,7 +449,11 @@ impl<'src, 'tok> SimpleFmt for SStmtInner<'src, 'tok> {
             Stmt::Break { .. } => "break".to_string(),
             Stmt::Continue { .. } => "continue".to_string(),
             Stmt::Return { expr, .. } => {
-                format!("return {}", expr.simple_fmt())
+                if let Some(expr) = expr {
+                    format!("return {}", expr.simple_fmt())
+                } else {
+                    "return".to_string()
+                }
             }
             Stmt::Raise { expr, .. } => {
                 if let Some(expr) = expr {
@@ -457,6 +461,10 @@ impl<'src, 'tok> SimpleFmt for SStmtInner<'src, 'tok> {
                 } else {
                     "raise".to_string()
                 }
+            }
+            Stmt::Del { targets, .. } => {
+                let parts: Vec<String> = targets.iter().map(|(e, _)| e.simple_fmt()).collect();
+                format!("del {}", parts.join(", "))
             }
             Stmt::Import { export, tree, .. } => {
                 let export_str = if export.is_some() { "export " } else { "" };
