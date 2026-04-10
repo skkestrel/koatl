@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::borrow::Cow;
+use std::fmt;
 
 use crate::cst::*;
 use crate::lexer::*;
@@ -14,6 +15,18 @@ enum ErrMsg<'a> {
     Trailing,
     Expected(Cow<'a, str>),
     Custom(Cow<'a, str>),
+}
+
+impl fmt::Display for ErrMsg<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ErrMsg::Unexpected => write!(f, "Unexpected token"),
+            ErrMsg::UnmatchedDelimiter => write!(f, "Unmatched delimiter"),
+            ErrMsg::Trailing => write!(f, "Trailing token"),
+            ErrMsg::Expected(s) => write!(f, "Expected {s}"),
+            ErrMsg::Custom(s) => write!(f, "{s}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2776,7 +2789,7 @@ pub fn parse_tokens<'src: 'tok, 'tok>(
                 (
                     true_span(err.index, err.index + 1, ctx.input),
                     format!(
-                        "{:?}. Found: {}",
+                        "{}. Found: {}",
                         err.message,
                         tokens
                             .0
