@@ -595,7 +595,20 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::InducedBlock<cst::STr
     fn lift(&self) -> Indirect<ast::SExpr<'src>> {
         match self {
             cst::InducedBlock::Block { body, .. } => body.lift(),
-            cst::InducedBlock::Inline { stmt, .. } => stmt.lift(),
+            cst::InducedBlock::Inline { stmts, .. } => {
+                if stmts.len() == 1 {
+                    stmts[0].lift()
+                } else {
+                    let lifted = stmts
+                        .iter()
+                        .map(|s| s.lift())
+                        .collect();
+                    let span = Span::new(
+                        stmts.first().unwrap().span.start..stmts.last().unwrap().span.end,
+                    );
+                    ast::Expr::Block(lifted).spanned(span).indirect()
+                }
+            }
         }
     }
 }

@@ -1383,7 +1383,7 @@ impl ToElements for SPattern<'_, '_> {
 impl ToElements for SInducedBlock<'_, '_> {
     fn to_elements(&self) -> Vec<Element> {
         match self {
-            InducedBlock::Inline { inducer, stmt } => {
+            InducedBlock::Inline { inducer, stmts, separators } => {
                 let inducer = inducer.map(|inducer| {
                     if token_to_text(inducer) == ":" {
                         attached_token(inducer)
@@ -1392,7 +1392,13 @@ impl ToElements for SInducedBlock<'_, '_> {
                     }
                 });
 
-                line!(inducer, Element::block(vec![stmt_to_elements(stmt)], true))
+                let mut elements = vec![stmt_to_elements(&stmts[0])];
+                for (sep, s) in separators.iter().zip(stmts[1..].iter()) {
+                    elements.push(attached_token(sep));
+                    elements.push(stmt_to_elements(s));
+                }
+
+                line!(inducer, Element::block(elements, true))
             }
             InducedBlock::Block {
                 inducer,

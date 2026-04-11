@@ -340,7 +340,8 @@ pub enum InducedBlock<TTree: Tree> {
 
     Inline {
         inducer: Option<TTree::Token>,
-        stmt: TTree::Stmt,
+        stmts: Vec<TTree::Stmt>,
+        separators: Vec<TTree::Token>,
     },
 }
 

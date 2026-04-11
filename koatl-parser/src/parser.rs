@@ -841,13 +841,38 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         )
     }
 
+    /// Parse one or more semicolon-separated inline statements.
+    fn inline_stmts(
+        &mut self,
+        inline: bool,
+    ) -> ParseResult<(Vec<Box<SStmt<'src, 'tok>>>, Vec<&'tok SToken<'src>>)> {
+        let first = self.stmt(inline)?;
+        let mut stmts = vec![Box::new(first)];
+        let mut separators = vec![];
+
+        loop {
+            let parsed = optional!(self, |ctx: &mut Self| {
+                let semi = ctx.symbol(";")?;
+                let s = ctx.stmt(inline)?;
+                Ok((semi, s))
+            })?;
+            let Some((semi, s)) = parsed else { break };
+            separators.push(semi);
+            stmts.push(Box::new(s));
+        }
+
+        Ok((stmts, separators))
+    }
+
     fn colon_or_then_block(&mut self) -> ParseResult<InducedBlock<STree<'src, 'tok>>> {
         // Try `then` keyword — if present, parse a bare inline statement (no `:` allowed after `then`)
         if let Some(then_kw) = optional!(self, |ctx: &mut Self| ctx.keyword("then"))? {
-            let stmt = self.stmt(true)?;
+            let (stmts, separators) = self.inline_stmts(true)?;
+
             return Ok(InducedBlock::Inline {
                 inducer: Some(then_kw),
-                stmt: Box::new(stmt),
+                stmts,
+                separators,
             });
         }
 
@@ -1972,11 +1997,12 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         let inline_stmt = |ctx: &mut Self| {
             let colon = optional!(ctx, |ctx: &mut Self| ctx.symbol(":"))?;
 
-            let stmt = ctx.stmt(true)?;
+            let (stmts, separators) = ctx.inline_stmts(true)?;
 
             Ok(InducedBlock::Inline {
                 inducer: colon,
-                stmt: Box::new(stmt),
+                stmts,
+                separators,
             })
         };
 
@@ -2003,11 +2029,12 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         };
 
         let inline_stmt = |ctx: &mut Self| {
-            let stmt = ctx.stmt(parse_inline_stmt_on_inline_block)?;
+            let (stmts, separators) = ctx.inline_stmts(parse_inline_stmt_on_inline_block)?;
 
             Ok(InducedBlock::Inline {
                 inducer: Some(arrow),
-                stmt: Box::new(stmt),
+                stmts,
+                separators,
             })
         };
 
@@ -2688,7 +2715,12 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
             if let Ok(stmt) = (|ctx: &mut Self| -> ParseResult<SStmt> {
                 let stmt = ctx.stmt(false)?;
-                ctx.token(&Token::Eol)?;
+                first_of!(
+                    ctx,
+                    "end of statement",
+                    |ctx: &mut Self| ctx.token(&Token::Eol),
+                    |ctx: &mut Self| ctx.symbol(";")
+                )?;
                 Ok(stmt)
             })(self)
             {
@@ -2724,7 +2756,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     );
 
                     match self.peek_token() {
-                        Some(tok) if tok.token == Token::Eol => {
+                        Some(tok) if tok.token == Token::Eol || tok.token == Token::Symbol(";") => {
                             if delim_stack.is_empty() {
                                 // Successfully recovered
                                 let error = self.take_error().1;

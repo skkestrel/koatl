@@ -709,12 +709,19 @@ impl<'src, 'tok> SimpleFmt for SStmts<'src, 'tok> {
 
 impl<'src, 'tok> SimpleFmt for InducedBlock<STree<'src, 'tok>> {
     fn simple_fmt(&self) -> String {
-        let stmts = match &self {
-            InducedBlock::Block { body, .. } => body,
-            InducedBlock::Inline { stmt, .. } => &vec![stmt.clone()].spanned(stmt.span),
-        };
-
-        format!("Block({})", stmts.simple_fmt())
+        match &self {
+            InducedBlock::Block { body, .. } => {
+                format!("Block({})", body.simple_fmt())
+            }
+            InducedBlock::Inline { stmts, .. } => {
+                let inner = stmts
+                    .iter()
+                    .map(|s| s.simple_fmt())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                format!("Block({})", inner)
+            }
+        }
     }
 }
 
