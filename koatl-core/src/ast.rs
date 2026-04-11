@@ -59,6 +59,7 @@ pub enum Literal<'a> {
     Str(Cow<'a, str>),
     Bool(bool),
     None,
+    Ellipsis,
 }
 
 pub type SLiteral<'a> = Spanned<Literal<'a>>;

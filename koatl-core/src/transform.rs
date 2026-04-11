@@ -696,6 +696,9 @@ impl<'src, 'ast> SPatternExt<'src, 'ast> for SPattern<'src> {
                 Literal::Bool(..) | Literal::None => {
                     PyPattern::Singleton(literal.value.transform(ctx)?)
                 }
+                Literal::Ellipsis => {
+                    PyPattern::Value((PyExpr::Literal(literal.value.transform(ctx)?), span).into())
+                }
             },
             Pattern::Capture(v) => PyPattern::As(None, maybe_capture_slot(ctx, v, info)?),
             Pattern::Value(v) => {
@@ -1910,6 +1913,7 @@ impl<'src> LiteralExt<'src> for Literal<'src> {
             Literal::Str(s) => PyLiteral::Str(s.to_owned()),
             Literal::Bool(b) => PyLiteral::Bool(*b),
             Literal::None => PyLiteral::None,
+            Literal::Ellipsis => PyLiteral::Ellipsis,
         };
 
         Ok(value)

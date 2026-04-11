@@ -235,7 +235,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             | Token::Float(_)
             | Token::Str(..)
             | Token::Bool(_)
-            | Token::None = found.token
+            | Token::None
+            | Token::Ellipsis = found.token
             {
                 return Ok(found);
             }
@@ -1622,9 +1623,13 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
             let expr = ctx.parse(next_level)?;
             let stop = optional!(ctx, |ctx: &mut Self| {
+                // .... means no stop, has step separator
+                if let Some(dotdotdotdot) = optional!(ctx, |ctx: &mut Self| ctx.symbol("...."))? {
+                    return Ok((dotdotdotdot, None, true));
+                }
                 let dots = ctx.symbol("..")?;
                 let expr = optional!(ctx, next_level)?;
-                Ok((dots, expr))
+                Ok((dots, expr, false))
             })?;
             let step = optional!(ctx, |ctx: &mut Self| {
                 let dots = ctx.symbol("..")?;
@@ -1632,7 +1637,18 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                 Ok((dots, expr))
             })?;
 
-            if let Some((dots, stop)) = stop {
+            if let Some((dots, stop, is_combined)) = stop {
+                if is_combined {
+                    let step = optional!(ctx, next_level)?;
+                    return Ok(Expr::Slice {
+                        start: Some(expr.boxed()),
+                        dots,
+                        stop: None,
+                        step_dots: None,
+                        step: step.map(|x| x.boxed()),
+                    }
+                    .spanned(ctx.span_from(start_cursor)));
+                }
                 if let Some((step_dots, step)) = step {
                     return Ok(Expr::Slice {
                         start: Some(expr.boxed()),
@@ -1658,6 +1674,18 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
         };
 
         let no_start = |ctx: &mut Self| {
+            // .... means no start, no stop, step separator
+            if let Some(dotdotdotdot) = optional!(ctx, |ctx: &mut Self| ctx.symbol("...."))? {
+                let step = optional!(ctx, next_level)?;
+                return Ok(Expr::Slice {
+                    start: None,
+                    dots: dotdotdotdot,
+                    stop: None,
+                    step_dots: None,
+                    step: step.map(|x| x.boxed()),
+                }
+                .spanned(ctx.span_from(start)));
+            }
             let dots = ctx.symbol("..")?;
             let stop = optional!(ctx, next_level)?;
             let step = optional!(ctx, |ctx: &mut Self| {
@@ -2369,6 +2397,8 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             match tok.token {
                 Token::Symbol(s) if s == "." => dots.push((tok, 1)),
                 Token::Symbol(s) if s == ".." => dots.push((tok, 2)),
+                Token::Ellipsis => dots.push((tok, 3)),
+                Token::Symbol(s) if s == "...." => dots.push((tok, 4)),
                 _ => break,
             }
             self.next_token();

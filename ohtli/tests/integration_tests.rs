@@ -144,6 +144,36 @@ fn test_range_expression() {
 }
 
 #[test]
+fn test_slice_with_step() {
+    assert_compare_formatting("xs[1..5..2]", "xs[1..5..2]");
+}
+
+#[test]
+fn test_slice_no_start() {
+    assert_compare_formatting("xs[..5]", "xs[..5]");
+}
+
+#[test]
+fn test_slice_no_stop() {
+    assert_compare_formatting("xs[1..]", "xs[1..]");
+}
+
+#[test]
+fn test_slice_dotdotdotdot_no_start() {
+    assert_compare_formatting("xs[....2]", "xs[....2]");
+}
+
+#[test]
+fn test_slice_dotdotdotdot_with_start() {
+    assert_compare_formatting("xs[1....2]", "xs[1....2]");
+}
+
+#[test]
+fn test_slice_dotdotdotdot_no_step() {
+    assert_compare_formatting("xs[....]", "xs[....]");
+}
+
+#[test]
 fn test_await_expression() {
     let input = "result = @ async_func()";
     let expected = "result = @async_func()";

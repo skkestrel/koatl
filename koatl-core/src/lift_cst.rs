@@ -82,6 +82,7 @@ impl<'src> STokenExt<'src> for SToken<'src> {
             Token::Str(_, s) => ast::Literal::Str(s.clone().into()),
             Token::Bool(b) => ast::Literal::Bool(*b),
             Token::None => ast::Literal::None,
+            Token::Ellipsis => ast::Literal::Ellipsis,
             _ => panic!("Expected literal token, got {:?}", self.token),
         }
         .spanned(self.span)

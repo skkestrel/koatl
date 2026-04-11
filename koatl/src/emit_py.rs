@@ -3,7 +3,7 @@ use koatl_core::{py::ast::*, util::LineColCache, Span};
 use pyo3::{
     call::PyCallArgs,
     prelude::*,
-    types::{PyBool, PyDict, PyList, PyNone},
+    types::{PyBool, PyDict, PyEllipsis, PyList, PyNone},
 };
 
 #[derive(Debug)]
@@ -616,6 +616,7 @@ impl<'src> PyLiteralExt<'src> for PyLiteral<'src> {
             PyLiteral::Bool(b) => ctx.ast_node("Constant", (b,), span)?,
             PyLiteral::Str(s) => ctx.ast_node("Constant", (s,), span)?,
             PyLiteral::None => ctx.ast_node("Constant", (ctx.py.None(),), span)?,
+            PyLiteral::Ellipsis => ctx.ast_node("Constant", (PyEllipsis::get(ctx.py).as_any().clone().unbind(),), span)?,
         })
     }
 }

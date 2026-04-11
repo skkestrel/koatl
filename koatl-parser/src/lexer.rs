@@ -30,6 +30,7 @@ pub enum Token<'src> {
     Ident(&'src str),
     None,
     Bool(bool),
+    Ellipsis,
 
     Str(&'src str, String),
 
@@ -105,6 +106,7 @@ impl fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Token::None => write!(f, "<none>"),
+            Token::Ellipsis => write!(f, "..."),
             Token::Bool(x) => write!(f, "<literal {x}>"),
             Token::Int(n) => write!(f, "<literal {n}>"),
             Token::IntBin(n) => write!(f, "<literal 0b{n}>"),
@@ -423,14 +425,14 @@ impl<'src> TokenizeCtx<'src> {
 
     fn parse_symbol(&mut self) -> TResult<'src, (Token<'src>, Span)> {
         const POLYGRAMS: &[&str] = &[
-            "+=", "-=", "*=", "/=", "|=", "%=", "@=", "??=", "===", "|>", "->", "=>", "..", "==",
-            "<=", ">=", "!==", "!=", "//", "**", "??", ".=", "::", ">>", "<<",
+            "+=", "-=", "*=", "/=", "|=", "%=", "@=", "??=", "===", "|>", "->", "=>", "....",
+            "...", "..", "==", "<=", ">=", "!==", "!=", "//", "**", "??", ".=", "::", ">>", "<<",
         ];
         const MONOGRAMS: &str = "[](){}<>.,;:!?@$%^&*+-=|\\/`~";
 
         let saved = self.save();
         let start = self.cursor();
-        for _ in 0..3 {
+        for _ in 0..4 {
             self.next();
         }
 
@@ -441,7 +443,12 @@ impl<'src> TokenizeCtx<'src> {
                 for _ in 0..polygram.len() {
                     self.next();
                 }
-                return Ok((Token::Symbol(polygram), self.span_since(&start)));
+                let token = if *polygram == "..." {
+                    Token::Ellipsis
+                } else {
+                    Token::Symbol(polygram)
+                };
+                return Ok((token, self.span_since(&start)));
             }
         }
         for monogram in MONOGRAMS.chars() {

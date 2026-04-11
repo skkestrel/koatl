@@ -344,7 +344,7 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
                     String::new()
                 };
                 format!(
-                    "{}{}->{}{}" ,
+                    "{}{}->{}{}",
                     expr.simple_fmt(),
                     question_str,
                     fn_expr.simple_fmt(),
@@ -860,6 +860,7 @@ impl<'src> SimpleFmt for Token<'src> {
             Token::FstrInner(s, _) => s.to_string(),
             Token::Bool(b) => b.to_string(),
             Token::None => "None".to_string(),
+            Token::Ellipsis => "...".to_string(),
             Token::Symbol(s) => s.to_string(),
             Token::Kw(s) => s.to_string(),
             _ => format!("{:?}", self),

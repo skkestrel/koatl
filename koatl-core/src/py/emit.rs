@@ -422,6 +422,9 @@ impl PyLiteral<'_> {
             PyLiteral::None => {
                 ctx.emit("None");
             }
+            PyLiteral::Ellipsis => {
+                ctx.emit("...");
+            }
         };
 
         Ok(())

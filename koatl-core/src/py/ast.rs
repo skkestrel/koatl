@@ -301,6 +301,7 @@ pub enum PyLiteral<'a> {
     Str(PyToken<'a>),
     Bool(bool),
     None,
+    Ellipsis,
 }
 
 #[derive(Debug, Clone)]

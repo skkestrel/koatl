@@ -1333,6 +1333,7 @@ fn token_to_text(token: &SToken) -> String {
         Token::VerbatimFstrBegin(s) => s.to_string(),
         Token::VerbatimFstrEnd(s) => s.to_string(),
         Token::Indent | Token::Dedent | Token::Eol => panic!(),
+        Token::Ellipsis => "...".to_string(),
     }
 }
 
