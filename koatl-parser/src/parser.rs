@@ -2652,6 +2652,22 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             Ok(Stmt::Pass { pass_kw })
         };
 
+        let assert_stmt = |ctx: &mut Self| {
+            let assert_kw = ctx.keyword("assert")?;
+            let test = ctx.expr()?.boxed();
+            let msg = if let Some(comma) = optional!(ctx, |c: &mut Self| c.symbol(","))? {
+                let msg_expr = ctx.parse(expr)?.boxed();
+                Some((comma, msg_expr))
+            } else {
+                None
+            };
+            Ok(Stmt::Assert {
+                assert_kw,
+                expr: test,
+                msg,
+            })
+        };
+
         let return_stmt = |ctx: &mut Self| {
             let return_kw = ctx.keyword("return")?;
             let expr = optional!(ctx, expr)?;
@@ -2696,6 +2712,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             break_stmt,
             continue_stmt,
             pass_stmt,
+            assert_stmt,
             return_stmt,
             raise_stmt,
             del_stmt

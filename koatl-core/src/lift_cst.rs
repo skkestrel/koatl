@@ -542,6 +542,9 @@ impl<'src, 'tok> Lift<Indirect<ast::SStmt<'src>>> for cst::SStmt<'src, 'tok> {
             cst::Stmt::Break { .. } => ast::Stmt::Break,
             cst::Stmt::Continue { .. } => ast::Stmt::Continue,
             cst::Stmt::Pass { .. } => ast::Stmt::Pass,
+            cst::Stmt::Assert { expr, msg, .. } => {
+                ast::Stmt::Assert(expr.lift(), msg.as_ref().map(|(_, m)| m.lift()))
+            }
             cst::Stmt::Return { expr, .. } => ast::Stmt::Return(expr.as_ref().map(|e| e.lift())),
             cst::Stmt::Raise { expr, .. } => ast::Stmt::Raise(expr.as_ref().map(|e| e.lift())),
             cst::Stmt::Del { targets, .. } => {

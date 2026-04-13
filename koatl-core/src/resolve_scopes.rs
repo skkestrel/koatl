@@ -1842,6 +1842,9 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 
                 Stmt::Import(tree, reexport)
             }
+            Stmt::Assert(expr, msg) => {
+                Stmt::Assert(expr.traverse_guarded(state), msg.map(|m| m.traverse_guarded(state)))
+            }
             Stmt::Break => Stmt::Break,
             Stmt::Continue => Stmt::Continue,
             Stmt::Pass => Stmt::Pass,

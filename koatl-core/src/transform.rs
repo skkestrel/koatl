@@ -2097,6 +2097,15 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                 pre.push(a.while_(a.bool(true), loop_body));
             }
+            Stmt::Assert(expr, msg) => {
+                let test = pre.bind(expr.transform(ctx)?);
+                if let Some(msg) = msg {
+                    let msg = pre.bind(msg.transform(ctx)?);
+                    pre.push(a.assert(test, Some(msg)));
+                } else {
+                    pre.push(a.assert(test, None));
+                }
+            }
             Stmt::Break => pre.push(a.break_()),
             Stmt::Continue => pre.push(a.continue_()),
             Stmt::Pass => pre.push(a.pass()),

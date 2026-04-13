@@ -271,6 +271,9 @@ pub fn stmt_to_elements(stmt: &SStmt) -> Elements {
         Stmt::Pass { pass_kw } => {
             line!(pass_kw)
         }
+        Stmt::Assert { assert_kw, expr, msg } => {
+            line!(assert_kw, expr, msg.as_ref().map(|(comma, msg_expr)| line!(attached_token(comma), msg_expr)).unwrap_or_default())
+        }
         Stmt::Return { return_kw, expr } => {
             line!(return_kw, expr)
         }

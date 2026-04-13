@@ -470,6 +470,13 @@ impl<'src, 'tok> SimpleFmt for SStmtInner<'src, 'tok> {
             Stmt::Break { .. } => "break".to_string(),
             Stmt::Continue { .. } => "continue".to_string(),
             Stmt::Pass { .. } => "pass".to_string(),
+            Stmt::Assert { expr, msg, .. } => {
+                if let Some((_, msg_expr)) = msg {
+                    format!("assert {}, {}", expr.simple_fmt(), msg_expr.simple_fmt())
+                } else {
+                    format!("assert {}", expr.simple_fmt())
+                }
+            }
             Stmt::Return { expr, .. } => {
                 if let Some(expr) = expr {
                     format!("return {}", expr.simple_fmt())

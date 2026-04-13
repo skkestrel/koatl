@@ -110,6 +110,11 @@ pub enum Stmt<TTree: Tree> {
     Pass {
         pass_kw: TTree::Token,
     },
+    Assert {
+        assert_kw: TTree::Token,
+        expr: TTree::Expr,
+        msg: Option<(TTree::Token, TTree::Expr)>,
+    },
     Return {
         return_kw: TTree::Token,
         expr: Option<TTree::Expr>,
