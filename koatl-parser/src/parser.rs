@@ -2647,6 +2647,11 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             Ok(Stmt::Continue { continue_kw })
         };
 
+        let pass_stmt = |ctx: &mut Self| {
+            let pass_kw = ctx.keyword("pass")?;
+            Ok(Stmt::Pass { pass_kw })
+        };
+
         let return_stmt = |ctx: &mut Self| {
             let return_kw = ctx.keyword("return")?;
             let expr = optional!(ctx, expr)?;
@@ -2690,6 +2695,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             for_stmt,
             break_stmt,
             continue_stmt,
+            pass_stmt,
             return_stmt,
             raise_stmt,
             del_stmt

@@ -107,6 +107,9 @@ pub enum Stmt<TTree: Tree> {
     Continue {
         continue_kw: TTree::Token,
     },
+    Pass {
+        pass_kw: TTree::Token,
+    },
     Return {
         return_kw: TTree::Token,
         expr: Option<TTree::Expr>,

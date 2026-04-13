@@ -2099,6 +2099,7 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
             }
             Stmt::Break => pre.push(a.break_()),
             Stmt::Continue => pre.push(a.continue_()),
+            Stmt::Pass => pre.push(a.pass()),
             Stmt::Import(tree, reexport) => {
                 fn traverse_import_tree<'src, 'ast>(
                     ctx: &mut TlCtx<'src, 'ast>,

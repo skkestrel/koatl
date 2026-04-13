@@ -47,6 +47,7 @@ impl<'src, 'ast> SStmtExt<'src, 'ast> for Indirect<SStmt<'src>> {
                 Type::NoReturn
             }
             Stmt::Raise(..) | Stmt::Return(..) | Stmt::Break | Stmt::Continue => Type::Bottom,
+            Stmt::Pass => Type::NoReturn,
 
             Stmt::Import(..) => Type::NoReturn,
             Stmt::Decl(..) => Type::NoReturn,

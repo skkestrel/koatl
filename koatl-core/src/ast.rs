@@ -107,6 +107,7 @@ pub enum Stmt<'a, TTree: Tree> {
 
     Break,
     Continue,
+    Pass,
 }
 
 #[derive(Debug, Clone)]

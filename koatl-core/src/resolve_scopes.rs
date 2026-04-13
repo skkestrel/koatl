@@ -1844,6 +1844,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
             }
             Stmt::Break => Stmt::Break,
             Stmt::Continue => Stmt::Continue,
+            Stmt::Pass => Stmt::Pass,
         };
 
         stmt.spanned(span).indirect()

@@ -268,6 +268,9 @@ pub fn stmt_to_elements(stmt: &SStmt) -> Elements {
         Stmt::Continue { continue_kw } => {
             line!(continue_kw)
         }
+        Stmt::Pass { pass_kw } => {
+            line!(pass_kw)
+        }
         Stmt::Return { return_kw, expr } => {
             line!(return_kw, expr)
         }
