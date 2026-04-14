@@ -206,7 +206,7 @@ for h in di_dp.history:
     if h.value == 106:
         pass_entry = h
         break
-assert_eq(pass_entry !== None, True)
+assert_eq(pass_entry is not None, True)
 assert_eq(len(pass_entry.lineage), 5)
 assert_eq(pass_entry.lineage[0], (3, 0))
 assert_eq(pass_entry.lineage[1], (6, 1))
@@ -356,7 +356,7 @@ try:
 except DebugIteratorError() as e =>
     err_caught = e
 
-assert_eq(err_caught !== None, True)
+assert_eq(err_caught is not None, True)
 assert_eq(err_caught.cause matches ZeroDivisionError(), True)
 # The iterator was exposed so we can inspect post-error state
 assert_eq(err_caught.iterator.consumed_count, 4)
@@ -382,7 +382,7 @@ try:
 except DebugIteratorError() as e =>
     err_hist = e
 
-assert_eq(err_hist !== None, True)
+assert_eq(err_hist is not None, True)
 # History should have last 3 entries (indices 13, 14, 15-error)
 assert_eq(len(err_hist.iterator.history), 3)
 assert_eq(err_hist.iterator.consumed_count, 16)

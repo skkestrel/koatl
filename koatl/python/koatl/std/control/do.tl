@@ -18,7 +18,7 @@ export do = f => wraps(f)! (*args, **kwargs) =>
     except AttributeError() =>
         None
 
-    if bind_gen !== None:
+    if bind_gen is not None:
         # TODO: this is a workaround to avoid recursion.
         # is it possible to derive bind_gen directly from bind_once?
         return bind_gen(gen)
@@ -35,7 +35,7 @@ export do = f => wraps(f)! (*args, **kwargs) =>
     except AttributeError() =>
         None
 
-    if bind_once !== None:
+    if bind_once is not None:
         return bind_once(recurse)
     else:
         raise ValueError("@ can only be used with an object that has `bind_once`.")

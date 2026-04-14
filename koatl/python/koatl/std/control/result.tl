@@ -87,7 +87,7 @@ export Result = class(MonadOnce):
         return self
 
     map_none = (self, f) =>
-        if not self.ok and self.value === None:
+        if not self.ok and self.value is None:
             return Err(f())
         return self
 
@@ -174,7 +174,7 @@ export Err = class(Result):
             return False
         return self.value == other.value
 
-    __repr__ = self => f"Err({if self.value === None then "" else repr(self.value)})"
+    __repr__ = self => f"Err({if self.value is None then "" else repr(self.value)})"
 
     __reduce__ = self =>
         Err, (self.value,)

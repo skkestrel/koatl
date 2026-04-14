@@ -146,12 +146,12 @@ data
 
 `x->f(args)` means `f(x, args)` — inserts `x` as the **first** argument:
 
-| Form | Meaning |
-|------|---------|
-| `x->f(args)` | `f(x, args)` |
-| `x->f.g(args)` | `f.g(x, args)` |
-| `x->(expr)(args)` | `expr(x, args)` |
-| `x->f` *(no parens)* | `partial(f, x)` |
+| Form                 | Meaning         |
+| -------------------- | --------------- |
+| `x->f(args)`         | `f(x, args)`    |
+| `x->f.g(args)`       | `f.g(x, args)`  |
+| `x->(expr)(args)`    | `expr(x, args)` |
+| `x->f` _(no parens)_ | `partial(f, x)` |
 
 ```koatl
 data->process(opts)          # process(data, opts)
@@ -198,6 +198,7 @@ Patterns are used in `match`, `if let`, `for`, function arguments, and `except`.
 ### Pattern Types
 
 **Literal** — match specific values:
+
 ```koatl
 match x:
     1 => "one"
@@ -206,6 +207,7 @@ match x:
 ```
 
 **Capture** — bind to a variable; `_` discards:
+
 ```koatl
 match x:
     [head, *tail] => (head, tail)
@@ -214,6 +216,7 @@ match x:
 ```
 
 **Value** — match against an existing variable (`.` prefix):
+
 ```koatl
 y = 42
 match x:
@@ -223,6 +226,7 @@ match x:
 ```
 
 **Sequence** — lists and tuples:
+
 ```koatl
 match x:
     [] => "empty"
@@ -233,6 +237,7 @@ match x:
 ```
 
 **Mapping** — records and dicts:
+
 ```koatl
 match x:
     {a: v} => v              # extract key a
@@ -241,6 +246,7 @@ match x:
 ```
 
 **Class** — constructor patterns:
+
 ```koatl
 match x:
     Point(x, y) => ...
@@ -248,6 +254,7 @@ match x:
 ```
 
 **Or** — alternatives with `|`:
+
 ```koatl
 match x:
     1 | 2 | 3 => "small"
@@ -255,12 +262,14 @@ match x:
 ```
 
 **As** — bind after matching:
+
 ```koatl
 match x:
     [a, *rest] as whole => (a, whole)
 ```
 
 **Guards**:
+
 ```koatl
 match x:
     [a, b] if a > b => "a larger"
@@ -474,7 +483,7 @@ obj.?attr               # None if attr doesn't exist on obj
 config.?debug ?? False  # use debug if present, else False
 ```
 
-**Key distinction**: `obj?.attr` checks whether *obj* is None/Err; `obj.?attr` checks whether *attr* exists.
+**Key distinction**: `obj?.attr` checks whether _obj_ is None/Err; `obj.?attr` checks whether _attr_ exists.
 
 ---
 
@@ -878,61 +887,61 @@ function_call(
 
 ### Precedence (highest to lowest for binary operators)
 
-| Level | Operators | Associativity |
-|-------|-----------|---------------|
-| 0 | `**` | Right |
-| 1 | `*`, `/`, `//`, `%`, `@` | Left |
-| 2 | `+`, `-` | Left |
-| 3 | `<<`, `>>` | Left |
-| 4 | `&` | Left |
-| 5 | `^` | Left |
-| 6 | `\|` | Left |
-| 7 | `<`, `>`, `<=`, `>=`, `==`, `!=`, `===`, `!==`, `in`, `not in` | Left |
-| 8 | `and` | Left |
-| 9 | `or` | Left |
-| 10 | `??` | Left |
-| 11 | `\|>` | Left (lowest) |
+| Level | Operators                                                        | Associativity |
+| ----- | ---------------------------------------------------------------- | ------------- |
+| 0     | `**`                                                             | Right         |
+| 1     | `*`, `/`, `//`, `%`, `@`                                         | Left          |
+| 2     | `+`, `-`                                                         | Left          |
+| 3     | `<<`, `>>`                                                       | Left          |
+| 4     | `&`                                                              | Left          |
+| 5     | `^`                                                              | Left          |
+| 6     | `\|`                                                             | Left          |
+| 7     | `<`, `>`, `<=`, `>=`, `==`, `!=`, `is`, `is not`, `in`, `not in` | Left          |
+| 8     | `and`                                                            | Left          |
+| 9     | `or`                                                             | Left          |
+| 10    | `??`                                                             | Left          |
+| 11    | `\|>`                                                            | Left (lowest) |
 
 **Above binary precedence** (processed in order): `matches` / `not matches`, `memo`, `with`, `match:`, `try:...except:`, `await` / `yield`, `check`
 
 ### Postfix Operators
 
-| Operator | Meaning | Example |
-|----------|---------|---------|
-| `()` | Function call | `f(a, b)` |
-| `?()` | Safe call (short-circuits on None/Err) | `x?(a, b)` |
-| `[]` | Subscript | `x[0]`, `x[1..3]` |
-| `?[]` | Safe subscript | `x?[0]` |
-| `.attr` | Attribute access | `x.prop` |
-| `?.attr` | Safe attribute (short-circuits on None/Err) | `x?.prop` |
-| `.?attr` | Maybe attribute (returns `None` on AttributeError) | `x.?prop` |
-| `::attr` | Raw attribute (bypasses `vget`) | `x::__dict__` |
-| `?::attr` | Safe raw attribute | `x?::__dict__` |
-| `.()` | Scoped call; use for inline lambdas | `x.(v => v * 2)` |
-| `?.()` | Safe scoped call | `x?.(v => v * 2)` |
-| `->f(args)` | Method pipe (inserts as first arg) | `x->f(a, b)` = `f(x, a, b)` |
-| `?->f(args)` | Optional method pipe | `x?->f(a)` |
-| `!` | Decorator / one-argument call | `decorator! value` |
+| Operator     | Meaning                                            | Example                     |
+| ------------ | -------------------------------------------------- | --------------------------- |
+| `()`         | Function call                                      | `f(a, b)`                   |
+| `?()`        | Safe call (short-circuits on None/Err)             | `x?(a, b)`                  |
+| `[]`         | Subscript                                          | `x[0]`, `x[1..3]`           |
+| `?[]`        | Safe subscript                                     | `x?[0]`                     |
+| `.attr`      | Attribute access                                   | `x.prop`                    |
+| `?.attr`     | Safe attribute (short-circuits on None/Err)        | `x?.prop`                   |
+| `.?attr`     | Maybe attribute (returns `None` on AttributeError) | `x.?prop`                   |
+| `::attr`     | Raw attribute (bypasses `vget`)                    | `x::__dict__`               |
+| `?::attr`    | Safe raw attribute                                 | `x?::__dict__`              |
+| `.()`        | Scoped call; use for inline lambdas                | `x.(v => v * 2)`            |
+| `?.()`       | Safe scoped call                                   | `x?.(v => v * 2)`           |
+| `->f(args)`  | Method pipe (inserts as first arg)                 | `x->f(a, b)` = `f(x, a, b)` |
+| `?->f(args)` | Optional method pipe                               | `x?->f(a)`                  |
+| `!`          | Decorator / one-argument call                      | `decorator! value`          |
 
 ### Unary Prefix Operators
 
-| Operator | Meaning |
-|----------|---------|
-| `+` | Unary plus |
-| `-` | Unary minus |
-| `~` | Bitwise NOT |
-| `@` | Monadic bind |
-| `not` | Logical negation |
+| Operator | Meaning          |
+| -------- | ---------------- |
+| `+`      | Unary plus       |
+| `-`      | Unary minus      |
+| `~`      | Bitwise NOT      |
+| `@`      | Monadic bind     |
+| `not`    | Logical negation |
 
 ### Comparison Operators
 
-| Koatl | Python | Meaning |
-|-------|--------|---------|
-| `==` | `==` | Equality |
-| `!=` | `!=` | Inequality |
-| `===` | `is` | Identity |
-| `!==` | `is not` | Non-identity |
-| `in` | `in` | Membership |
+| Koatl    | Python   | Meaning        |
+| -------- | -------- | -------------- |
+| `==`     | `==`     | Equality       |
+| `!=`     | `!=`     | Inequality     |
+| `is`     | `is`     | Identity       |
+| `is not` | `is not` | Non-identity   |
+| `in`     | `in`     | Membership     |
 | `not in` | `not in` | Non-membership |
 
 ### Assignment Operators

@@ -31,6 +31,10 @@ class Record:
         fn._property = True
         return fn
 
+    @__builtins__["property"]
+    def dict(self):
+        return self.__dict__
+
     def __getattribute__(self, name):
         dict = object.__getattribute__(self, "__dict__")
 

@@ -79,7 +79,7 @@ export Memo = class(MonadOnce):
         Memo.value(id, deps, () => f(*args, **kwargs))
 
     run = (self, ctx=None) =>
-        if ctx === None:
+        if ctx is None:
             ctx = Memo.Cache()
         self.f(ctx)
 
@@ -152,7 +152,7 @@ export AsyncMemo = class(MonadOnce):
         AsyncMemo.value(id, deps, () => f(*args, **kwargs))
 
     run = (self, ctx=None) =>
-        if ctx === None:
+        if ctx is None:
             ctx = Memo.Cache()
         self.f(ctx).run()
 

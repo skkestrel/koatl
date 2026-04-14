@@ -158,7 +158,7 @@ create_conversation_manager = bots => {
                 let available = self.bots.keys().iter.list()
                 f"Available bots: {", ".join(available)}. Which would you like?"
 
-            _ if self.active_bot === None =>
+            _ if self.active_bot is None =>
                 # Default to weather bot
                 self.active_bot = self.bots.weather
 

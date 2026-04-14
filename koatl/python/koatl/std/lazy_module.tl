@@ -9,7 +9,7 @@ export LazyModule = class:
 
     __getattr__ = (self, attr) =>
         try:
-            if self._module === None:
+            if self._module is None:
                 self.__dict__["_module"] = importlib.import_module(self._name)
 
             if hasattr(self._module, "__path__"):
@@ -20,7 +20,7 @@ export LazyModule = class:
                         else:
                             None
 
-                if self._submodules[attr] !== None:
+                if self._submodules[attr] is not None:
                     return self._submodules[attr]
 
             if hasattr(self._module, attr):
@@ -31,7 +31,7 @@ export LazyModule = class:
         raise AttributeError(f"Module '{self._name}' has no attribute '{attr}'")
 
     __setattr__ = (self, attr, value) =>
-        if self._module === None:
+        if self._module is None:
             self.__dict__["_module"] = importlib.import_module(self._name)
 
         setattr(self._module, attr, value)

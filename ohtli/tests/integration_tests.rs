@@ -890,8 +890,8 @@ fn test_neq_operator() {
 
 #[test]
 fn test_not_identity_operator() {
-    let input = "x = a !== b";
-    let expected = "x = a !== b";
+    let input = "x = a is not b";
+    let expected = "x = a is not b";
     assert_compare_formatting(input, expected);
 }
 

@@ -221,10 +221,6 @@ for i in ..10:
     print(i)
 ```
 
-## Primitive operators
-
-Use `===` or `!==` instead of `is` and `is not`.
-
 ## Decorators
 
 The `!` operator calls a one-argument function, serving as a compact decorator syntax:

@@ -13,7 +13,7 @@ export Iterable = class(Traversable, Trait):
         DebugIterator(self.iter, **kwargs)
 
     traverse = (self, f=None) =>
-        if f === None:
+        if f is None:
             f = x => x
 
         let it = self.iter
@@ -133,7 +133,7 @@ export Iterator = class(Trait):
     filter_map = (self, f=None) =>
         let it = self
         let impl = () =>
-            if f === None:
+            if f is None:
                 for i in it:
                     if let Ok(value) = Result(i):
                         yield value
@@ -148,7 +148,7 @@ export Iterator = class(Trait):
         impl()
 
     flat_map = (self, f=None) =>
-        if f === None:
+        if f is None:
             itertools.chain.from_iterable(self)
         else:
             itertools.chain.from_iterable(builtins.map(f, self))
@@ -160,7 +160,7 @@ export Iterator = class(Trait):
 
     tally = (self, f=None) =>
         let acc = 0
-        if f === None:
+        if f is None:
             for _ in self:
                 acc += 1
         else:
@@ -185,7 +185,7 @@ export Iterator = class(Trait):
     group_by = (self, f=None) =>
         let acc = dict()
         for i in self:
-            let key = if f === None then i else f(i)
+            let key = if f is None then i else f(i)
             if not acc.__contains__(key):
                 acc[key] = []
             acc[key].append(i)
@@ -194,7 +194,7 @@ export Iterator = class(Trait):
     count_by = (self, f=None) =>
         let acc = dict()
         for i in self:
-            let key = if f === None then i else f(i)
+            let key = if f is None then i else f(i)
             if not acc.__contains__(key):
                 acc[key] = 0
             acc[key] += 1
@@ -275,14 +275,14 @@ export Iterator = class(Trait):
         let v, m
         try:
             v = next(self)
-            if key === None:
+            if key is None:
                 m = v
             else:
                 m = key(v)
         except StopIteration(value=value) =>
             raise ValueError("max of empty iterable")
 
-        if key === None:
+        if key is None:
             for i in self:
                 if i > m:
                     v = i
@@ -300,14 +300,14 @@ export Iterator = class(Trait):
         let v, m
         try:
             v = next(self)
-            if key === None:
+            if key is None:
                 m = v
             else:
                 m = key(v)
         except StopIteration(value=value) =>
             raise ValueError("min of empty iterable")
 
-        if key === None:
+        if key is None:
             for i in self:
                 if i < m:
                     v = i

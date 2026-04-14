@@ -94,27 +94,27 @@ _DebugGrid = class:
             for entry in dbv.lineage:
                 let val = entry[0]
                 let si = entry[1]
-                if si === None:
+                if si is None:
                     continue
                 if len(entry) > 2 and entry[2]:
                     row[si] = _Cell(_ERROR, _truncate_repr(val, max_width))
-                    if was_skipped_at === None:
+                    if was_skipped_at is None:
                         was_skipped_at = si
                 else:
                     row[si] = _Cell(_VALUE, _truncate_repr(val, max_width))
-                if first_known === None:
+                if first_known is None:
                     first_known = si
                 last_known = si
 
             # Determine skip/unreached markers
-            if dbv.is_skipped and was_skipped_at === None:
+            if dbv.is_skipped and was_skipped_at is None:
                 was_skipped_at = last_known
 
             # Fill missing cells
             let skip_point_marked = False
             for i in ..n:
                 if i not in row:
-                    if first_known !== None and i < first_known:
+                    if first_known is not None and i < first_known:
                         row[i] = _Cell(_UNKNOWN)
                     elif dbv.is_skipped and i == was_skipped_at and not skip_point_marked:
                         row[i] = _Cell(_SKIP)
@@ -128,7 +128,7 @@ _DebugGrid = class:
                         row[i] = _Cell(_EMPTY)
 
             # Override skip markers
-            if dbv.is_skipped and was_skipped_at !== None and was_skipped_at >= 0:
+            if dbv.is_skipped and was_skipped_at is not None and was_skipped_at >= 0:
                 if not row[was_skipped_at].is_protected:
                     row[was_skipped_at] = _Cell(_SKIP)
                 for i in ..n:
@@ -138,7 +138,7 @@ _DebugGrid = class:
 
             # Build index label
             let idx_label
-            if dbv.index_path !== None:
+            if dbv.index_path is not None:
                 idx_label = ".".join(list(dbv.index_path.iter.map(str)))
             else:
                 idx_label = str(self._consumed_count - len(self._history) + len(rows))
@@ -155,7 +155,7 @@ _DebugGrid = class:
         for ri in ..len(rows):
             let entry = rows[ri]
             let dbv = entry[2]
-            if dbv.index_path === None or len(dbv.index_path) < 2:
+            if dbv.index_path is None or len(dbv.index_path) < 2:
                 continue
             let path = dbv.index_path
             for level in ..len(sorted_fm):
@@ -201,8 +201,8 @@ _DebugGrid = class:
 
     _sep = (self, left_col, right_col) =>
         """Separator character between two columns (solid or dashed for taps)."""
-        let left_is_tap = left_col !== None and left_col in self._tap_stages
-        let right_is_tap = right_col !== None and right_col in self._tap_stages
+        let left_is_tap = left_col is not None and left_col in self._tap_stages
+        let right_is_tap = right_col is not None and right_col in self._tap_stages
         if left_is_tap or right_is_tap:
             return "┊"
         "│"
@@ -239,7 +239,7 @@ _DebugGrid = class:
         let n = self._n
         let total = self._consumed_count
         let shown = len(self._history)
-        let is_truncated = total > shown and self._history_limit !== None
+        let is_truncated = total > shown and self._history_limit is not None
 
         # Header summary
         let header_text
@@ -444,7 +444,7 @@ export DebugIterator = class:
             raise e
         except BaseException() as e =>
             if not self._checked:
-                if self._error_cell[0] !== None:
+                if self._error_cell[0] is not None:
                     self._record(self._error_cell[0])
                 let grid = self.format_grid()
                 let err = DebugIteratorError(f"{type(e).__name__}: {e}\n\n{grid}", self, e)
@@ -455,7 +455,7 @@ export DebugIterator = class:
     _record = (self, dbv) =>
         self._consumed_count = self._consumed_count + 1
         self._history.append(dbv)
-        if self._history_limit !== None and len(self._history) > self._history_limit:
+        if self._history_limit is not None and len(self._history) > self._history_limit:
             self._history.pop(0)
 
     # --- Internal helpers ---
@@ -477,7 +477,7 @@ export DebugIterator = class:
         except BaseException() as e =>
             if self._checked:
                 return Err(e)
-            if dbv !== None and stage_idx !== None:
+            if dbv is not None and stage_idx is not None:
                 self._error_cell[0] = dbv.add_lineage_step(e, stage_idx, is_error=True).skip()
             raise e
 
@@ -522,7 +522,7 @@ export DebugIterator = class:
 
     filter_map = (self, f=None) =>
         let body = (dbv, si) =>
-            if f === None:
+            if f is None:
                 let r = Result(dbv.value)
                 if let Ok(val) = r:
                     yield dbv.add_lineage_step(val, si).with_value(val)
@@ -551,7 +551,7 @@ export DebugIterator = class:
                     continue
                 let child_idx = 0
                 let items = None
-                if f === None:
+                if f is None:
                     items = dbv.value
                 else:
                     let result = self._apply_fn(f, dbv.value, "flat_map", dbv, stage_idx)
@@ -788,7 +788,7 @@ export DebugIterator = class:
         except StopIteration() =>
             pass
         except BaseException() =>
-            if self._error_cell[0] !== None:
+            if self._error_cell[0] is not None:
                 self._record(self._error_cell[0])
         print(self.format_grid(max_width))
 
@@ -801,7 +801,7 @@ export DebugIterator = class:
     # --- Repr ---
 
     __repr__ = self =>
-        if self._consumed_count > len(self._history) and self._history_limit !== None:
+        if self._consumed_count > len(self._history) and self._history_limit is not None:
             f"DebugIterator(showing last {len(self._history)} of {self._consumed_count} consumed, {len(self._stages)} stages)"
         else:
             f"DebugIterator({self._consumed_count} consumed, {len(self._stages)} stages)"
