@@ -1,6 +1,6 @@
 # Koatl Language Reference
 
-**Koatl** is a functional-first language that transpiles to Python. It brings expressive functional idioms to Python while maintaining full interoperability: same runtime, same `pip install`, same deployment. For a compact cheat sheet see [CONTEXT_LANGUAGE_SHORT.md](CONTEXT_LANGUAGE_SHORT.md).
+**Koatl** is a functional-first language that transpiles to Python. It brings expressive functional idioms to Python while maintaining full interoperability: same runtime, same `pip install`, same deployment. For a compact cheat sheet see [language-quickref.md](language-quickref.md).
 
 ---
 

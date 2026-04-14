@@ -601,12 +601,13 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::InducedBlock<cst::STr
             cst::InducedBlock::Block { body, .. } => body.lift(),
             cst::InducedBlock::Inline { stmts, .. } => {
                 if stmts.len() == 1 {
-                    stmts[0].lift()
+                    if let cst::Stmt::Expr { expr } = &stmts[0].value {
+                        expr.lift()
+                    } else {
+                        stmts[0].lift()
+                    }
                 } else {
-                    let lifted = stmts
-                        .iter()
-                        .map(|s| s.lift())
-                        .collect();
+                    let lifted = stmts.iter().map(|s| s.lift()).collect();
                     let span = Span::new(
                         stmts.first().unwrap().span.start..stmts.last().unwrap().span.end,
                     );

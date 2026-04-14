@@ -1,6 +1,6 @@
 # Koatl Quick Reference
 
-Koatl is a functional-first language that transpiles to Python. For full details, see [CONTEXT_LANGUAGE.md](CONTEXT_LANGUAGE.md).
+Koatl is a functional-first language that transpiles to Python. For full details, see [language-reference.md](language-reference.md).
 
 ---
 

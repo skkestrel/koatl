@@ -39,3 +39,7 @@ assert_eq(f(3), [3, 2, 3])
 # placeholder guard regression
 
 assert_eq({}.($.__or__({1: 2}).__or__({3: 4})), {1: 2, 3: 4})
+
+# placeholder inside ternary
+
+assert_eq(list(map(if $ > 1 then $ * 10 else 0, [1, 2, 3])), [0, 20, 30])
