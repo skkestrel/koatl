@@ -58,7 +58,7 @@ global g = 5    # Global scope
 
 ```koatl
 # |> passes left side as last (or sole) argument
-data |> transform |> save_to(db, $, format="json")
+data |> transform |> save_to(db, ?, format="json")
 
 # -> passes left side as first argument
 x->f(a, b)          # f(x, a, b)
@@ -74,7 +74,11 @@ results.(x => x.value * scale)
 
 # $ — anonymous function from surrounding expression
 list.map($ * 2)     # list.map(x => x * 2)
-f(a, $, c)          # x => f(a, x, c)
+f(a, $, c)          # f(a, x => x, c)
+
+# ? — partial application hole (bare arg only)
+save_to(db, ?, format="json")   # x => save_to(db, x, format="json")
+insert(?, "val", ?)             # (a, b) => insert(a, "val", b)
 ```
 
 ---

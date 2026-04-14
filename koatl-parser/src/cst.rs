@@ -565,6 +565,10 @@ pub enum Expr<TTree: Tree> {
         token: TTree::Token,
     },
 
+    Hole {
+        q: TTree::Token,
+    },
+
     Parenthesized {
         lparen: TTree::Token,
         expr: TTree::Expr,

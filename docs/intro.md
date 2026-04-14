@@ -63,7 +63,7 @@ if True:
 print(x)  # 1
 
 # Pipes replace nested calls
-data |> do_something |> transform |> save_to(db, $, format="json")
+data |> do_something |> transform |> save_to(db, ?, format="json")
 ```
 
 > Koatl is under active development. Features might change.
@@ -116,7 +116,7 @@ The `|>` operator pipes a value into the next function and `$` creates a lambda 
 data
     |> do_something
     |> transform
-    |> save_to(db, $, format="json")
+    |> save_to(db, ?, format="json")
 ```
 
 <details>

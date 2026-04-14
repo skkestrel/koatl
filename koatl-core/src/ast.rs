@@ -236,6 +236,7 @@ pub enum Expr<'a, TTree: Tree> {
     Fstr(Spanned<String>, Vec<(FmtExpr<TTree>, Spanned<String>)>),
 
     Placeholder,
+    Hole,
 }
 
 // Patterns

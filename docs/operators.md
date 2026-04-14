@@ -16,8 +16,8 @@ let f = (a, b, *args, **kwargs) =>
 The placeholder `$` constructs a lambda from any expression, making interfacing with external code straightforward:
 
 ```koatl
-f(a, $, c)
-# x => f(a, x, c)
+f(a, $ * 2, c)
+# f(a, x => x * 2, c)
 
 ($ + 2 * y / 4)
 # x => x + 2 * y / 4
@@ -25,9 +25,25 @@ f(a, $, c)
 
 Rules:
 
-1. A bare `$` as an argument to a function call, i.e. `fn(a, $, b)`, creates `x => fn(a, x, b)`.
-2. Any other `$` turns its containing expression into a function, up to the nearest function call, i.e., `fn(a, $.value*3+2, b)` becomes `x => fn(a, x.value*3+2)`.
-3. When in doubt, use an arrow function.
+`$` turns any expression into a lambda, scoped to the nearest enclosing call. A bare `$` becomes the identity function `x => x`.
+
+## Holes (partial application)
+
+A bare `?` as a call argument creates a lambda with one parameter per hole:
+
+```koatl
+save_to(db, ?, format="json")        # x => save_to(db, x, format="json")
+insert(?, "value", ?)                # (a, b) => insert(a, "value", b)
+```
+
+This is useful in pipes when you need to inject the piped value into a non-last position:
+
+```koatl
+data |> save_to(db, ?, format="json")
+# save_to(db, data, format="json")
+```
+
+`?` is only allowed as a bare positional argument — `f(?*2)` is a syntax error. Use `$` for expressions: `f($*2)`.
 
 ## Piping
 
@@ -37,7 +53,14 @@ Rules:
 data
     |> do_some_thing
     |> do_some_other_thing
-    |> pass_into_second_arg(a, $, option="yes")
+    |> save_to(db)
+```
+
+To pipe into a non-last position, use `?` holes or `->`:
+
+```koatl
+data |> save_to(db, ?, format="json")    # save_to(db, data, format="json")
+data->insert_into(table, option="yes")   # insert_into(data, table, option="yes")
 ```
 
 ## Method pipe

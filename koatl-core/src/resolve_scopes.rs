@@ -860,6 +860,68 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
     }
 }
 
+/// Returns true if any call item contains an `Expr::Hole` in its value position.
+fn items_have_holes(items: &[SCallItem<'_>]) -> bool {
+    items.iter().any(|item| match item {
+        CallItem::Arg(e) | CallItem::ArgSpread(e) | CallItem::KwargSpread(e) => {
+            matches!(e.value, Expr::Hole)
+        }
+        CallItem::Kwarg(_, e) => matches!(e.value, Expr::Hole),
+    })
+}
+
+/// Desugar holes in call items into a lambda.
+/// `f(a, ?, b)` → `_h0 => f(a, _h0, b)`
+/// `f(*?, a=?)` → `(_h0, _h1) => f(*_h0, a=_h1)`
+/// Returns `Ok((callee, items))` if no holes; `Err(fn_expr)` if desugared.
+fn desugar_holes<'src>(
+    span: Span,
+    callee: Indirect<SExpr<'src>>,
+    items: Vec<SCallItem<'src>>,
+) -> Result<(Indirect<SExpr<'src>>, Vec<SCallItem<'src>>), Indirect<SExpr<'src>>> {
+    if !items_have_holes(&items) {
+        return Ok((callee, items));
+    }
+
+    let mut hole_params: Vec<SArgDefItem<'src>> = vec![];
+    let mut new_items: Vec<SCallItem<'src>> = vec![];
+    let mut hole_idx: usize = 0;
+
+    let mut make_hole_param = |hole_span: Span| -> Indirect<SExpr<'src>> {
+        let name: Ident<'src> = Ident(format!("_h{}", hole_idx).into());
+        hole_idx += 1;
+        let name_spanned = name.spanned(hole_span);
+        let pattern = SPatternInner::Capture(Some(name_spanned.clone()))
+            .spanned(hole_span)
+            .indirect();
+        hole_params.push(ArgDefItem::Arg(pattern, None));
+        Expr::Ident(name_spanned).spanned(hole_span).indirect()
+    };
+
+    for item in items {
+        let new_item = match item {
+            CallItem::Arg(e) if matches!(e.value, Expr::Hole) => {
+                CallItem::Arg(make_hole_param(e.span))
+            }
+            CallItem::Kwarg(name, e) if matches!(e.value, Expr::Hole) => {
+                CallItem::Kwarg(name, make_hole_param(e.span))
+            }
+            CallItem::ArgSpread(e) if matches!(e.value, Expr::Hole) => {
+                CallItem::ArgSpread(make_hole_param(e.span))
+            }
+            CallItem::KwargSpread(e) if matches!(e.value, Expr::Hole) => {
+                CallItem::KwargSpread(make_hole_param(e.span))
+            }
+            other => other,
+        };
+        new_items.push(new_item);
+    }
+
+    let inner_call = Expr::Call(callee, new_items).spanned(span).indirect();
+    let fn_expr = Expr::Fn(hole_params, inner_call).spanned(span).indirect();
+    Err(fn_expr)
+}
+
 fn traverse_list_items<'src>(
     state: &mut ResolveState<'src>,
     items: Vec<SListItem<'src>>,
@@ -882,12 +944,28 @@ fn traverse_call_items<'src>(
     items
         .into_iter()
         .map(|item| match item {
-            CallItem::Arg(i) => CallItem::Arg(i.traverse_deep_guarded(state)),
+            CallItem::Arg(i) => CallItem::Arg(i.traverse_guarded(state)),
             CallItem::Kwarg(name, i) => {
-                CallItem::Kwarg(name.clone(), i.traverse_deep_guarded(state))
+                CallItem::Kwarg(name.clone(), i.traverse_guarded(state))
             }
-            CallItem::ArgSpread(i) => CallItem::ArgSpread(i.traverse_deep_guarded(state)),
-            CallItem::KwargSpread(i) => CallItem::KwargSpread(i.traverse_deep_guarded(state)),
+            CallItem::ArgSpread(i) => {
+                if matches!(i.value, Expr::Placeholder) {
+                    state.errors.extend(simple_err(
+                        "Placeholder `$` cannot be used as a spread argument (`*$`). Use an explicit lambda instead.",
+                        i.span,
+                    ));
+                }
+                CallItem::ArgSpread(i.traverse_guarded(state))
+            }
+            CallItem::KwargSpread(i) => {
+                if matches!(i.value, Expr::Placeholder) {
+                    state.errors.extend(simple_err(
+                        "Placeholder `$` cannot be used as a keyword spread argument (`**$`). Use an explicit lambda instead.",
+                        i.span,
+                    ));
+                }
+                CallItem::KwargSpread(i.traverse_guarded(state))
+            }
         })
         .collect::<Vec<_>>()
 }
@@ -956,7 +1034,6 @@ trait SExprExt<'src> {
     fn traverse(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>>;
     fn traverse_expecting_scope(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>>;
     fn traverse_guarded(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>>;
-    fn traverse_deep_guarded(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>>;
     fn traverse_full(
         self,
         state: &mut ResolveState<'src>,
@@ -965,13 +1042,6 @@ trait SExprExt<'src> {
 }
 
 impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
-    fn traverse_deep_guarded(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>> {
-        match self.value {
-            Expr::Placeholder => traverse_placeholder(state, self.span),
-            _ => self.traverse_guarded(state),
-        }
-    }
-
     fn traverse_guarded(self, state: &mut ResolveState<'src>) -> Indirect<SExpr<'src>> {
         state.placeholder_guarded(self.span, |state| self.traverse(state))
     }
@@ -1100,6 +1170,15 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
                 Expr::Matches(x.traverse(state), pattern)
             }
             Expr::Placeholder => return traverse_placeholder(state, span),
+            Expr::Hole => {
+                state.errors.extend(simple_err(
+                    "`?` is only valid inside a function call argument",
+                    span,
+                ));
+                return Expr::Literal(Literal::None.spanned(span))
+                    .spanned(span)
+                    .indirect();
+            }
             Expr::Block(stmts) => {
                 let new_stmts = if expect_scope {
                     let mut new_stmts = Vec::new();
@@ -1516,9 +1595,10 @@ impl<'src> SExprExt<'src> for Indirect<SExpr<'src>> {
 
                 return traversed;
             }
-            Expr::Call(a, items) => {
-                Expr::Call(a.traverse(state), traverse_call_items(state, items))
-            }
+            Expr::Call(a, items) => match desugar_holes(span, a, items) {
+                Err(desugared) => return desugared.traverse_full(state, expect_scope),
+                Ok((a, items)) => Expr::Call(a.traverse(state), traverse_call_items(state, items)),
+            },
             Expr::MappedCall(a, call_items) => {
                 let (rhs, fn_ctx) = with_phantom_fninfo(state, span, |state| {
                     traverse_call_items(state, call_items)
@@ -1842,9 +1922,10 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 
                 Stmt::Import(tree, reexport)
             }
-            Stmt::Assert(expr, msg) => {
-                Stmt::Assert(expr.traverse_guarded(state), msg.map(|m| m.traverse_guarded(state)))
-            }
+            Stmt::Assert(expr, msg) => Stmt::Assert(
+                expr.traverse_guarded(state),
+                msg.map(|m| m.traverse_guarded(state)),
+            ),
             Stmt::Break => Stmt::Break,
             Stmt::Continue => Stmt::Continue,
             Stmt::Pass => Stmt::Pass,

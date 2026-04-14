@@ -16,6 +16,7 @@ impl<'src, 'tok> SimpleFmt for SExprInner<'src, 'tok> {
             Expr::Literal { token } => token.simple_fmt(),
             Expr::Ident { token } => token.simple_fmt(),
             Expr::Placeholder { token } => token.simple_fmt(),
+            Expr::Hole { .. } => "?".to_string(),
             Expr::Binary {
                 lhs,
                 not,

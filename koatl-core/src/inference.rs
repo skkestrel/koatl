@@ -291,6 +291,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for Indirect<SExpr<'src>> {
             }
             Expr::Literal(..) | Expr::Ident(..) => Type::Any,
             Expr::Placeholder => panic!("Placeholder expression should not be traversed"),
+            Expr::Hole => panic!("Hole expression should not be traversed"),
         };
 
         ctx.types.insert(self.as_ref().into(), typ.clone());

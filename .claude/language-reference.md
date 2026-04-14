@@ -129,7 +129,7 @@ outer = () =>
 
 ---
 
-## Pipes & Placeholders
+## Pipes & Placeholders & Holes
 
 ### `|>` Pipe
 
@@ -139,7 +139,7 @@ outer = () =>
 data
     |> do_something
     |> transform
-    |> save_to(db, $, format="json")   # $ as placeholder for position
+    |> save_to(db, ?, format="json")
 ```
 
 ### `->` Method Pipe
@@ -178,14 +178,34 @@ results.(x => x.value * scale)
 
 ### `$` Placeholder
 
-`$` constructs a lambda from its surrounding expression, up to the nearest function call. A bare `$` as an argument creates `x => f(..., x, ...)`:
+`$` constructs a lambda from its surrounding expression, up to the nearest function call. A bare `$` in an argument position passes the identity function `x => x`.
 
 ```koatl
-f(a, $, c)              # x => f(a, x, c)
+f(a, $ * 2, c)          # f(a, x => x * 2, c)
+f(a, $, c)              # f(a, x => x, c)     — bare $ = identity
 list.map($ * 2)         # list.map(x => x * 2)
 list.filter($ > 5)      # list.filter(x => x > 5)
 ($.name.upper())        # x => x.name.upper()
 ```
+
+`$` propagates out through list/tuple literals but not call arguments:
+
+```koatl
+[$, 2, 3]       # x => [x, 2, 3]
+```
+
+### `?` Hole (partial application)
+
+A bare `?` as a call argument creates a lambda with one positional parameter per hole:
+
+```koatl
+save_to(db, ?, format="json")   # x => save_to(db, x, format="json")
+insert(?, "val", ?)             # (a, b) => insert(a, "val", b)
+
+data |> save_to(db, ?, format="json")   # pipes data into second arg
+```
+
+`?` is only allowed bare — `f(?*2)` is a syntax error. Use `$` for expressions.
 
 When in doubt, use an explicit arrow function.
 

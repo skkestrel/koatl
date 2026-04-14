@@ -2329,6 +2329,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                 a.load_ident(var_name)
             }
             Expr::Placeholder => return Err(simple_err("Internal: <placeholder>", span)),
+            Expr::Hole => return Err(simple_err("Internal: <hole>", span)),
             Expr::Fn(arglist, body) => pre.bind(make_fn_exp(
                 ctx,
                 FnDef::TlFnDef(self, arglist, body),

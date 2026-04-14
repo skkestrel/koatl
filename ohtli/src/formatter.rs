@@ -763,6 +763,7 @@ impl ToElements for SExpr<'_, '_> {
                 line!(async_kw, memo_kw, body)
             }
             Expr::Placeholder { token } => line!(token),
+            Expr::Hole { q } => line!(q),
             Expr::Parenthesized {
                 lparen,
                 expr,

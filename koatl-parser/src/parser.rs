@@ -702,6 +702,11 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             Ok(Expr::Placeholder { token }.spanned(ctx.span_from(start)))
         };
 
+        let hole_expr = |ctx: &mut Self| {
+            let q = ctx.symbol("?")?;
+            Ok(Expr::Hole { q }.spanned(ctx.span_from(start)))
+        };
+
         let list = |ctx: &mut Self| {
             let listing = ctx.listing("[", "]", Token::Symbol(","), |ctx| {
                 let star = optional!(ctx, |ctx: &mut Self| ctx.symbol("*"))?;
@@ -784,6 +789,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
             literal_expr,
             ident_expr,
             placeholder,
+            hole_expr,
             list,
             mapping,
             fstr,

@@ -179,6 +179,7 @@ impl<'src, 'tok> Lift<Indirect<ast::SExpr<'src>>> for cst::SExpr<'src, 'tok> {
             cst::Expr::Literal { token } => ast::Expr::Literal(token.lift_as_literal()),
             cst::Expr::Ident { token } => ast::Expr::Ident(token.lift_as_ident()),
             cst::Expr::Placeholder { .. } => ast::Expr::Placeholder,
+            cst::Expr::Hole { .. } => ast::Expr::Hole,
             cst::Expr::Binary {
                 lhs, rhs, op_kind, ..
             } => ast::Expr::Binary(*op_kind, lhs.lift(), rhs.lift()),
