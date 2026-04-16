@@ -710,19 +710,22 @@ impl<'src> SPatternExt<'src> for Indirect<SPattern<'src>> {
                 // Make sure that capture patterns do not start with an uppercase letter to
                 // prevent unexpectedly shadowing a type
 
-                if !allow_uppercase_capture {
-                    if cap.as_ref().is_some_and(|x| {
+                let is_uppercase_err = !allow_uppercase_capture
+                    && cap.as_ref().is_some_and(|x| {
                         char::is_uppercase(x.value.0.chars().nth(0).unwrap_or('_'))
-                    }) {
-                        state.errors.extend(simple_err(
-                        "Capture patterns here must start with a lowercase letter; to match a type, add '()'",
+                    });
+
+                if is_uppercase_err {
+                    state.errors.extend(simple_err(
+                        "Capture patterns here must start with a lowercase letter; to match a type, use 'MyType()'",
                         self.span,
                     ));
-                    }
                 }
 
-                if let Some(cap) = cap.clone() {
-                    captures.push(cap.value.clone());
+                if !is_uppercase_err {
+                    if let Some(cap) = cap.clone() {
+                        captures.push(cap.value.clone());
+                    }
                 }
 
                 default = true;

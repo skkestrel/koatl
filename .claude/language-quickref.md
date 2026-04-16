@@ -244,6 +244,19 @@ Call `.iter` on any list/dict/range/string to enter the lazy iterator pipeline:
 
 Key iterator methods: `.map(f)`, `.filter(f)`, `.flat_map(f)`, `.filter_map()`, `.fold(init, f)`, `.take(n)`, `.skip(n)`, `.zip(other)`, `.enumerate()`, `.sorted(key?)`, `.group_by(f)`, `.unique()`, `.sum()`, `.first()`, `.find(f)`, `.for_each(f)`, `.list()`, `.dict()`, `.record()`
 
+### Common Iterator Methods
+
+| Category    | Methods                                                                                                                                                                                   |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Transform   | `.map(f)`, `.filter(f)`, `.flat_map(f?)`, `.filter_map(f?)`, `.enumerate(start=0)`, `.zip(*others)`, `.chain(*others)`, `.unique()`, `.sorted(key?, reverse?)`, `.reversed()`, `.cycle()` |
+| Slice       | `.take(n)`, `.skip(n)`, `.take_while(f)`, `.skip_while(f)`                                                                                                                                |
+| Aggregate   | `.fold(init, f)`, `.sum()`, `.mean()`, `.min(key?)`, `.max(key?)`, `.tally(f?)`, `.join(sep="")`, `.all(f)`, `.any(f)`                                                                    |
+| Find        | `.first()`, `.find(f)`, `.last(f)`, `.at(index)`                                                                                                                                          |
+| Collect     | `.list()`, `.set()`, `.tuple()`, `.dict()`, `.record()`, `.group_by(f?)`, `.count_by(f?)`, `.associate(f)`                                                                                |
+| Side effect | `.for_each(f)`                                                                                                                                                                            |
+
+Dict/Record extras (eager, no `.iter` needed): `.map_values(f)`, `.map_keys(f)`, `.filter_values(f)`, `.filter_keys(f)`
+
 ---
 
 ## Imports
@@ -287,6 +300,120 @@ get_name = (data, id) =>
 let fib = n => if n < 2 then @Memo.pure(n) else memo @fib(n-1) + @fib(n-2)
 fib(35).run()
 ```
+
+---
+
+## Tips
+
+- **Use `??` instead of `if x is not None then x else y`:**
+
+    ```koatl
+    # Bad
+    if x is not None then x else default_value
+    # Good
+    x ?? default_value
+    ```
+
+- **Use `match` instead of long if/else chains:**
+
+    ```koatl
+    # Bad
+    if status == "ok" then handle_ok()
+    else if status == "error" then handle_error()
+    else if status == "pending" then handle_pending()
+    else handle_unknown()
+
+    # Good
+    match status:
+        "ok" => handle_ok()
+        "error" => handle_error()
+        "pending" => handle_pending()
+        _ => handle_unknown()
+    ```
+
+- **Use `$` shorthand instead of verbose lambdas:**
+
+    ```koatl
+    # Bad
+    items.iter.filter(x => x > 0).map(x => x * 2)
+    # Good
+    items.iter.filter($ > 0).map($ * 2)
+    ```
+
+- **Use `check` + `??` instead of try/except for simple fallbacks:**
+
+    ```koatl
+    # Bad
+    result = try:
+        config[key]
+    except KeyError() => default
+    # Good
+    result = check config[key] ?? default
+    ```
+
+- **Use `?->` optional pipe instead of manual None guards:**
+
+    ```koatl
+    # Bad
+    if data is not None then parse(data) else None
+    # Good
+    data?->parse()
+    ```
+
+- **Use `if not let` for early returns instead of nested conditionals:**
+
+    ```koatl
+    # Bad
+    let result = check fetch(url)
+    if result matches Ok(_):
+        let data = result.unwrap()
+        process(data)
+    else:
+        return "failed"
+
+    # Good
+    if not let Ok(data) = check fetch(url):
+        return "failed"
+    process(data)
+    ```
+
+- **Use `@` monadic bind to chain fallible operations instead of nested checks:**
+
+    ```koatl
+    # Bad
+    let a = check step1()
+    if a matches Err(_): return a
+    let b = check step2(a.unwrap())
+    if b matches Err(_): return b
+    a.unwrap() + b.unwrap()
+
+    # Good
+    let a = @step1()
+    let b = @step2(a)
+    a + b
+    ```
+
+- **Use `->` method pipe to avoid inside-out nesting:**
+
+    ```koatl
+    # Bad
+    sorted(filter(map(data, transform), predicate))
+    # Good
+    data->map(transform)->filter(predicate)->sorted()
+    ```
+
+- **Use iterator pipelines instead of list comprehensions:**
+
+    ```koatl
+    # Bad (Python-style thinking)
+    results = []
+    for item in items:
+        if item.active:
+            results.append(item.name)
+
+    # Good
+    results = items.iter.filter($.active).map($.name).list()
+    ```
 
 ---
 
