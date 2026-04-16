@@ -23,7 +23,7 @@ impl fmt::Display for ErrMsg<'_> {
             ErrMsg::Unexpected => write!(f, "Unexpected token"),
             ErrMsg::UnmatchedDelimiter => write!(f, "Unmatched delimiter"),
             ErrMsg::Trailing => write!(f, "Trailing token"),
-            ErrMsg::Expected(s) => write!(f, "Expected {s}"),
+            ErrMsg::Expected(s) => write!(f, "Expected '{s}'"),
             ErrMsg::Custom(s) => write!(f, "{s}"),
         }
     }
@@ -131,7 +131,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     fn set_error(&mut self, cursor: usize, err: ErrMsg<'src>) {
         // println!("set_error {} {:?}", cursor, err);
 
-        if let Some((furthest_cursor, _)) = &self.cur_error {
+        if let Some((furthest_cursor, cur)) = &self.cur_error {
             if cursor > *furthest_cursor {
                 self.cur_error = Some((
                     cursor,
@@ -140,6 +140,20 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         index: cursor,
                     },
                 ));
+            } else if cursor == *furthest_cursor {
+                // Custom errors (contextual messages) override generic Expected/Unexpected
+                // at the same position, giving callers a chance to provide better context.
+                if matches!(err, ErrMsg::Custom(_))
+                    && matches!(cur.message, ErrMsg::Expected(_) | ErrMsg::Unexpected)
+                {
+                    self.cur_error = Some((
+                        cursor,
+                        ParseErr {
+                            message: err,
+                            index: cursor,
+                        },
+                    ));
+                }
             }
         } else {
             self.cur_error = Some((
@@ -412,7 +426,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn open_pattern(&mut self) -> ParseResult<SPattern<'src, 'tok>> {
-        self.set_error(self.cursor, ErrMsg::Expected("open pattern".into()));
+        self.set_error(self.cursor, ErrMsg::Expected("pattern".into()));
 
         let before_star = self.cursor;
 
@@ -871,6 +885,11 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn colon_or_then_block(&mut self) -> ParseResult<InducedBlock<STree<'src, 'tok>>> {
+        self.set_error(
+            self.cursor,
+            ErrMsg::Custom("expected ':' or 'then' to start body".into()),
+        );
+
         // Try `then` keyword — if present, parse a bare inline statement (no `:` allowed after `then`)
         if let Some(then_kw) = optional!(self, |ctx: &mut Self| ctx.keyword("then"))? {
             let (stmts, separators) = self.inline_stmts(true)?;
@@ -934,6 +953,10 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let match_kw = self.ident("match")?;
         let scrutinee = self.expr()?.boxed();
+        self.set_error(
+            self.cursor,
+            ErrMsg::Custom("expected ':' before match cases".into()),
+        );
         let colon = self.symbol(":")?;
         let indent = self.token(&Token::Indent)?;
         let cases = self.match_cases()?;
@@ -1106,10 +1129,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                     break 'block token;
                 }
             }
-            return Err(self.set_error(
-                self.cursor,
-                ErrMsg::Expected("f-string head content".into()),
-            ));
+            return Err(self.set_error(self.cursor, ErrMsg::Expected("f-string expression".into())));
         };
 
         let mut parts = Vec::new();
@@ -1138,10 +1158,9 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
                         break 'block token;
                     }
                 }
-                return Err(self.set_error(
-                    self.cursor,
-                    ErrMsg::Expected("f-string content after expression".into()),
-                ));
+                return Err(
+                    self.set_error(self.cursor, ErrMsg::Expected("f-string content".into()))
+                );
             };
 
             parts.push((fmt_expr, inner_content));
@@ -1983,6 +2002,11 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn colon_block(&mut self) -> ParseResult<InducedBlock<STree<'src, 'tok>>> {
+        self.set_error(
+            self.cursor,
+            ErrMsg::Custom("expected ':' to start body".into()),
+        );
+
         let block = |ctx: &mut Self| {
             let colon = ctx.symbol(":")?;
 
@@ -2289,7 +2313,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
     }
 
     fn open_expr(&mut self) -> ParseResult<SExpr<'src, 'tok>> {
-        self.set_error(self.cursor, ErrMsg::Expected("open expression".into()));
+        self.set_error(self.cursor, ErrMsg::Expected("expression".into()));
 
         let before_star = self.cursor;
 
@@ -2883,7 +2907,12 @@ pub fn parse_tokens<'src: 'tok, 'tok>(
                         tokens
                             .0
                             .get(err.index)
-                            .map(|x| format!("{:?}", x.token))
+                            .map(|x| match &x.token {
+                                Token::FstrInner(_, _) => {
+                                    "`}` (end of f-string interpolation)".to_string()
+                                }
+                                tok => format!("{tok}"),
+                            })
                             .unwrap_or("Eof".into())
                     ),
                 )

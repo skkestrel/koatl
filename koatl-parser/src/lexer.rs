@@ -105,26 +105,26 @@ impl<'src> IntoIterator for TokenList<'src> {
 impl fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Token::None => write!(f, "<none>"),
+            Token::None => write!(f, "None"),
             Token::Ellipsis => write!(f, "..."),
-            Token::Bool(x) => write!(f, "<literal {x}>"),
-            Token::Int(n) => write!(f, "<literal {n}>"),
-            Token::IntBin(n) => write!(f, "<literal 0b{n}>"),
-            Token::IntHex(n) => write!(f, "<literal 0x{n}>"),
-            Token::IntOct(n) => write!(f, "<literal 0o{n}>"),
-            Token::Float(n) => write!(f, "<literal {n}>"),
-            Token::Str(_, s) => write!(f, "<literal {s}>"),
+            Token::Bool(x) => write!(f, "{x}"),
+            Token::Int(n) => write!(f, "{n}"),
+            Token::IntBin(n) => write!(f, "0b{n}"),
+            Token::IntHex(n) => write!(f, "0x{n}"),
+            Token::IntOct(n) => write!(f, "0o{n}"),
+            Token::Float(n) => write!(f, "{n}"),
+            Token::Str(s, _) => write!(f, "{s}"),
             Token::Symbol(s) => write!(f, "{s}"),
             Token::Ident(s) => write!(f, "{s}"),
-            Token::Kw(s) => write!(f, "<{s}>"),
+            Token::Kw(s) => write!(f, "`{s}`"),
             Token::FstrBegin(s) => write!(f, "{s}"),
             Token::FstrEnd(s) => write!(f, "{s}"),
             Token::VerbatimFstrBegin(s) => write!(f, "{s}"),
             Token::VerbatimFstrEnd(s) => write!(f, "{s}"),
             Token::FstrInner(s, _) => write!(f, "{s}"),
-            Token::Indent => write!(f, "<indent>"),
-            Token::Dedent => write!(f, "<dedent>"),
-            Token::Eol => write!(f, "<eol>"),
+            Token::Indent => write!(f, "start of block"),
+            Token::Dedent => write!(f, "end of block"),
+            Token::Eol => write!(f, "end of line"),
         }
     }
 }
