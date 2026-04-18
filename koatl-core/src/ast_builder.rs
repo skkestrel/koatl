@@ -73,7 +73,7 @@ impl AstBuilder {
     }
 
     pub fn raise<'src>(&self, expr: Option<impl IntoIndirect<SExpr<'src>>>) -> SStmt<'src> {
-        Stmt::Raise(expr.map(|e| e.indirect())).spanned(self.span)
+        Stmt::Raise(expr.map(|e| e.indirect()), None).spanned(self.span)
     }
 
     pub fn break_<'src>(&self) -> SStmt<'src> {

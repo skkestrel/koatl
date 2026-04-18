@@ -102,7 +102,7 @@ pub enum Stmt<'a, TTree: Tree> {
     WhileLet(TTree::Pattern, TTree::Expr, TTree::Expr),
     For(TTree::Pattern, TTree::Expr, TTree::Expr),
     Import(ImportTree<'a>, bool),
-    Raise(Option<TTree::Expr>),
+    Raise(Option<TTree::Expr>, Option<TTree::Expr>),
     Assert(TTree::Expr, Option<TTree::Expr>),
     Del(Vec<TTree::Expr>),
 

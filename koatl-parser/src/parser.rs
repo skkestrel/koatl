@@ -1851,7 +1851,7 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let yield_variant = optional!(self, |ctx: &mut Self| {
             let yield_kw = ctx.keyword("yield")?;
-            let from_kw = optional!(ctx, |ctx: &mut Self| ctx.ident("from"))?;
+            let from_kw = optional!(ctx, |ctx: &mut Self| ctx.keyword("from"))?;
             let expr = ctx.parse(next_level)?;
 
             Ok(Expr::Yield {
@@ -2707,10 +2707,22 @@ impl<'src: 'tok, 'tok> ParseCtx<'src, 'tok> {
 
         let raise_stmt = |ctx: &mut Self| {
             let raise_kw = ctx.keyword("raise")?;
-            let expr = optional!(ctx, expr)?;
+            let raise_expr = optional!(ctx, expr)?;
+            let (from_kw, cause) = if raise_expr.is_some() {
+                if let Some(from_kw) = optional!(ctx, |c: &mut Self| c.keyword("from"))? {
+                    let cause = ctx.parse(expr)?.boxed();
+                    (Some(from_kw), Some(cause))
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
             Ok(Stmt::Raise {
                 raise_kw,
-                expr: expr.map(|e| e.boxed()),
+                expr: raise_expr.map(|e| e.boxed()),
+                from_kw,
+                cause,
             })
         };
 

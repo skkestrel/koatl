@@ -855,23 +855,26 @@ fn create_throwing_matcher<'src, 'ast>(
 
     let a = PyAstBuilder::new(pattern.span);
     let success = PyBlock(vec![a.pass()]);
-    let fail = PyBlock(vec![a.raise(Some(a.call(
-        a.tl_builtin("MatchError"),
-        vec![a.call_arg(a.fstr(vec![
-            a.fstr_str("failed to match value of type "),
-            a.fstr_expr(
-                a.call(
-                    a.tl_builtin("type"),
-                    vec![a.call_arg(a.load_ident(cursor.clone()))],
+    let fail = PyBlock(vec![a.raise(
+        Some(a.call(
+            a.tl_builtin("MatchError"),
+            vec![a.call_arg(a.fstr(vec![
+                a.fstr_str("failed to match value of type "),
+                a.fstr_expr(
+                    a.call(
+                        a.tl_builtin("type"),
+                        vec![a.call_arg(a.load_ident(cursor.clone()))],
+                    ),
+                    None,
                 ),
-                None,
-            ),
-            a.fstr_str(format!(
-                " to pattern \"{}\"",
-                &ctx.source[pattern.span.start..pattern.span.end]
-            )),
-        ]))],
-    )))]);
+                a.fstr_str(format!(
+                    " to pattern \"{}\"",
+                    &ctx.source[pattern.span.start..pattern.span.end]
+                )),
+            ]))],
+        )),
+        None,
+    )]);
 
     Ok((
         create_binary_matcher(
@@ -1845,7 +1848,7 @@ fn matching_except_handler<'src, 'ast>(
             cases.push(PyMatchCase {
                 pattern: (PyPattern::As(None, None), *span).into(),
                 guard: None,
-                body: PyBlock(vec![a.raise(None)]),
+                body: PyBlock(vec![a.raise(None, None)]),
             });
         }
     } else {
@@ -2009,12 +2012,16 @@ impl<'src> SStmtExt<'src> for SStmt<'src> {
 
                 pre.push(a.assign_modified(lhs, rhs, py_op))
             }
-            Stmt::Raise(expr) => {
+            Stmt::Raise(expr, cause) => {
                 if let Some(expr) = expr {
                     let expr = pre.bind(expr.transform(ctx)?);
-                    pre.push(a.raise(Some(expr)));
+                    let cause = match cause {
+                        Some(c) => Some(pre.bind(c.transform(ctx)?)),
+                        None => None,
+                    };
+                    pre.push(a.raise(Some(expr), cause));
                 } else {
-                    pre.push(a.raise(None));
+                    pre.push(a.raise(None, None));
                 }
             }
             Stmt::Del(targets) => {
@@ -2301,7 +2308,7 @@ impl<'src, 'ast> SExprExt<'src, 'ast> for SExpr<'src> {
                         cases.push(PyMatchCase {
                             pattern: (PyPattern::As(None, None), span).into(),
                             guard: None,
-                            body: PyBlock(vec![a.raise(None)]),
+                            body: PyBlock(vec![a.raise(None, None)]),
                         });
                     }
                 } else {

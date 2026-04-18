@@ -1797,7 +1797,7 @@ impl<'src> SStmtExt<'src> for Indirect<SStmt<'src>> {
 
                 Stmt::For(pattern, iter.traverse_guarded(state), body)
             }
-            Stmt::Raise(expr) => Stmt::Raise(expr.map(|x| x.traverse_guarded(state))),
+            Stmt::Raise(expr, cause) => Stmt::Raise(expr.map(|x| x.traverse_guarded(state)), cause.map(|x| x.traverse_guarded(state))),
             Stmt::Del(targets) => Stmt::Del(
                 targets
                     .into_iter()

@@ -740,11 +740,15 @@ impl SPyStmt<'_> {
                 ctx.emit_endl();
                 body.emit_to(ctx, 1)?;
             }
-            PyStmt::Raise(expr) => {
+            PyStmt::Raise(expr, cause) => {
                 ctx.emit_indent();
                 ctx.emit("raise ");
                 if let Some(expr) = expr {
                     expr.emit_to(ctx, LOW_PREC)?;
+                    if let Some(cause) = cause {
+                        ctx.emit(" from ");
+                        cause.emit_to(ctx, LOW_PREC)?;
+                    }
                 }
                 ctx.emit_endl();
             }

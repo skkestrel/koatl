@@ -485,9 +485,14 @@ impl<'src, 'tok> SimpleFmt for SStmtInner<'src, 'tok> {
                     "return".to_string()
                 }
             }
-            Stmt::Raise { expr, .. } => {
+            Stmt::Raise { expr, cause, .. } => {
                 if let Some(expr) = expr {
-                    format!("raise {}", expr.simple_fmt())
+                    let base = format!("raise {}", expr.simple_fmt());
+                    if let Some(cause) = cause {
+                        format!("{} from {}", base, cause.simple_fmt())
+                    } else {
+                        base
+                    }
                 } else {
                     "raise".to_string()
                 }

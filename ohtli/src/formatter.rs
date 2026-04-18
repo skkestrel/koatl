@@ -277,8 +277,8 @@ pub fn stmt_to_elements(stmt: &SStmt) -> Elements {
         Stmt::Return { return_kw, expr } => {
             line!(return_kw, expr)
         }
-        Stmt::Raise { raise_kw, expr } => {
-            line!(raise_kw, expr)
+        Stmt::Raise { raise_kw, expr, from_kw, cause } => {
+            line!(raise_kw, expr, from_kw, cause)
         }
         Stmt::Del { del_kw, targets } => {
             line!(

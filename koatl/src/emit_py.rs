@@ -363,9 +363,10 @@ impl<'src> PyStmtExt<'src> for SPyStmt<'src> {
                 let expr_ast = expr.emit_py(ctx)?;
                 ctx.ast_node("Return", (expr_ast,), &self.tl_span)
             }
-            PyStmt::Raise(expr) => {
+            PyStmt::Raise(expr, cause) => {
                 let expr_ast = expr.as_ref().map(|e| e.emit_py(ctx)).transpose()?;
-                ctx.ast_node("Raise", (expr_ast,), &self.tl_span)
+                let cause_ast = cause.as_ref().map(|e| e.emit_py(ctx)).transpose()?;
+                ctx.ast_node("Raise", (expr_ast, cause_ast), &self.tl_span)
             }
             PyStmt::Assert(test, msg) => {
                 let test_ast = test.emit_py(ctx)?;

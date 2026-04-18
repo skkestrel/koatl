@@ -122,6 +122,8 @@ pub enum Stmt<TTree: Tree> {
     Raise {
         raise_kw: TTree::Token,
         expr: Option<TTree::Expr>,
+        from_kw: Option<TTree::Token>,
+        cause: Option<TTree::Expr>,
     },
     Del {
         del_kw: TTree::Token,

@@ -258,7 +258,7 @@ impl<'src> TokenizeCtx<'src> {
             "if", "elif", "then", "else", "import", "export", "as", "class", "while", "for", "in",
             "break", "continue", "with", "yield", "global", "return", "raise", "del", "try",
             "except", "finally", "and", "or", "not", "is", "await", "let", "const", "with", "pass",
-            "assert",
+            "assert", "from",
         ];
 
         let keywords = HashSet::<String>::from_iter(KEYWORDS.iter().map(|s| s.to_string()));
