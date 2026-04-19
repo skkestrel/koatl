@@ -193,13 +193,16 @@ pub fn py_escape_str(s: &str) -> String {
     for c in s.chars() {
         match c {
             // Handle common escape sequences
-            '\0' => escaped_string.push_str("\\0"), // Null character
+            '\\' => escaped_string.push_str("\\\\"),
+            '\'' => escaped_string.push_str("\\'"),
+            '\"' => escaped_string.push_str("\\\""),
+            '\x07' => escaped_string.push_str("\\a"),
+            '\x08' => escaped_string.push_str("\\b"),
+            '\x0C' => escaped_string.push_str("\\f"),
             '\n' => escaped_string.push_str("\\n"),
             '\r' => escaped_string.push_str("\\r"),
             '\t' => escaped_string.push_str("\\t"),
-            '\"' => escaped_string.push_str("\\\""),
-            '\'' => escaped_string.push_str("\\\'"),
-            '\\' => escaped_string.push_str("\\\\"),
+            '\x0B' => escaped_string.push_str("\\v"),
 
             // Handle all other ASCII control characters (0x00 to 0x1F) using hex escapes
             c if (c as u32) < 32 => {
@@ -916,6 +919,50 @@ impl<'src> TokenizeCtx<'src> {
         Ok(())
     }
 
+    fn parse_hex_escape(&mut self, num_digits: usize, start: &usize) -> TResult<'src, char> {
+        let mut value: u32 = 0;
+        for _ in 0..num_digits {
+            match self.peek() {
+                Some(c) if c.is_ascii_hexdigit() => {
+                    self.next();
+                    value = value * 16 + c.to_digit(16).unwrap();
+                }
+                _ => {
+                    return Err(LexError::custom(
+                        self.span_since(start),
+                        format!("invalid escape sequence: expected {num_digits} hex digits"),
+                    ));
+                }
+            }
+        }
+        char::from_u32(value).ok_or_else(|| {
+            LexError::custom(
+                self.span_since(start),
+                format!("invalid Unicode code point: U+{value:04X}"),
+            )
+        })
+    }
+
+    fn parse_octal_escape(&mut self, first_digit: char, start: &usize) -> TResult<'src, char> {
+        let mut value: u32 = first_digit.to_digit(8).unwrap();
+        for _ in 0..2 {
+            match self.peek() {
+                Some(c) if ('0'..='7').contains(&c) => {
+                    self.next();
+                    value = value * 8 + c.to_digit(8).unwrap();
+                }
+                _ => break,
+            }
+        }
+        if value > 255 {
+            return Err(LexError::custom(
+                self.span_since(start),
+                format!("octal escape value \\{value:o} outside of range 0-0o377"),
+            ));
+        }
+        Ok(char::from_u32(value).unwrap())
+    }
+
     fn parse_escaped_char(&mut self) -> TResult<'src, char> {
         let start = self.cursor();
 
@@ -923,19 +970,45 @@ impl<'src> TokenizeCtx<'src> {
             Some('\\') => {
                 if let Some(next) = self.next() {
                     match next {
-                        'n' => return Ok('\n'),
-                        't' => return Ok('\t'),
-                        'r' => return Ok('\r'),
-                        c => {
-                            return Ok(c);
+                        '\\' => Ok('\\'),
+                        '\'' => Ok('\''),
+                        '"' => Ok('"'),
+                        'a' => Ok('\x07'),
+                        'b' => Ok('\x08'),
+                        'f' => Ok('\x0C'),
+                        'n' => Ok('\n'),
+                        'r' => Ok('\r'),
+                        't' => Ok('\t'),
+                        'v' => Ok('\x0B'),
+                        'x' => self.parse_hex_escape(2, &start),
+                        'u' => self.parse_hex_escape(4, &start),
+                        'U' => self.parse_hex_escape(8, &start),
+                        'N' => {
+                            if self.peek() == Some('{') {
+                                Err(LexError::custom(
+                                    self.span_since(&start),
+                                    "\\N{name} escape sequences are not supported",
+                                ))
+                            } else {
+                                Err(LexError::custom(
+                                    self.span_since(&start),
+                                    "invalid escape sequence '\\N'",
+                                ))
+                            }
                         }
+                        c if ('0'..='7').contains(&c) => self.parse_octal_escape(c, &start),
+                        '\n' => Ok('\n'), // line continuation in multiline? treat as newline
+                        c => Err(LexError::custom(
+                            self.span_since(&start),
+                            format!("invalid escape sequence '\\{c}'"),
+                        )),
                     }
+                } else {
+                    Err(LexError::custom(
+                        self.span_since(&start),
+                        "unterminated escape",
+                    ))
                 }
-
-                Err(LexError::custom(
-                    self.span_since(&start),
-                    "unterminated escape",
-                ))
             }
             Some(c) => Ok(c),
             None => Err(LexError::custom(
