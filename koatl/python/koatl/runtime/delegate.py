@@ -63,36 +63,74 @@ def delegate_args(target, *, args=None, kwargs=None, renames=None, defaults=None
     )
 
     def decorator(fn):
+        # Find the actual underlying function for __kwdefaults__.
+        # If fn is a wrapper from a previous delegate_args, __kwdefaults__
+        # on the wrapper has no effect; we must set it on the real function.
+        actual_fn = fn
+        while hasattr(actual_fn, "__wrapped__"):
+            actual_fn = actual_fn.__wrapped__
+
         # Apply defaults for explicitly delegated args
         if resolved_defaults:
-            if fn.__kwdefaults__ is None:
-                fn.__kwdefaults__ = {}
+            if actual_fn.__kwdefaults__ is None:
+                actual_fn.__kwdefaults__ = {}
             for name, value in resolved_defaults.items():
-                fn.__kwdefaults__.setdefault(name, value)
+                actual_fn.__kwdefaults__.setdefault(name, value)
 
         if not needs_wrapper:
             if kwargs is not None:
-                if fn.__kwdefaults__ is None:
-                    fn.__kwdefaults__ = {}
-                fn.__kwdefaults__.setdefault(kwargs, {})
+                if actual_fn.__kwdefaults__ is None:
+                    actual_fn.__kwdefaults__ = {}
+                actual_fn.__kwdefaults__.setdefault(kwargs, {})
+            # Update __signature__ if fn is a wrapper from a previous delegate
+            if resolved_defaults and hasattr(fn, "__signature__"):
+                params = []
+                for p in fn.__signature__.parameters.values():
+                    if (
+                        p.name in resolved_defaults
+                        and p.default is inspect.Parameter.empty
+                    ):
+                        params.append(p.replace(default=resolved_defaults[p.name]))
+                    else:
+                        params.append(p)
+                fn.__signature__ = fn.__signature__.replace(parameters=params)
             return fn
 
         # Build new signature: replace the kwargs param with the extra target params
         sig = inspect.signature(fn)
+        existing_param_names = {p.name for p in sig.parameters.values()}
         new_params = []
         for param in sig.parameters.values():
             if param.name == kwargs:
                 for ep_name, ep in extra_params.items():
-                    new_params.append(ep.replace(kind=inspect.Parameter.KEYWORD_ONLY))
+                    # Skip extra params already present (e.g. from a previous delegate)
+                    if ep_name not in existing_param_names:
+                        new_params.append(
+                            ep.replace(kind=inspect.Parameter.KEYWORD_ONLY)
+                        )
                 # kwargs param is absorbed — don't re-add it
             else:
-                new_params.append(param)
+                # Ensure resolved defaults are reflected in the signature even when
+                # fn is a wrapper from a previous delegate_args (where __kwdefaults__
+                # has no effect on the wrapper's actual parameter handling).
+                if (
+                    param.name in resolved_defaults
+                    and param.default is inspect.Parameter.empty
+                ):
+                    new_params.append(
+                        param.replace(default=resolved_defaults[param.name])
+                    )
+                else:
+                    new_params.append(param)
         new_sig = sig.replace(parameters=new_params)
 
         # Precompute defaults for extra params
         extra_defaults = {}
         for pname, param in extra_params.items():
-            if param.default is not inspect.Parameter.empty:
+            if (
+                pname not in existing_param_names
+                and param.default is not inspect.Parameter.empty
+            ):
                 extra_defaults[pname] = param.default
 
         # Determine fn's own param names (excluding the kwargs param and **real_kwargs)
@@ -105,11 +143,17 @@ def delegate_args(target, *, args=None, kwargs=None, renames=None, defaults=None
 
         @functools.wraps(fn)
         def wrapper(*call_args, **call_kwargs):
+            # Apply resolved defaults for explicitly delegated args not provided.
+            # This is needed because __kwdefaults__ on a wrapper fn from a previous
+            # delegate_args layer has no effect (wrappers use *args/**kwargs).
+            for name, value in resolved_defaults.items():
+                if name not in call_kwargs:
+                    call_kwargs[name] = value
             kwargs_dict = dict(extra_defaults)
             remaining_kwargs = {}
             for k, v in call_kwargs.items():
-                if k in extra_params:
-                    # Known extra target param
+                if k in extra_params and k not in existing_param_names:
+                    # Known extra target param (not already handled by another delegate)
                     kwargs_dict[k] = v
                 elif target_has_var_keyword and k not in fn_own_params:
                     # Target has **kwargs catch-all and this isn't one of fn's own params

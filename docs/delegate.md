@@ -4,18 +4,18 @@
 
 ## Basic Usage
 
-`delegate` appears inside a parenthesized argument list, after `*` or `*args`:
+`delegate` appears inside a parenthesized argument list. It implicitly starts the keyword-only section (as if `*` were written before it), so an explicit `*` is not required:
 
 ```koatl
 >>> let target = (*, x=10, y=20) => x + y
 
->>> let f = (a, *, delegate target(x)) => (a, x)
+>>> let f = (a, delegate target(x)) => (a, x)
 >>> f(1)
 (1, 10)
 >>> f(1, x=5)
 (1, 5)
 
->>> let g = (*, delegate target(x, y)) => (x, y)
+>>> let g = (delegate target(x, y)) => (x, y)
 >>> g()
 (10, 20)
 >>> g(x=1, y=2)
@@ -31,7 +31,7 @@ Rename a delegated argument with `as`:
 ```koatl
 >>> let target = (*, x=10) => x
 
->>> let h = (*, delegate target(x as local_x)) => local_x
+>>> let h = (delegate target(x as local_x)) => local_x
 >>> h()
 10
 >>> h(local_x=99)
@@ -47,7 +47,7 @@ Override the target's default with `=`:
 ```koatl
 >>> let target = (*, x=10) => x
 
->>> let j = (*, delegate target(x=42)) => x
+>>> let j = (delegate target(x=42)) => x
 >>> j()
 42
 ```
@@ -61,7 +61,7 @@ Use `**name` inside `delegate(...)` to collect the target's remaining keyword ar
 ```koatl
 >>> let target = (*, a=1, b=2, c=3) => a + b + c
 
->>> let m = (*, delegate target(a, **kw)) => (a, kw)
+>>> let m = (delegate target(a, **kw)) => (a, kw)
 >>> m()
 (1, {'b': 2, 'c': 3})
 >>> m(a=10, b=20)
@@ -77,7 +77,7 @@ If the target itself accepts `**kwargs`, the delegate's `**kwargs` acts as a cat
 ```koatl
 >>> let target = (a=3, **kwargs) => (a, kwargs)
 
->>> let t = (*, delegate target(a, **kw)) => (a, kw)
+>>> let t = (delegate target(a, **kw)) => (a, kw)
 >>> t(a=5, unknown=99)
 (5, {'unknown': 99})
 ```
@@ -89,7 +89,7 @@ The target can be any expression — attribute access, subscripts, etc.:
 ```koatl
 >>> let ns = {func: (*, x=10, y=20) => x + y}
 
->>> let f = (*, delegate ns.func(x, y)) => (x, y)
+>>> let f = (delegate ns.func(x, y)) => (x, y)
 >>> f()
 (10, 20)
 ```
@@ -102,7 +102,7 @@ A single function can delegate from multiple targets:
 >>> let target_a = (*, p=1, q=2) => p + q
 >>> let target_b = (*, r=3, s=4) => r + s
 
->>> let n = (*, delegate target_a(p, q), delegate target_b(r, s)) => (p, q, r, s)
+>>> let n = (delegate target_a(p, q), delegate target_b(r, s)) => (p, q, r, s)
 >>> n()
 (1, 2, 3, 4)
 ```
@@ -114,7 +114,7 @@ A common use case is forwarding delegated args to the target:
 ```koatl
 >>> let base = (*, x=1, y=2, z=3) => x + y + z
 
->>> let wrapper = (*, delegate base(x, **kw)) =>
+>>> let wrapper = (delegate base(x, **kw)) =>
 ...     base(x=x, **kw)
 >>> wrapper()
 6
@@ -136,7 +136,7 @@ This also works with chained delegation (delegate-to-delegate).
 
 ## Rules
 
-- `delegate` must appear after `*` or `*args` (delegated args are always keyword-only).
+- `delegate` implicitly starts the keyword-only section (delegated args are always keyword-only). An explicit `*` or `*args` before it is optional.
 - Only one `**kwargs` is allowed per delegate.
 - No arguments are allowed after `**kwargs` within a single delegate.
 - Multiple `delegate` clauses are allowed in the same argument list.

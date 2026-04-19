@@ -1172,13 +1172,10 @@ fn make_arglist<'src, 'ast>(
                 ArgDefItem::KwargSpread(_) => {
                     seen_kwarg = true;
                 }
-                ArgDefItem::Delegate { target, .. } => {
-                    if !after_kwonly_marker {
-                        return Err(simple_err(
-                            "delegate must appear after * or *args",
-                            target.span,
-                        ));
-                    }
+                ArgDefItem::Delegate { .. } => {
+                    // delegate implicitly starts the keyword-only section
+                    after_kwonly_marker = true;
+                    seen_default = false;
                 }
             }
         }
@@ -1268,6 +1265,10 @@ fn make_arglist<'src, 'ast>(
                 items,
                 kwarg_spread,
             } => {
+                // delegate implicitly transitions to keyword-only
+                if state < 2 {
+                    state = 2;
+                }
                 let a = PyAstBuilder::new(target.span);
 
                 let mut delegate_arg_names: Vec<PyCallItem<'src>> = vec![];
